@@ -1,0 +1,158 @@
+ {'moov
+ {'mvhd
+        00 # version
+    000000 # Flags
+     !time # Creation time
+     !time # Modification time
+  !timescale # Time Scale - time unints per second
+  !duration # Duration - in time units
+  00010000 # Preferred rate
+      00ff # Preferred volume
+  00000000 00000000 0000 # (reserved)
+  00010000 00000000 00000000 # Matrix [a b u]
+  00000000 00010000 00000000 # Matrix [c d v]
+  00000000 00000000 40000000 # Matrix [x y w]
+  00000000 # Preview Time
+  00000000 # Preview Duration
+  00000000 # Poster Time
+  00000000 # Selection Time
+  00000000 # Selection Duration
+  00000000 # Current Time
+  00000002 # Next Track ID
+  }
+  {'trak
+   {'tkhd
+        00  # version
+    00000f  # Flags
+     !time  # Creation time
+     !time  # Modification time
+  00000001  # Track ID
+  00000000  # (reserved)
+  !duration # Duration
+  00000000 00000000 # (reserved)
+      0000  # Layer
+	  0000  # Alternate group
+	  0000  # Volume
+	  0000  # (reserved)
+  00010000 00000000 00000000 # Matrix [a b u]
+  00000000 00010000 00000000 # Matrix [c d v]
+  00000000 00000000 40000000 # Matrix [x y w]
+  !width  0000 # Track width
+  !height 0000 # Track height
+  }
+  {'mdia
+    {'mdhd
+        00   # version
+    000000   # Flags
+     !time   # Creation time
+     !time   # Modification time
+  !timescale # Time Scale
+  !duration  # Duration
+      0000   # Language
+	  0000   # Quality
+	}
+    {'hdlr
+        00 # version
+    000000 # Flags
+    'mhlr  # Component type
+    'vide  # Component subtype
+    'appl  # Component manufacturer
+  00000000 # Component Flags
+  0001001f # Component Flags Mask
+  19 'Apple Video Media Handler # Component Name
+	}
+	{'minf
+	  {'vmhd
+        00 # version
+    000001 # Flags
+	  0040 # Graphics Mode
+    8000 8000 8000 # Opcolor
+	  }
+	  {'hdlr
+        00 # version
+    000000 # Flags
+    'dhlr  # Component type
+    'alis  # Component subtype
+    'appl  # Cmponent manufacturer
+  00000001 # Component Flags
+  00010026 # Component Flags Mask
+  18 'Apple Alias Data Handler # Component Name
+	  }
+	  {'dinf
+	     {'dref
+          00 # version
+      000000 # Flags (1 - the same file???)
+    00000001 # Number of entries
+	0000000c 616c6973 00000001 # Data references
+		 }
+	  }
+	  {'stbl
+	    {'stsd
+          00 # version
+      000000 # Flags
+    00000001 # Number of entries
+	00000056 # Sample description size
+	   'jpeg # Data format
+    00000000 0000 # (reserved)
+	    0001 # Data reference index
+	    0000 # Version
+	    0000 # Revision Level
+       'appl # Vendor
+    00000000 # Temporal quality
+    00000200 # Spatial quality
+	  !width # Width
+	 !height # Height
+    00480000 # Horizontal resolution
+    00480000 # Vertical resolution
+    00000000 # Data size
+	    0001 # Frame count
+	0c 'Photo - JPEG # Compressor Name
+	00000000 00000000 00000000 00000000 000000 # padding
+	    0018 # Color depth (24)
+		ffff # Color table ID
+		}
+		{'stts
+          00 # version
+      000000 # Flags
+    00000001 # Number of entries
+	!nframes !frame_duration # TIME-TO-SAMPLE table (was 0x0a 0x28) - time units/sample
+		}
+		{'stsc
+          00 # version
+      000000 # Flags
+    00000001 # Number of entries
+#	00000001 !nframes 00000001 # SAMPLE-TO-CHUNK table - all in one chunk
+	00000001 !samples_chunk 00000001 # SAMPLE-TO-CHUNK table - each sample it new chunk
+		}
+		{'stsz
+          00 # version
+      000000 # Flags
+    00000000 # Sample Size ** Did not work with non-zero!
+    !nframes # Number of entries
+    !sample_sizes # nframes of 4-byte words
+		}
+		{'stco
+          00 # version
+      000000 # Flags
+#    00000001 # Number of entries
+#	!mdata   #
+#    !nframes # Number of entries
+	!chunk_offsets   #
+		}
+	  }
+	}
+  }
+  {'udta
+    00000000
+  }
+ }
+ {'udta
+   {'WLOC
+     0017
+	 0020
+   }
+   00000000	# ???
+ }
+}
+  !data_size
+  'mdat
