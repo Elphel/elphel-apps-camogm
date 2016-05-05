@@ -1,6 +1,6 @@
 AXIS_USABLE_LIBS = UCLIBC GLIBC
 AXIS_AUTO_DEPEND = yes
-include $(AXIS_TOP_DIR)/tools/build/Rules.axis
+#include $(AXIS_TOP_DIR)/tools/build/Rules.axis
 
 INSTDIR    = $(prefix)/usr/local/sbin/
 OTHERDIR   = $(prefix)/usr/html/
@@ -21,13 +21,13 @@ SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c
 
 OBJS = camogm.o camogm_ogm.o camogm_jpeg.o camogm_mov.o camogm_kml.o
 
-CFLAGS   += -Wall -I$(INCDIR) -I$(AXIS_KERNEL_DIR)/include
+CFLAGS   += -Wall -I$(ELPHEL_KERNEL_DIR)/include/elphel
+#CFLAGS   += -Wall -I$(INCDIR) -I$(ELPHEL_KERNEL_DIR)/include/elphel
 
 all: $(PROGS)
 
 $(PROGS): $(OBJS)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -logg  -o $@
-	cris-strip -s $@
 install: $(PROGS)
 	$(INSTALL) -d $(INSTDIR)
 	$(INSTALL) -m $(INSTMODE) -o $(INSTOWNER) -g $(INSTGROUP) $(PROGS) $(INSTDIR)

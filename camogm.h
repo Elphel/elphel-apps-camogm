@@ -28,7 +28,7 @@
 #define JPEG_HEADER_MAXSIZE    0x300 // will not change
 
 //#include "camogm_exif.h"
-#include <asm/elphel/exifa.h>
+#include <exifa.h>
 
 
 /*

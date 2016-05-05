@@ -58,7 +58,7 @@
 #include <sys/mman.h>		/* mmap */
 #include <sys/ioctl.h>
 
-#include <asm/elphel/c313a.h>
+#include <c313a.h>
 #include <asm/byteorder.h>
 
 

@@ -122,8 +122,8 @@
 #include <sys/mman.h>		/* mmap */
 #include <sys/ioctl.h>
 
-#include <asm/elphel/c313a.h>
-//#include <asm/elphel/exifa.h>
+#include <c313a.h>
+#include <exifa.h>
 #include <asm/byteorder.h>
 
 
