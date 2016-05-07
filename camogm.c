@@ -145,6 +145,7 @@
 
 /* end of debug code */
 
+#define DEFAULT_DEBUG_LVL 6
 #define TRAILER_SIZE   0x02
 #define MAP_OPTIONS MAP_FILE | MAP_PRIVATE
 
@@ -289,7 +290,7 @@ int camogm_init(camogm_state *state, unsigned int port)
 	state->serialno = ipser[0];
 	state->last = 0;
 	debug_file = stderr;
-	camogm_debug_level(1);
+	camogm_debug_level(DEFAULT_DEBUG_LVL);
 	strcpy(state->debug_name, "stderr");
 	camogm_set_timescale(state, 1.0);
 	camogm_set_frames_skip(state, 0); //! don't skip
@@ -311,6 +312,7 @@ int camogm_init(camogm_state *state, unsigned int port)
 	camogm_kml_set_period(state, 2);       // 2 sec
 	camogm_kml_set_near(state, 40.0);      // 40 m (distance to PhotoOverlay)
 	state->kml_path[0] = '\0';
+
 	state->port_num = port;
 
 	return 0;
@@ -1114,7 +1116,10 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 	D2(fprintf(debug_file, "Got command: '%s'\n", cmd));
 
 /// Acknowledge received command by copying frame number to per-daemon parameter
-	GLOBALPARS(state->port_num, G_DAEMON_ERR + lastDaemonBit[state->port_num]) = GLOBALPARS(state->port_num, G_THIS_FRAME);
+#ifdef DISABLE_CODE
+//	GLOBALPARS(state->port_num, G_DAEMON_ERR + lastDaemonBit[state->port_num]) = GLOBALPARS(state->port_num, G_THIS_FRAME);
+	setGValue(state->port, G_DAEMON_ERR + lastDaemonBit[state->port_nun], getGValue(state->port_num, G_THIS_FRAME));
+#endif /* DISABLE_CODE */
 //  printf ("cmd[0]=%d:%s\n",(int) cmd[0],cmd);
 	args = strpbrk(cmd, "= \t");
 //! is it just a single word command or does it have parameters?
@@ -1343,11 +1348,13 @@ int main(int argc, char *argv[])
 	create_pipe_names(argv[1], pipe_names);
 
 //! open Exif header file
+#ifdef DISABLE_CODE
 	state->fd_exif = open(exifFileNames[port], O_RDONLY);
 	if (state->fd_exif < 0) { // check control OK
 		D0(fprintf(debug_file, "Error opening %s\n", exifFileNames[port]));
 		return -1;
 	}
+#endif /* DESABLE_CODE */
 
 //! open JPEG header file
 	state->fd_head = open(headFileNames[port], O_RDWR);
@@ -1382,6 +1389,7 @@ int main(int argc, char *argv[])
 //! Now open/mmap file to read sensor/compressor parameters (currently - just free memory in circbuf and compressor state)
 
 //! open circbuf and mmap it (once at startup)
+#ifdef DISABLE_CODE
 	state->fd_fparmsall = open(ctlFileNames[port], O_RDWR);
 	if (state->fd_fparmsall < 0) { // check control OK
 		D0(fprintf(debug_file, "%s:%d:%s: Error opening %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileNames[port]));
@@ -1400,6 +1408,7 @@ int main(int argc, char *argv[])
 	}
 	framePars[port] = frameParsAll[port]->framePars;
 	globalPars[port] = frameParsAll[port]->globalPars;
+#endif /* DESABLE_CODE */
 
 //!create a named pipe
 //!always delete the pipe if it existed, start a fresh one
@@ -1543,9 +1552,12 @@ int main(int argc, char *argv[])
  */
 unsigned long getGPValue(unsigned int port, unsigned long GPNumber)
 {
+#ifdef DISABLE_CODE
 	return (GPNumber >= FRAMEPAR_GLOBALS) ?
 	       GLOBALPARS(port, GPNumber) :
 	       framePars[port][GLOBALPARS(port, G_THIS_FRAME) & PARS_FRAMES_MASK].pars[GPNumber];
+#endif /* DESABLE_CODE */
+	return 0;
 }
 
 /**
