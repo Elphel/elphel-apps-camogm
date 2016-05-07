@@ -66,7 +66,6 @@
 #include "ogmstreams.h" // move it to <>?
 
 #include "camogm_mov.h"
-#include "camogm.h"
 
 #define QUICKTIME_MIN_HEADER 0x300      // Quicktime header length (w/o index tables) enough to accomodate
                                         // static data .
@@ -93,7 +92,8 @@ long headerSize = 0;
 const char *iFile = NULL;
 
 
-int quicktime_template_parser(const char * i_iFile,     //! now - string containing header template
+int quicktime_template_parser(camogm_state *state,
+				  const char * i_iFile,     //! now - string containing header template
 			      int i_ofd,                //!output file descriptor (opened)
 			      int i_width,              // width in pixels
 			      int i_height,
@@ -107,7 +107,7 @@ int quicktime_template_parser(const char * i_iFile,     //! now - string contain
 			      );
 void putBigEndian(unsigned long d, int l);
 int parse_special(void);
-int parse(int top);
+int parse(camogm_state *state, int top);
 //! called first time format is changed to this one (only once) recording is stopped
 //! read frame template from the file if it is not done yet
 int camogm_init_mov(void)
@@ -147,7 +147,7 @@ void camogm_free_mov(void)
 	}
 }
 
-int camogm_start_mov(void)
+int camogm_start_mov(camogm_state *state)
 {
 
 //! allocate memory for the frame index table
@@ -165,7 +165,7 @@ int camogm_start_mov(void)
 	return 0;
 }
 
-int camogm_frame_mov(void)
+int camogm_frame_mov(camogm_state *state)
 {
 	int i, j;
 	ssize_t iovlen, l;
@@ -188,8 +188,13 @@ int camogm_frame_mov(void)
 	state->frame_lengths[state->frameno] = l;
 	return 0;
 }
-//!move to the start of the file and insert generated header
-int camogm_end_mov(void)
+
+/**
+ * @brief Move to the start of the file and insert generated header
+ * @param[in]   state   pointer to the #camogm_state structure for current sensor port
+ * @return      this function is always successful and returns 0
+ */
+int camogm_end_mov(camogm_state *state)
 {
 	off_t l/*,he;
 	          unsigned char mdat_tag[8];
@@ -201,7 +206,8 @@ int camogm_end_mov(void)
 //   lseek(state->ivf, state->frame_data_start, SEEK_SET);
 // fill in the header in the beginning of the file
 	lseek(state->ivf, 0, SEEK_SET);
-	quicktime_template_parser(q_template,   //! now - string containing header template
+	quicktime_template_parser(state,
+				  q_template,   //! now - string containing header template
 				  state->ivf,   //!output file descriptor (opened)
 				  state->width, //! width in pixels
 				  state->height,
@@ -240,13 +246,14 @@ int camogm_end_mov(void)
 	return 0;
 }
 
-/*
-   starts with the input file pointer just after the opening "{",
-   and output file - at the beginning of it's output
-   on exit - input pointer - after closing "}", output after it's output
-
+/**
+ * @brief Starts with the input file pointer just after the opening "{",
+ * and output file - at the beginning of it's output
+ * on exit - input pointer - after closing "}", output after it's output
+ * @param[in]   d
+ * @param[in]   l
+ * @return      none
  */
-
 void putBigEndian(unsigned long d, int l)
 {
 	unsigned char od[4];
@@ -258,6 +265,7 @@ void putBigEndian(unsigned long d, int l)
 	if (l) write(ofd, &od[4 - l], l);
 //    oPos+=l;
 }
+
 //!temporary replacement for fgets to read from string
 char * sfgets(char * str, int size, const char * stream, int * pos)
 {
@@ -367,9 +375,7 @@ int parse_special(void)
 	return -1;
 }
 
-
-
-int parse(int top)      // if top - will not include length
+int parse(camogm_state *state, int top)      // if top - will not include length
 {
 	long out_start, out_end;
 	char c;
@@ -395,7 +401,7 @@ int parse(int top)      // if top - will not include length
 			}
 // children atoms
 			else if (c == '{') {
-				if (parse(0) < 0) return -1;
+				if (parse(state, 0) < 0) return -1;
 // skip comments
 //		  } else if (c=='#')  fgets( comStr, sizeof(comStr), infile);
 			} else if (c == '#') sfgets( comStr, sizeof(comStr), iFile, &iPos);
@@ -455,7 +461,8 @@ int parse(int top)      // if top - will not include length
 }
 
 
-int quicktime_template_parser(const char * i_iFile,     //! now - string containing header template
+int quicktime_template_parser( camogm_state *state,
+				  const char * i_iFile,     //! now - string containing header template
 			      int i_ofd,                //!output file descriptor (opened)
 			      int i_width,              // width in pixels
 			      int i_height,
@@ -486,7 +493,7 @@ int quicktime_template_parser(const char * i_iFile,     //! now - string contain
 	D3(fprintf(debug_file, "PASS I\n"));
 
 //   while ( feof(infile) == 0 )   parse(1); // pass 1
-	while ( iPos < iFileLen ) parse(1);  // pass 1
+	while ( iPos < iFileLen ) parse(state, 1);  // pass 1
 //   headerSize=ftell (outfile);
 //        fseek (outfile,0,SEEK_SET); // rewind for pass 2
 //        fseek (infile, 0,SEEK_SET); //
@@ -498,7 +505,7 @@ int quicktime_template_parser(const char * i_iFile,     //! now - string contain
 
 	D3(fprintf(debug_file, "PASS II\n"));
 //   while ( feof(infile) == 0 )   parse(1); // pass 2
-	while ( iPos < iFileLen ) parse(1);  // pass 2
+	while ( iPos < iFileLen ) parse(state, 1);  // pass 2
 
 //fclose (infile);
 //fclose (outfile);

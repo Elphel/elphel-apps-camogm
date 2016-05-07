@@ -112,6 +112,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <linux/limits.h>
 //#include <ctype.h>
 //#include <getopt.h>
 #include <time.h>
@@ -135,23 +136,39 @@
 #include "camogm_kml.h"
 #include "camogm.h"
 
+/* debug code follows */
+// this will be defined in c313a.h
+#define SENSOR_PORTS 4
+
+#undef GLOBALPARS
+#define GLOBALPARS(p, x) (globalPars[(p)][(x)-FRAMEPAR_GLOBALS])
+
+/* end of debug code */
+
 #define TRAILER_SIZE   0x02
 #define MAP_OPTIONS MAP_FILE | MAP_PRIVATE
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 
-const char ExifFileName[] = "/dev/exif_exif";
+const char *exifFileNames[] = {	"/dev/exif_exif0", "/dev/exif_exif1",
+								"/dev/exif_exif2", "/dev/exif_exif3"
+};
 
-const char HeadFileName[] = "/dev/jpeghead";
-const char ctlFileName[] = "/dev/frameparsall";
-unsigned long * ccam_dma_buf;           /* mmapped array */
+const char *headFileNames[] = {	"/dev/jpeghead0", "/dev/jpeghead1",
+								"/dev/jpeghead2", "/dev/jpeghead3"
+};
+const char *ctlFileNames[] = {   "/dev/frameparsall0", "/dev/frameparsall1",
+								"/dev/frameparsall2", "/de/framepars3"
+};
+const char *circbufFileNames[] = {"/dev/circbuf0", "/dev/circbuf1",
+								"/dev/circbuf2", "/dev/circbuf3"
+};
+unsigned long * ccam_dma_buf[SENSOR_PORTS];           /* mmapped array */
 
-int lastDaemonBit = DAEMON_BIT_CAMOGM;
-struct framepars_all_t   *frameParsAll;
-struct framepars_t       *framePars;
-unsigned long            *globalPars; /// parameters that are not frame-related, their changes do not initiate any actions
-
-int buff_size;
+int lastDaemonBit[SENSOR_PORTS] = {DAEMON_BIT_CAMOGM};
+struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
+struct framepars_t       *framePars[SENSOR_PORTS];
+unsigned long            *globalPars[SENSOR_PORTS]; /// parameters that are not frame-related, their changes do not initiate any actions
 
 #define DEFAULT_DURATION 60             /*!default segment duration (seconds) */
 #define DEFAULT_LENGTH 100000000        /*!default segment length (B) */
@@ -170,46 +187,46 @@ static char cmdbuf[1024];
 static int cmdbufp = 0; // current input pointer in the command buffer (read from pipe)
 static int cmdstrt = 0; // start of the next partial command
 
-camogm_state sstate;
-camogm_state * state;
+camogm_state sstate[SENSOR_PORTS];
+//camogm_state * state;
 
 int debug_level;
 FILE* debug_file;
 
-int camogm_init(void);
-int camogm_start(void);
-int camogm_stop(void);
-int camogm_reset(void); //! reset circbuf read pointer
-int camogm_debug(const char * fname);
+int camogm_init(camogm_state *state, unsigned int port);
+int camogm_start(camogm_state *state);
+int camogm_stop(camogm_state *state);
+int camogm_reset(camogm_state *state); //! reset circbuf read pointer
+int camogm_debug(camogm_state *state, const char *fname);
 int camogm_debug_level(int d);
-void  camogm_set_segment_duration(int sd);
-void  camogm_set_segment_length(int sl);
-void  camogm_set_greedy(int d);
-void  camogm_set_ignore_fps(int d);
+void  camogm_set_segment_duration(camogm_state *state, int sd);
+void  camogm_set_segment_length(camogm_state *state, int sl);
+void  camogm_set_greedy(camogm_state *state, int d);
+void  camogm_set_ignore_fps(camogm_state *state, int d);
 
-void  camogm_set_save_gp(int d);
-void  camogm_set_prefix(const char * p);
-void  camogm_set_exif(int d);
-void  camogm_set_timescale(double d);   //! set timescale, default=1.0
-void  camogm_set_frames_skip(int d);    //! set number of frames to skip, if negative - seconds between frames
-void  camogm_set_format(int d);
+void  camogm_set_save_gp(camogm_state *state, int d);
+void  camogm_set_prefix(camogm_state *state, const char * p);
+void  camogm_set_exif(camogm_state *state, int d);
+void  camogm_set_timescale(camogm_state *state, double d);   //! set timescale, default=1.0
+void  camogm_set_frames_skip(camogm_state *state, int d);    //! set number of frames to skip, if negative - seconds between frames
+void  camogm_set_format(camogm_state *state, int d);
 
-void  camogm_kml_set_enable(int d);
-void  camogm_kml_set_horHalfFov(double dd);
-void  camogm_kml_set_vertHalfFov(double dd);
-void  camogm_kml_set_height_mode(int d);
-void  camogm_kml_set_height(double dd);
-void  camogm_kml_set_period(int d);
-void  camogm_kml_set_near(double dd); // distance to PhotoOverlay
+void  camogm_kml_set_enable(camogm_state *state, int d);
+void  camogm_kml_set_horHalfFov(camogm_state *state, double dd);
+void  camogm_kml_set_vertHalfFov(camogm_state *state, double dd);
+void  camogm_kml_set_height_mode(camogm_state *state, int d);
+void  camogm_kml_set_height(camogm_state *state, double dd);
+void  camogm_kml_set_period(camogm_state *state, int d);
+void  camogm_kml_set_near(camogm_state *state, double dd); // distance to PhotoOverlay
 
-int   parse_cmd(FILE* npipe);
+int   parse_cmd(camogm_state *state, FILE* npipe);
 char * getLineFromPipe(FILE* npipe);
 
-int  sendImageFrame(void);
+int  sendImageFrame(camogm_state *state);
 
-void  camogm_set_start_after_timestamp(double d);
-void  camogm_set_max_frames(int d);
-void  camogm_set_frames_per_chunk(int d);
+void  camogm_set_start_after_timestamp(camogm_state *state, double d);
+void  camogm_set_max_frames(camogm_state *state, int d);
+void  camogm_set_frames_per_chunk(camogm_state *state, int d);
 
 
 //!======================================================================================================
@@ -251,7 +268,7 @@ void put_uint64(void *buf, u_int64_t val)
 	tmp[7] = (val >>= 8) & 0xff;
 }
 
-int camogm_init(void)
+int camogm_init(camogm_state *state, unsigned int port)
 {
 	const char sserial[] = "elp0";
 	int * ipser = (int*)sserial;
@@ -259,24 +276,24 @@ int camogm_init(void)
 	state->running = 0;     // mo
 	state->starting = 0;    // mo
 	state->vf = NULL;
-	camogm_set_segment_duration(DEFAULT_DURATION);
-	camogm_set_segment_length(DEFAULT_LENGTH);
-	camogm_set_greedy(DEFAULT_GREEDY);
-	camogm_set_ignore_fps(DEFAULT_IGNORE_FPS);
-	camogm_set_max_frames(DEFAULT_FRAMES);
-	camogm_set_frames_per_chunk(DEFAULT_FRAMES_PER_CHUNK);
-	camogm_set_start_after_timestamp(0.0); /// start any time
-	camogm_set_prefix("\0");
-	camogm_set_save_gp(0);
-	camogm_reset(); //! sets    state->buf_overruns=-1; //!first does not count
+	camogm_set_segment_duration(state, DEFAULT_DURATION);
+	camogm_set_segment_length(state, DEFAULT_LENGTH);
+	camogm_set_greedy(state, DEFAULT_GREEDY);
+	camogm_set_ignore_fps(state, DEFAULT_IGNORE_FPS);
+	camogm_set_max_frames(state, DEFAULT_FRAMES);
+	camogm_set_frames_per_chunk(state, DEFAULT_FRAMES_PER_CHUNK);
+	camogm_set_start_after_timestamp(state, 0.0); /// start any time
+	camogm_set_prefix(state, "\0");
+	camogm_set_save_gp(state, 0);
+	camogm_reset(state); //! sets    state->buf_overruns=-1; //!first does not count
 	state->serialno = ipser[0];
 	state->last = 0;
 	debug_file = stderr;
 	camogm_debug_level(1);
 	strcpy(state->debug_name, "stderr");
-	camogm_set_timescale(1.0);
-	camogm_set_frames_skip(0); //! don't skip
-	camogm_set_format(CAMOGM_FORMAT_OGM);
+	camogm_set_timescale(state, 1.0);
+	camogm_set_frames_skip(state, 0); //! don't skip
+	camogm_set_format(state, CAMOGM_FORMAT_OGM);
 	state->exifSize = 0;
 	state->exif = DEFAULT_EXIF;
 	state->frame_lengths = NULL;
@@ -285,21 +302,22 @@ int camogm_init(void)
 	state->last_error_code = 0;
 
 ///kml stuff
-	camogm_kml_set_enable(0);
+	camogm_kml_set_enable(state, 0);
 	state->kml_file = NULL;
-	camogm_kml_set_horHalfFov(20.0);
-	camogm_kml_set_vertHalfFov(15.0);
-	camogm_kml_set_height_mode(0);
-	camogm_kml_set_height(10.0);
-	camogm_kml_set_period(2);       // 2 sec
-	camogm_kml_set_near(40.0);      // 40 m (distance to PhotoOverlay)
+	camogm_kml_set_horHalfFov(state, 20.0);
+	camogm_kml_set_vertHalfFov(state, 15.0);
+	camogm_kml_set_height_mode(state, 0);
+	camogm_kml_set_height(state, 10.0);
+	camogm_kml_set_period(state, 2);       // 2 sec
+	camogm_kml_set_near(state, 40.0);      // 40 m (distance to PhotoOverlay)
 	state->kml_path[0] = '\0';
+	state->port_num = port;
 
 	return 0;
 }
 
 
-int camogm_debug(const char * fname)
+int camogm_debug(camogm_state *state, const char * fname)
 {
 	int none = 1;
 
@@ -327,7 +345,7 @@ int camogm_debug_level(int d)
 	return 0;
 }
 
-int camogm_start(void)
+int camogm_start(camogm_state *state)
 {
 	int timestamp_start;
 	int rslt;
@@ -336,7 +354,7 @@ int camogm_start(void)
 	D1(fprintf(debug_file, "Starting recording\n"));
 	double dtime_stamp;
 	state->frameno = 0;
-	state->timescale =        state->set_timescale; //! current timescale, default 1
+	state->timescale = state->set_timescale; //! current timescale, default 1
 ///debug
 	int * ifp =      (int*)&(state->frame_params);
 	int * ifp_this = (int*)&(state->this_frame_params);
@@ -354,7 +372,7 @@ int camogm_start(void)
 		//! exit on unknown formats?
 	}
 	state->max_frames =       state->set_max_frames;
-	state->frames_per_chunk = state->frames_per_chunk;
+	state->frames_per_chunk = state->set_frames_per_chunk;
 	state->starting = 1; //!may be already set
 //! Check/set circbuf read pointer
 	D3(fprintf(debug_file, "1: state->cirbuf_rp=0x%x\n", state->cirbuf_rp));
@@ -368,10 +386,10 @@ int camogm_start(void)
 		}
 		state->buf_overruns++;
 //! file pointer here should match state->rp; so no need to do    lseek(state->fd_circ,state->cirbuf_rp,SEEK_SET);
-		state->buf_min = getGPValue(G_FREECIRCBUF);
+		state->buf_min = getGPValue(state->port_num, G_FREECIRCBUF);
 
 	} else {
-		if (state->buf_min > getGPValue(G_FREECIRCBUF)) state->buf_min = getGPValue(G_FREECIRCBUF);
+		if (state->buf_min > getGPValue(state->port_num, G_FREECIRCBUF)) state->buf_min = getGPValue(state->port_num, G_FREECIRCBUF);
 
 	}
 	D3(fprintf(debug_file, "3: state->cirbuf_rp=0x%x\n", state->cirbuf_rp));
@@ -385,7 +403,7 @@ int camogm_start(void)
 
 ///==================================
 
-	memcpy(&(state->frame_params), (unsigned long* )&ccam_dma_buf[state->metadata_start >> 2], 32);
+	memcpy(&(state->frame_params), (unsigned long* )&ccam_dma_buf[state->port_num][state->metadata_start >> 2], 32);
 	state->jpeg_len = state->frame_params.frame_length; //! frame_params.frame_length are now the length of bitstream
 
 
@@ -400,7 +418,7 @@ int camogm_start(void)
 ///==================================
 	timestamp_start = (state->cirbuf_rp) + ((state->jpeg_len + CCAM_MMAP_META + 3) & (~0x1f)) + 32 - CCAM_MMAP_META_SEC; //! magic shift - should index first byte of the time stamp
 	if (timestamp_start >= state->circ_buff_size) timestamp_start -= state->circ_buff_size;
-	memcpy(&(state->frame_params.timestamp_sec), (unsigned long* )&ccam_dma_buf[timestamp_start >> 2], 8);
+	memcpy(&(state->frame_params.timestamp_sec), (unsigned long* )&ccam_dma_buf[state->port_num][timestamp_start >> 2], 8);
 /// New - see if current timestamp is later than start one, if not return "CAMOGM_TOO_EARLY" reset read pointer and buffer read pointer
 	if (state->start_after_timestamp > 0.0) { /// don't bother if it is 0
 		dtime_stamp = 0.000001 * state->frame_params.timestamp_usec + state->frame_params.timestamp_sec;
@@ -422,7 +440,7 @@ int camogm_start(void)
 	}
 	next_metadata_start = fp - 32;
 	if (next_metadata_start < 0) next_metadata_start += state->circ_buff_size;
-	memcpy(&(state->this_frame_params), (unsigned long* )&ccam_dma_buf[next_metadata_start >> 2], 32);
+	memcpy(&(state->this_frame_params), (unsigned long* )&ccam_dma_buf[state->port_num][next_metadata_start >> 2], 32);
 	next_jpeg_len = state->this_frame_params.frame_length;  //! frame_params.frame_length are now the length of bitstream
 	if (state->this_frame_params.signffff != 0xffff) {      //! should not happen ever
 		D0(fprintf(debug_file, "%s:%d: wrong signature - %d\r\n", __FILE__, __LINE__, (int)state->this_frame_params.signffff));
@@ -439,7 +457,7 @@ int camogm_start(void)
 //! find location of the timestamp and copy it to the frame_params structure
 	timestamp_start = fp + ((next_jpeg_len + CCAM_MMAP_META + 3) & (~0x1f)) + 32 - CCAM_MMAP_META_SEC; //! magic shift - should index first byte of the time stamp
 	if (timestamp_start >= state->circ_buff_size) timestamp_start -= state->circ_buff_size;
-	memcpy(&(state->this_frame_params.timestamp_sec), (unsigned long* )&ccam_dma_buf[timestamp_start >> 2], 8);
+	memcpy(&(state->this_frame_params.timestamp_sec), (unsigned long* )&ccam_dma_buf[state->port_num][timestamp_start >> 2], 8);
 //! verify that the essential current frame params did not change, if they did - return an error (need new file header)
 	if (!state->ignore_fps && ((state->frame_params.width  != state->this_frame_params.width) ||
 				   (state->frame_params.height != state->this_frame_params.height))) {
@@ -486,16 +504,16 @@ int camogm_start(void)
 //!here we are ready to initialize Ogm (or other) file
 	switch (state->format) {
 	case CAMOGM_FORMAT_NONE: rslt = 0;  break;
-	case CAMOGM_FORMAT_OGM:  rslt = camogm_start_ogm();  break;
-	case CAMOGM_FORMAT_JPEG: rslt = camogm_start_jpeg(); break;
-	case CAMOGM_FORMAT_MOV:  rslt = camogm_start_mov();  break;
+	case CAMOGM_FORMAT_OGM:  rslt = camogm_start_ogm(state);  break;
+	case CAMOGM_FORMAT_JPEG: rslt = camogm_start_jpeg(state); break;
+	case CAMOGM_FORMAT_MOV:  rslt = camogm_start_mov(state);  break;
 	default: rslt = 0; // do nothing
 	}
 	if (rslt) {
 		D0(fprintf(debug_file, "camogm_start() error, rslt=0x%x\n", rslt));
 		return rslt;
 	}
-	if (state->kml_enable) rslt = camogm_start_kml();  // will turn on state->kml_used if it can
+	if (state->kml_enable) rslt = camogm_start_kml(state);  // will turn on state->kml_used if it can
 	if (rslt) return rslt;
 	state->running = 1;
 	state->starting = 0;
@@ -504,7 +522,7 @@ int camogm_start(void)
 }
 
 
-int  sendImageFrame(void)
+int sendImageFrame(camogm_state *state)
 {
 	int rslt;
 	unsigned char frame_packet_type = PACKET_IS_SYNCPOINT;
@@ -562,7 +580,7 @@ int  sendImageFrame(void)
 	D3(fprintf(debug_file, "_1_"));
 	state->metadata_start = state->cirbuf_rp - 32;
 	if (state->metadata_start < 0) state->metadata_start += state->circ_buff_size;
-	memcpy(&(state->this_frame_params), (unsigned long* )&ccam_dma_buf[state->metadata_start >> 2], 32);
+	memcpy(&(state->this_frame_params), (unsigned long* )&ccam_dma_buf[state->port_num][state->metadata_start >> 2], 32);
 	state->jpeg_len = state->this_frame_params.frame_length; //! frame_params.frame_length are now the length of bitstream
 	if (state->this_frame_params.signffff != 0xffff) {
 		D0(fprintf(debug_file, "%s:%d: wrong signature - %d\r\n", __FILE__, __LINE__, (int)state->this_frame_params.signffff));
@@ -577,7 +595,7 @@ int  sendImageFrame(void)
 	timestamp_start = state->cirbuf_rp + ((state->jpeg_len + CCAM_MMAP_META + 3) & (~0x1f)) + 32 - CCAM_MMAP_META_SEC; //! magic shift - should index first byte of the time stamp
 	if (timestamp_start >= state->circ_buff_size) timestamp_start -= state->circ_buff_size;
 	D3(fprintf(debug_file, "_3_"));
-	memcpy(&(state->this_frame_params.timestamp_sec), (unsigned long* )&ccam_dma_buf[timestamp_start >> 2], 8);
+	memcpy(&(state->this_frame_params.timestamp_sec), (unsigned long* )&ccam_dma_buf[state->port_num][timestamp_start >> 2], 8);
 //! verify that the essential current frame params did not change, if they did - return an error (need new file header)
 	if (!state->ignore_fps && ((state->frame_params.width  != state->this_frame_params.width) ||
 				   (state->frame_params.height != state->this_frame_params.height))) {
@@ -642,7 +660,7 @@ int  sendImageFrame(void)
 /*! copy from the beginning of the frame to the end of the buffer */
 		D3(fprintf(debug_file, "_10_"));
 		state->packetchunks[state->chunk_index  ].bytes = state->circ_buff_size - state->cirbuf_rp;
-		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->cirbuf_rp >> 2];
+		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][state->cirbuf_rp >> 2];
 /*! copy from the beginning of the buffer to the end of the frame */
 		state->packetchunks[state->chunk_index  ].bytes = state->jpeg_len - (state->circ_buff_size - state->cirbuf_rp);
 		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[0];
@@ -651,7 +669,7 @@ int  sendImageFrame(void)
 
 /*! copy from the beginning of the frame to the end of the frame (no buffer rollovers) */
 		state->packetchunks[state->chunk_index  ].bytes = state->jpeg_len;
-		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->cirbuf_rp >> 2];
+		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][state->cirbuf_rp >> 2];
 	}
 	D3(fprintf(debug_file, "_12_"));
 	state->packetchunks[state->chunk_index  ].bytes = 2;
@@ -659,16 +677,16 @@ int  sendImageFrame(void)
 
 	switch (state->format) {
 	case CAMOGM_FORMAT_NONE: rslt = 0; break;
-	case CAMOGM_FORMAT_OGM:  rslt = camogm_frame_ogm(); break;
-	case CAMOGM_FORMAT_JPEG: rslt = camogm_frame_jpeg(); break;
-	case CAMOGM_FORMAT_MOV:  rslt = camogm_frame_mov(); break;
+	case CAMOGM_FORMAT_OGM:  rslt = camogm_frame_ogm(state); break;
+	case CAMOGM_FORMAT_JPEG: rslt = camogm_frame_jpeg(state); break;
+	case CAMOGM_FORMAT_MOV:  rslt = camogm_frame_mov(state); break;
 	default: rslt = 0; // do nothing
 	}
 	if (rslt) {
 		D3(fprintf(debug_file, "sendImageFrame:12: camogm_frame_***() returned 0x%x\n", rslt));
 		return rslt;
 	}
-	if (state->kml_used) rslt = camogm_frame_kml();  // will turn on state->kml_used if it can
+	if (state->kml_used) rslt = camogm_frame_kml(state);  // will turn on state->kml_used if it can
 	if (rslt) return rslt;
 
 	D3(fprintf(debug_file, "_14_"));
@@ -687,8 +705,7 @@ int  sendImageFrame(void)
 }
 
 
-
-int camogm_stop(void)
+int camogm_stop(camogm_state *state)
 {
 	int rslt = 0;
 
@@ -702,12 +719,12 @@ int camogm_stop(void)
 		return 0;
 	}
 	D1(fprintf(debug_file, "Ending recording\n"));
-	if (state->kml_used) camogm_end_kml();
+	if (state->kml_used) camogm_end_kml(state);
 	switch (state->format) {
 	case CAMOGM_FORMAT_NONE: rslt = 0; break;
-	case CAMOGM_FORMAT_OGM:  rslt = camogm_end_ogm(); break;
+	case CAMOGM_FORMAT_OGM:  rslt = camogm_end_ogm(state); break;
 	case CAMOGM_FORMAT_JPEG: rslt = camogm_end_jpeg(); break;
-	case CAMOGM_FORMAT_MOV:  rslt = camogm_end_mov(); break;
+	case CAMOGM_FORMAT_MOV:  rslt = camogm_end_mov(state); break;
 ///    default: return 0; // do nothing
 	}
 //! now close video file (if it is open)
@@ -721,7 +738,7 @@ int camogm_stop(void)
 	return 0;
 }
 
-void camogm_free()
+void camogm_free(camogm_state *state)
 {
 	int f;
 
@@ -740,80 +757,81 @@ void camogm_free()
 	state->formats = 0;
 }
 
-int camogm_reset(void)   //! reset circbuf read pointer
+int camogm_reset(camogm_state *state)   //! reset circbuf read pointer
 {
+
 	state->cirbuf_rp = -1;
 	state->buf_overruns = -1; //!first will not count
 	return 0;
 }
 
 ///kml stuff
-void  camogm_kml_set_enable(int d)
+void  camogm_kml_set_enable(camogm_state *state, int d)
 {
 	state->kml_enable = d;
 }
-void  camogm_kml_set_horHalfFov(double dd)
+void  camogm_kml_set_horHalfFov(camogm_state *state, double dd)
 {
 	state->kml_horHalfFov = dd;
 }
-void  camogm_kml_set_vertHalfFov(double dd)
+void  camogm_kml_set_vertHalfFov(camogm_state *state, double dd)
 {
 	state->kml_vertHalfFov = dd;
 }
-void  camogm_kml_set_height_mode(int d)
+void  camogm_kml_set_height_mode(camogm_state *state, int d)
 {
 	state->kml_height_mode = d;
 }
-void  camogm_kml_set_height(double dd)
+void  camogm_kml_set_height(camogm_state *state, double dd)
 {
 	state->kml_height = dd;
 }
-void  camogm_kml_set_period(int d)
+void  camogm_kml_set_period(camogm_state *state, int d)
 {
 	state->kml_period = d;
 	state->kml_last_ts = 0;
 	state->kml_last_uts = 0;
 }
-void  camogm_kml_set_near(double dd)   // distance to PhotoOverlay
+void  camogm_kml_set_near(camogm_state *state, double dd)   // distance to PhotoOverlay
 {
 	state->kml_near = dd;
 }
 
 
-void  camogm_set_segment_duration(int sd)
+void  camogm_set_segment_duration(camogm_state *state, int sd)
 {
 	state->segment_duration = sd;
 }
-void  camogm_set_segment_length(int sl)
+void  camogm_set_segment_length(camogm_state *state, int sl)
 {
 	state->segment_length =   sl;
 }
-void  camogm_set_save_gp(int d)
+void  camogm_set_save_gp(camogm_state *state, int d)
 {
 	state->save_gp =   d;
 }
-void  camogm_set_exif(int d)
+void  camogm_set_exif(camogm_state *state, int d)
 {
 	state->exif =   d;
 }
 
 
-void  camogm_set_greedy(int d)
+void  camogm_set_greedy(camogm_state *state, int d)
 {
 	state->greedy =   d ? 1 : 0;
 }
-void  camogm_set_ignore_fps(int d)
+void  camogm_set_ignore_fps(camogm_state *state, int d)
 {
 	state->ignore_fps =   d ? 1 : 0;
 }
 
-void  camogm_set_prefix(const char * p)
+void  camogm_set_prefix(camogm_state *state, const char * p)
 {
 	strncpy(state->path_prefix, p, sizeof(state->path_prefix) - 1);
 	state->path_prefix[sizeof(state->path_prefix) - 1] = '\0';
 }
 
-void  camogm_set_timescale(double d)   //! set timescale, default=1,000,000
+void  camogm_set_timescale(camogm_state *state, double d)   //! set timescale, default=1,000,000
 {
 	state->set_timescale =  d;
 	if ((state->running == 0) && (state->starting == 0)) {
@@ -821,18 +839,18 @@ void  camogm_set_timescale(double d)   //! set timescale, default=1,000,000
 	}
 }
 
-void  camogm_set_frames_skip(int d)   //! set frames to skip (for time lapse)
+void  camogm_set_frames_skip(camogm_state *state, int d)   //! set frames to skip (for time lapse)
 {
 	state->set_frames_skip =  d;
 	if ((state->running == 0) && (state->starting == 0)) {
 		state->frames_skip =      state->set_frames_skip;
-//     state->frames_skip_left= state->set_frames_skip;
+//     state->frames_skip_left= state->set_fram_skip;
 		state->frames_skip_left = 0;
 	}
 }
 
 
-void  camogm_set_format(int d)
+void  camogm_set_format(camogm_state *state, int d)
 {
 	int rslt = 0;
 
@@ -852,23 +870,23 @@ void  camogm_set_format(int d)
 	}
 }
 //! needed for Quicktime - maybe something else?
-void  camogm_set_max_frames(int d)
+void  camogm_set_max_frames(camogm_state *state, int d)
 {
 	state->set_max_frames =  d;
 	if ((state->running == 0) && (state->starting == 0)) state->max_frames =  d;
 }
-void  camogm_set_frames_per_chunk(int d)
+void  camogm_set_frames_per_chunk(camogm_state *state, int d)
 {
 	state->set_frames_per_chunk =  d;
 	if ((state->running == 0) && (state->starting == 0)) state->frames_per_chunk =  d;
 }
-void  camogm_set_start_after_timestamp(double d)
+void  camogm_set_start_after_timestamp(camogm_state *state, double d)
 {
 	state->start_after_timestamp =  d;
 }
 
 
-void  camogm_status(char * fn, int xml)
+void  camogm_status(camogm_state *state, char * fn, int xml)
 {
 	int _len = 0;
 	int _dur, _udur;
@@ -887,9 +905,9 @@ void  camogm_status(char * fn, int xml)
 	_kml_height_mode = state->kml_height_mode ? "GPS altitude" : "map ground level"; //! 1 - actual, 0 - ground
 
 
-	_b_free = getGPValue(G_FREECIRCBUF);
-	_b_used = getGPValue(G_CIRCBUFSIZE) - getGPValue(G_FREECIRCBUF);
-	_b_size = getGPValue(G_FRAME_SIZE);
+	_b_free = getGPValue(state->port_num, G_FREECIRCBUF);
+	_b_used = getGPValue(state->port_num, G_CIRCBUFSIZE) - getGPValue(state->port_num, G_FREECIRCBUF);
+	_b_size = getGPValue(state->port_num, G_FRAME_SIZE);
 
 	if (!fn) f = stdout;
 	else if (strcmp(fn, "stdout") == 0) f = stdout;
@@ -918,7 +936,7 @@ void  camogm_status(char * fn, int xml)
 					       "other"))) : "none";
 	_using_exif =    state->exif ? "yes" : "no";
 	_using_global_pointer = state->save_gp ? "yes" : "no";
-	_compressor_state = (getGPValue(P_COMPRESSOR_RUN) == 2) ? "running" : "stoppped";
+	_compressor_state = (getGPValue(state->port_num, P_COMPRESSOR_RUN) == 2) ? "running" : "stoppped";
 	if ( state->frames_skip > 0 ) {
 		_frames_remain = state->frames_skip_left;
 		_frames_skip = state->frames_skip;
@@ -1081,7 +1099,7 @@ char * getLineFromPipe(FILE* npipe)
 	}
 }
 // command[= \t]*args[ \t]*
-int parse_cmd(FILE* npipe)
+int parse_cmd(camogm_state *state, FILE* npipe)
 {
 	char * cmd;
 	char * args;
@@ -1096,7 +1114,7 @@ int parse_cmd(FILE* npipe)
 	D2(fprintf(debug_file, "Got command: '%s'\n", cmd));
 
 /// Acknowledge received command by copying frame number to per-daemon parameter
-	GLOBALPARS(G_DAEMON_ERR + lastDaemonBit) = GLOBALPARS(G_THIS_FRAME);
+	GLOBALPARS(state->port_num, G_DAEMON_ERR + lastDaemonBit[state->port_num]) = GLOBALPARS(state->port_num, G_THIS_FRAME);
 //  printf ("cmd[0]=%d:%s\n",(int) cmd[0],cmd);
 	args = strpbrk(cmd, "= \t");
 //! is it just a single word command or does it have parameters?
@@ -1112,47 +1130,47 @@ int parse_cmd(FILE* npipe)
 	}
 //! now cmd is trimmed, arg is NULL or a pointer to trimmed command arguments
 	if (strcmp(cmd, "start") == 0) {
-		camogm_start();
+		camogm_start(state);
 		return 1;
 	} else if (strcmp(cmd, "reset") == 0) { //! will reset pointer to the last acquired frame (if any)
-		camogm_reset();
+		camogm_reset(state);
 		return 2;
 	} else if (strcmp(cmd, "stop") == 0) {
-		camogm_stop();
+		camogm_stop(state);
 		return 3;
 	} else if (strcmp(cmd, "exit") == 0) {
-		camogm_stop();
-		camogm_free();
+		camogm_stop(state);
+		camogm_free(state);
 		exit(0);
 	} else if (strcmp(cmd, "duration") == 0) {
 		if (!(args) || (((d = strtol(args, NULL, 10))) <= 0)) d = DEFAULT_DURATION;
-		camogm_set_segment_duration(d);
+		camogm_set_segment_duration(state, d);
 		return 4;
 	} else if (strcmp(cmd, "length") == 0) {
 		if (!(args) || (((d = strtol(args, NULL, 10))) <= 0)) d = DEFAULT_LENGTH;
-		camogm_set_segment_length(d);
+		camogm_set_segment_length(state, d);
 		return 5;
 	} else if (strcmp(cmd, "prefix") == 0) {
-		if (args) camogm_set_prefix(args);
+		if (args) camogm_set_prefix(state, args);
 		return 6;
 	} else if (strcmp(cmd, "status") == 0) {
-		camogm_status(args, 0);
+		camogm_status(state, args, 0);
 		return 7;
 	} else if (strcmp(cmd, "xstatus") == 0) {
-		camogm_status(args, 1);
+		camogm_status(state, args, 1);
 		return 7;
 	} else if (strcmp(cmd, "save_gp") == 0) {
-		if ((args) && (((d = strtol(args, NULL, 10))) >= 0)) camogm_set_save_gp(d);
+		if ((args) && (((d = strtol(args, NULL, 10))) >= 0)) camogm_set_save_gp(state, d);
 		return 8;
 	} else if (strcmp(cmd, "exif") == 0) {
-		if ((args) && (((d = strtol(args, NULL, 10))) >= 0)) camogm_set_exif(d);
+		if ((args) && (((d = strtol(args, NULL, 10))) >= 0)) camogm_set_exif(state, d);
 		return 8;
 	} else if (strcmp(cmd, "debug") == 0) {
-		camogm_debug(args);
+		camogm_debug(state, args);
 		return 9;
 	} else if (strcmp(cmd, "timescale") == 0) {
 		dd = strtod(args, NULL);
-		camogm_set_timescale(dd ? dd : 1.0);
+		camogm_set_timescale(state, dd ? dd : 1.0);
 		return 10;
 //!TODO: fix period calculation/check for frame skipping (just disable in frame skip mode?)
 //!TODO: add time period (system clock), not just frame skipping
@@ -1160,18 +1178,18 @@ int parse_cmd(FILE* npipe)
 
 	} else if (strcmp(cmd, "frameskip") == 0) {
 		d = strtol(args, NULL, 10);
-		camogm_set_frames_skip(d);
+		camogm_set_frames_skip(state, d);
 		return 11;
 	} else if (strcmp(cmd, "timelapse") == 0) { //! period (in seconds) between stored frames
 		d = strtol(args, NULL, 10);
-		camogm_set_frames_skip(-d);
+		camogm_set_frames_skip(state, -d);
 		return 11;
 	} else if (strcmp(cmd, "format") == 0) {
 		if (args) {
-			if (strcmp(args,  "none") == 0) camogm_set_format(0);
-			else if ((strcmp(args, "ogm" ) == 0) || (strcmp(args, "ogg") == 0)) camogm_set_format(CAMOGM_FORMAT_OGM);
-			else if ((strcmp(args, "jpeg") == 0) || (strcmp(args, "jpg") == 0)) camogm_set_format(CAMOGM_FORMAT_JPEG);
-			else if (strcmp(args,  "mov" ) == 0) camogm_set_format(CAMOGM_FORMAT_MOV);
+			if (strcmp(args,  "none") == 0) camogm_set_format(state, 0);
+			else if ((strcmp(args, "ogm" ) == 0) || (strcmp(args, "ogg") == 0)) camogm_set_format(state, CAMOGM_FORMAT_OGM);
+			else if ((strcmp(args, "jpeg") == 0) || (strcmp(args, "jpg") == 0)) camogm_set_format(state, CAMOGM_FORMAT_JPEG);
+			else if (strcmp(args,  "mov" ) == 0) camogm_set_format(state, CAMOGM_FORMAT_MOV);
 		}
 		return 12;
 	} else if (strcmp(cmd, "debuglev") == 0) {
@@ -1179,61 +1197,111 @@ int parse_cmd(FILE* npipe)
 		camogm_debug_level(d ? d : 0);
 		return 13;
 	} else if (strcmp(cmd, "kml") == 0) {
-		if ((args) && (((d = strtol(args, NULL, 10))) >= 0)) camogm_kml_set_enable(d);
+		if ((args) && (((d = strtol(args, NULL, 10))) >= 0)) camogm_kml_set_enable(state, d);
 		return 14;
 	} else if (strcmp(cmd, "kml_hhf") == 0) {
 		dd = strtod(args, NULL);
-		camogm_kml_set_horHalfFov(dd);
+		camogm_kml_set_horHalfFov(state, dd);
 		return 15;
 	} else if (strcmp(cmd, "kml_vhf") == 0) {
 		dd = strtod(args, NULL);
-		camogm_kml_set_vertHalfFov(dd);
+		camogm_kml_set_vertHalfFov(state, dd);
 		return 16;
 	} else if (strcmp(cmd, "kml_near") == 0) {
 		dd = strtod(args, NULL);
-		camogm_kml_set_near(dd);
+		camogm_kml_set_near(state, dd);
 		return 17;
 	} else if (strcmp(cmd, "kml_alt") == 0) {
 		if (args) {
-			if (strcmp(args, "gps"   ) == 0) camogm_kml_set_height_mode(1);
-			else if (strcmp(args, "ground") == 0) camogm_kml_set_height_mode(0);
+			if (strcmp(args, "gps"   ) == 0) camogm_kml_set_height_mode(state, 1);
+			else if (strcmp(args, "ground") == 0) camogm_kml_set_height_mode(state, 0);
 		}
 		return 18;
 	} else if (strcmp(cmd, "kml_height") == 0) {
 		dd = strtod(args, NULL);
-		camogm_kml_set_height(dd);
+		camogm_kml_set_height(state, dd);
 		return 19;
 	} else if (strcmp(cmd, "kml_period") == 0) {
 		d = strtol(args, NULL, 10);
-		camogm_kml_set_period(d ? d : 1);
+		camogm_kml_set_period(state, d ? d : 1);
 		return 20;
 	} else if (strcmp(cmd, "frames_per_chunk") == 0) {
 		d = strtol(args, NULL, 10);
-		camogm_set_frames_per_chunk(d);
+		camogm_set_frames_per_chunk(state, d);
 		return 21;
 	} else if (strcmp(cmd, "max_frames") == 0) {
 		d = strtol(args, NULL, 10);
-		camogm_set_max_frames(d);
+		camogm_set_max_frames(state, d);
 		return 22;
 	} else if (strcmp(cmd, "start_after_timestamp") == 0) {
 		dd = strtod(args, NULL);
-		camogm_set_start_after_timestamp(dd);
+		camogm_set_start_after_timestamp(state, dd);
 		return 23;
 	} else if (strcmp(cmd, "greedy") == 0) {
 		dd = strtod(args, NULL);
-		camogm_set_greedy(dd);
+		camogm_set_greedy(state, dd);
 		return 24;
 	} else if (strcmp(cmd, "ignore_fps") == 0) {
 		dd = strtod(args, NULL);
-		camogm_set_ignore_fps(dd);
+		camogm_set_ignore_fps(state, dd);
 		return 25;
 	}
 	return -1;
 }
 
+/**
+ * @brief Create a list of pipe names from a single name given
+ *
+ * This function accepts a pipe name string provided by the user to the program and
+ * creates a list of #SENSOR_PORTS similar names but with port number added to the end of
+ * the name.
+ * @param[in]   pipe_name   pipe name provided by user
+ * @param[out]  names       a list of names with port number added
+ * return       0 if the list was successfully created or -1 otherwise
+ */
+int create_pipe_names(const char *pipe_name, char **names)
+{
+	int ret = 0;
+	unsigned int len = strlen(pipe_name);
+
+	for (int i = 0; i < SENSOR_PORTS; i++) {
+		char *name = malloc(PATH_MAX);
+		if (name == NULL) {
+			ret = -1;
+			break;
+		}
+		strncpy(name, pipe_name, PATH_MAX - 1);
+		snprintf(&name[len], PATH_MAX - len - 1, "%u", i);
+		names[i] = name;
+	}
+
+	return ret;
+}
+
+/**
+ * @brief This function closes open files and deletes allocated memory.
+ * @param[in]   state   pointer to #camogm_state structure for a particular sensor channel
+ * @param[in]   names   list of strings containing control pipe names
+ * return       none
+ */
+void clean_up(camogm_state *state, char **names)
+{
+	if (state->fd_exif > 0)
+		close(state->fd_exif);
+	if (state->fd_head > 0)
+		close(state->fd_head);
+	if (state->fd_circ > 0)
+		close(state->fd_circ);
+	if (state->fd_fparmsall)
+		close(state->fd_fparmsall);
+	for (int i = 0; i < SENSOR_PORTS; i++) {
+		free(names[i]);
+		names[i] = NULL;
+	}
+}
+
 int main(int argc, char *argv[])
 {
-	const char circbufFileName[] = "/dev/circbuf";
 //     int fd_circ;
 	FILE * cmd_file;
 	const char usage[] =   "This program allows recording of the video/images acquired by Elphel camera to the storage media.\n" \
@@ -1258,98 +1326,108 @@ int main(int argc, char *argv[])
 	int cmd;
 	int i, rslt;
 	int fp0, fp1;           // debugging
+	/* debug code follows */
+	unsigned int port = 2;
+	/*end of debug code */
+	camogm_state *state = &sstate[port];
+	char *pipe_names[SENSOR_PORTS] = {0};
 
-	state = &sstate;        //extern
+//	state = &sstate;        //extern
 //! no command line options processing yet
 	if ((argc < 2) || (argv[1][1] == '-')) {
 		printf(usage, argv[0], argv[0]);
+		clean_up(state, pipe_names);
 		return 0;
 	}
-	camogm_init();
+	camogm_init(state, port);
+	create_pipe_names(argv[1], pipe_names);
 
 //! open Exif header file
-	state->fd_exif = open(ExifFileName, O_RDONLY);
+	state->fd_exif = open(exifFileNames[port], O_RDONLY);
 	if (state->fd_exif < 0) { // check control OK
-		D0(fprintf(debug_file, "Error opening %s\n", ExifFileName));
+		D0(fprintf(debug_file, "Error opening %s\n", exifFileNames[port]));
 		return -1;
 	}
 
 //! open JPEG header file
-	state->fd_head = open(HeadFileName, O_RDWR);
+	state->fd_head = open(headFileNames[port], O_RDWR);
 	if (state->fd_head < 0) { // check control OK
-		D0(fprintf(debug_file, "Error opening %s\n", HeadFileName));
+		D0(fprintf(debug_file, "Error opening %s\n", headFileNames[port]));
+		clean_up(state, pipe_names);
 		return -1;
 	}
 	state->head_size = lseek(state->fd_head, 0, SEEK_END);
 	if (state->head_size > JPEG_HEADER_MAXSIZE) {
 		D0(fprintf(debug_file, "%s:%d: Too big JPEG header (%d > %d)", __FILE__, __LINE__, state->head_size, JPEG_HEADER_MAXSIZE ));
+		clean_up(state, pipe_names);
 		return -2;
 	}
 
 //! open circbuf and mmap it (once at startup)
-	state->fd_circ = open(circbufFileName, O_RDWR);
+	state->fd_circ = open(circbufFileNames[port], O_RDWR);
 	if (state->fd_circ < 0) { // check control OK
-		D0(fprintf(debug_file, "Error opening %s\n", circbufFileName));
+		D0(fprintf(debug_file, "Error opening %s\n", circbufFileNames[port]));
+		clean_up(state, pipe_names);
 		return -2;
 	}
 /*! find total buffer length (it is in defines, actually in c313a.h */
 	state->circ_buff_size = lseek(state->fd_circ, 0, SEEK_END);
-	ccam_dma_buf = (unsigned long*)mmap(0, state->circ_buff_size, PROT_READ, MAP_SHARED, state->fd_circ, 0);
-	if ((int)ccam_dma_buf == -1) {
-		D0(fprintf(debug_file, "Error in mmap of %s\n", circbufFileName));
-//     close (fd_head);
-		close(state->fd_circ);
+	ccam_dma_buf[port] = (unsigned long*)mmap(0, state->circ_buff_size, PROT_READ, MAP_SHARED, state->fd_circ, 0);
+	if ((int)ccam_dma_buf[port] == -1) {
+		D0(fprintf(debug_file, "Error in mmap of %s\n", circbufFileNames[port]));
+		clean_up(state, pipe_names);
 		return -3;
 	}
 
 //! Now open/mmap file to read sensor/compressor parameters (currently - just free memory in circbuf and compressor state)
 
 //! open circbuf and mmap it (once at startup)
-	state->fd_fparmsall = open(ctlFileName, O_RDWR);
+	state->fd_fparmsall = open(ctlFileNames[port], O_RDWR);
 	if (state->fd_fparmsall < 0) { // check control OK
-		D0(fprintf(debug_file, "%s:%d:%s: Error opening %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileName));
+		D0(fprintf(debug_file, "%s:%d:%s: Error opening %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileNames[port]));
+		clean_up(state, pipe_names);
 		return -2;
 	}
 
 //! now try to mmap
 ///    frameParsAll = (struct framepars_all_t *) mmap(0, sizeof (struct framepars_all_t) , PROT_READ, MAP_SHARED, state->fd_fparmsall, 0);
 /// PROT_WRITE - only to write acknowledge
-	frameParsAll = (struct framepars_all_t*)mmap(0, sizeof(struct framepars_all_t), PROT_READ | PROT_WRITE, MAP_SHARED, state->fd_fparmsall, 0);
-
-	if ((int)frameParsAll == -1) {
-		D0(fprintf(debug_file, "%s:%d:%s: Error in mmap in %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileName));
-		close(state->fd_fparmsall);
-		close(state->fd_circ);
+	frameParsAll[port] = (struct framepars_all_t*)mmap(0, sizeof(struct framepars_all_t), PROT_READ | PROT_WRITE, MAP_SHARED, state->fd_fparmsall, 0);
+	if ((int)frameParsAll[port] == -1) {
+		D0(fprintf(debug_file, "%s:%d:%s: Error in mmap in %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileNames[port]));
+		clean_up(state, pipe_names);
 		return -3;
 	}
-	framePars = frameParsAll->framePars;
-	globalPars = frameParsAll->globalPars;
+	framePars[port] = frameParsAll[port]->framePars;
+	globalPars[port] = frameParsAll[port]->globalPars;
 
 //!create a named pipe
 //!always delete the pipe if it existed, start a fresh one
-	i = unlink(argv[1]);
+	i = unlink(pipe_names[port]);
 	if (i) {
-		D1(fprintf(debug_file, "Unlink %s returned %d, errno=%d \n", argv[1], i, errno));
+		D1(fprintf(debug_file, "Unlink %s returned %d, errno=%d \n", pipe_names[port], i, errno));
 	}
-	i = mkfifo(argv[1], 0777); //EEXIST
+	i = mkfifo(pipe_names[port], 0777); //EEXIST
 //! now should not exist
 	if (i) {
 		if (errno == EEXIST) {
-			D1(fprintf(debug_file, "Named pipe %s already exists, will use it.\n", argv[1]));
+			D1(fprintf(debug_file, "Named pipe %s already exists, will use it.\n", pipe_names[port]));
 		} else {
-			D0(fprintf(debug_file, "Can not create a named pipe %s, errno=%d \n", argv[1], errno));
+			D0(fprintf(debug_file, "Can not create a named pipe %s, errno=%d \n", pipe_names[port], errno));
+			clean_up(state, pipe_names);
 			return -4;
 		}
 	}
 
 //!now open the pipe - will block until something will be written (or just open for writing
 //!Reads themselves will not block
-	if (!((cmd_file = fopen(argv[1], "r")))) {
-		D0(fprintf(debug_file, "Can not open command file %s\n", argv[1]));
+	if (!((cmd_file = fopen(pipe_names[port], "r")))) {
+		D0(fprintf(debug_file, "Can not open command file %s\n", pipe_names[port]));
+		clean_up(state, pipe_names);
 		return -5;
 	}
 //   D1(fprintf (debug_file,"Pipe %s open for reading\n",argv[1]));
-	D0(fprintf(debug_file, "Pipe %s open for reading\n", argv[1])); // to make sure something is sent out
+	D0(fprintf(debug_file, "Pipe %s open for reading\n", pipe_names[port])); // to make sure something is sent out
 
 //! Here is a main loop. If recording is on, it will check for commands after each frame, if it is off - poll with fixed usleep
 #define COMMAND_LOOP_DELAY 500000 //0.5sec
@@ -1358,7 +1436,7 @@ int main(int argc, char *argv[])
 //   D3(fprintf (debug_file,"%s:%d: format=%d, set_format=%d\n",__FILE__,__LINE__, state->format, state->set_format));
 
 //! look at command queue first
-		cmd = parse_cmd(cmd_file);
+		cmd = parse_cmd(state, cmd_file);
 		if (cmd) {
 			if (cmd < 0) D0(fprintf(debug_file, "Unrecognized command\n"));
 /// Acknowledge received command by copying frame number to per-daemon parameter
@@ -1367,7 +1445,7 @@ int main(int argc, char *argv[])
 		} else if (state->running) { //!no commands in queue, started
 //   D3(fprintf (debug_file,"%s:%d: format=%d, set_format=%d\n",__FILE__,__LINE__, state->format, state->set_format));
 
-			switch ((rslt = -sendImageFrame())) {
+			switch ((rslt = -sendImageFrame(state))) {
 			case 0:
 /*
           D3(fprintf (debug_file,"%s:line %d - sendImageFrame() returned %d\n" \
@@ -1403,8 +1481,8 @@ int main(int argc, char *argv[])
 			case  CAMOGM_FRAME_BROKEN:      //! frame broken (buffer overrun)
 //! restart the file
 //     D3(fprintf (debug_file,"%s:line %d - sendImageFrame() returned -%d\n",__FILE__,__LINE__,rslt));
-				camogm_stop();
-				camogm_start();
+				camogm_stop(state);
+				camogm_start(state);
 				break;
 			case  CAMOGM_FRAME_FILE_ERR:    //! error with file I/O
 			case  CAMOGM_FRAME_OTHER:       //! other errors
@@ -1412,6 +1490,7 @@ int main(int argc, char *argv[])
 				break;
 			default:
 				D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
+				clean_up(state, pipe_names);
 				exit(-1);
 			} //switch
 			if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED)) state->last_error_code = rslt;
@@ -1419,7 +1498,7 @@ int main(int argc, char *argv[])
 //   D3(fprintf (debug_file,"%s:%d: format=%d, set_format=%d\n",__FILE__,__LINE__, state->format, state->set_format));
 
 //!retry starting
-			switch ((rslt = -camogm_start())) {
+			switch ((rslt = -camogm_start(state))) {
 			case 0:                       break;                            //! file started OK, nothing to do
 			case CAMOGM_TOO_EARLY:
 				lseek(state->fd_circ, LSEEK_CIRC_TOWP, SEEK_END);       /// set pointer to the frame to wait for
@@ -1442,6 +1521,7 @@ int main(int argc, char *argv[])
 				break;
 			default:
 				D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
+				clean_up(state, pipe_names);
 				exit(-1);
 			} //switch
 			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) ) state->last_error_code = rslt;
@@ -1450,55 +1530,60 @@ int main(int argc, char *argv[])
 			usleep( COMMAND_LOOP_DELAY);    //! make it longer but interruptible by signals?
 		}
 	}
+	clean_up(state, pipe_names);
 	return 0;
 }
+
 /**
  * @brief Read either G_* parameter (these are 'regular' values defined by number) or P_* parameter
- *         (it can be read for up to 6 frames ahead, but current interface only allows to read last/current value)
- * @param GPNumber parameter number (as defined in c313a.h), G_* parameters have numbers above FRAMEPAR_GLOBALS, P_* - below)
- * @return parameter value
+ * (it can be read for up to 6 frames ahead, but current interface only allows to read last/current value)
+ * @param[in]   GPNumber   parameter number (as defined in c313a.h), G_* parameters have numbers above FRAMEPAR_GLOBALS, P_* - below)
+ * @param[in]   port       sensor port number for which a parameter is needed
+ * @return      parameter value
  */
-unsigned long getGPValue(unsigned long GPNumber)
+unsigned long getGPValue(unsigned int port, unsigned long GPNumber)
 {
 	return (GPNumber >= FRAMEPAR_GLOBALS) ?
-	       GLOBALPARS(GPNumber) :
-	       framePars[GLOBALPARS(G_THIS_FRAME) & PARS_FRAMES_MASK].pars[GPNumber];
+	       GLOBALPARS(port, GPNumber) :
+	       framePars[port][GLOBALPARS(port, G_THIS_FRAME) & PARS_FRAMES_MASK].pars[GPNumber];
 }
 
 /**
  * @brief Set value of the specified global (G_*) parameter
- * @param GNumber - parameter number (as defined in c313a.h)
- * @param value  - value to set
+ * @param[in]   GNumber   parameter number (as defined in c313a.h)
+ * @param[in]   value     value to set
+ * @return      none
  */
-void setGValue(unsigned long GNumber,   unsigned long value)
+void setGValue(unsigned int port, unsigned long GNumber, unsigned long value)
 {
-	GLOBALPARS(GNumber) = value;
+	GLOBALPARS(port, GNumber) = value;
 }
 
 /**
- * @brief check if this application is enabled (by appropriate bit in P_DAEMON_EN), if not -
+ * @brief Check if this application is enabled (by appropriate bit in P_DAEMON_EN), if not -
  * and wait until enabled (return false when enabled)
- * @param daemonBit - bit number to accept control in P_DAEMON_EN parameter
- * @return (after possible waiting) true if there was no waiting, false if there was waiting
+ * @param[in]   daemonBit   bit number to accept control in P_DAEMON_EN parameter
+ * @return      (after possible waiting) true if there was no waiting, false if there was waiting
  */
-int  waitDaemonEnabled(int daemonBit)   // <0 - use default
+int waitDaemonEnabled(unsigned int port, int daemonBit)   // <0 - use default
 {
-	if ((daemonBit >= 0) && (daemonBit < 32)) lastDaemonBit = daemonBit;
-	unsigned long this_frame = this_frame = GLOBALPARS(G_THIS_FRAME);
-/// No semaphors, so it is possible to miss event and wait until the streamer will be re-enabled before sending message,
-/// but it seems not so terrible
-	lseek(state->fd_circ, LSEEK_DAEMON_CIRCBUF + lastDaemonBit, SEEK_END); ///
-	if (this_frame == GLOBALPARS(G_THIS_FRAME)) return 1;
+	camogm_state *state = &sstate[port];
+	if ((daemonBit >= 0) && (daemonBit < 32)) lastDaemonBit[port] = daemonBit;
+	unsigned long this_frame = GLOBALPARS(port, G_THIS_FRAME);
+	// No semaphors, so it is possible to miss event and wait until the streamer will be re-enabled before sending message,
+	// but it seems not so terrible
+	lseek(state->fd_circ, LSEEK_DAEMON_CIRCBUF + lastDaemonBit[port], SEEK_END); ///
+	if (this_frame == GLOBALPARS(port, G_THIS_FRAME)) return 1;
 	return 0;
 }
 
 /**
- * @brief check if this application is enabled (by appropriate bit in P_DAEMON_EN)
- * @param daemonBit - bit number to accept control in P_DAEMON_EN parameter
- * @return (after possible waiting) true if there was no waiting, false if there was waiting
+ * @brief Check if this application is enabled (by appropriate bit in P_DAEMON_EN)
+ * @param[in]   daemonBit   bit number to accept control in P_DAEMON_EN parameter
+ * @return      (after possible waiting) true if there was no waiting, false if there was waiting
  */
-int  isDaemonEnabled(int daemonBit)   // <0 - use default
+int isDaemonEnabled(unsigned int port, int daemonBit)   // <0 - use default
 {
-	if ((daemonBit >= 0) && (daemonBit < 32)) lastDaemonBit = daemonBit;
-	return ((framePars[GLOBALPARS(G_THIS_FRAME) & PARS_FRAMES_MASK].pars[P_DAEMON_EN] & (1 << lastDaemonBit)) != 0);
+	if ((daemonBit >= 0) && (daemonBit < 32)) lastDaemonBit[port] = daemonBit;
+	return ((framePars[port][GLOBALPARS(port, G_THIS_FRAME) & PARS_FRAMES_MASK].pars[P_DAEMON_EN] & (1 << lastDaemonBit[port])) != 0);
 }

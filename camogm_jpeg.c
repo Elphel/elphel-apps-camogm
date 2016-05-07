@@ -62,7 +62,7 @@
 #include "ogmstreams.h" // move it to <>?
 
 #include "camogm_jpeg.h"
-#include "camogm.h"
+
 //! may add something - called first time format is changed to this one (only once) recording is stopped
 int camogm_init_jpeg(void)
 {
@@ -72,7 +72,7 @@ void camogm_free_jpeg(void)
 {
 }
 
-int camogm_start_jpeg(void)
+int camogm_start_jpeg(camogm_state *state)
 {
 //!TODO: make directory if it does not exist (find the last "/" in the state->path
 	char * slash;
@@ -94,7 +94,8 @@ int camogm_start_jpeg(void)
 	}
 	return 0;
 }
-int camogm_frame_jpeg(void)
+
+int camogm_frame_jpeg(camogm_state *state)
 {
 	int i, j;
 //   int fd;

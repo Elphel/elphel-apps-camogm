@@ -54,12 +54,11 @@
 #include <c313a.h>
 #include <asm/byteorder.h>
 
-
 #include <ogg/ogg.h>    // has to be before ogmstreams.h
 #include "ogmstreams.h" // move it to <>?
 
 #include "camogm_ogm.h"
-#include "camogm.h"
+
 //! may add something - called first time format is changed to this one (only once) recording is stopped
 int camogm_init_ogm(void)
 {
@@ -69,8 +68,7 @@ void camogm_free_ogm(void)
 {
 }
 
-
-int camogm_start_ogm(void)
+int camogm_start_ogm(camogm_state *state)
 {
 	char vendor[] = "ElphelOgm v 0.1";
 	int pos;
@@ -171,7 +169,7 @@ int camogm_start_ogm(void)
 	return 0;
 }
 
-int camogm_frame_ogm(void)
+int camogm_frame_ogm(camogm_state *state)
 {
 	int indx;
 	elph_ogg_packet elp_packet;
@@ -219,10 +217,9 @@ int camogm_frame_ogm(void)
 	return 0;
 }
 
-
 //!Zero packets are OK, use them to end file with "last" turned on
 
-int camogm_end_ogm(void)
+int camogm_end_ogm(camogm_state *state)
 {
 //! put zero-packet it into stream
 	ogg_packet ogg_header;
@@ -245,6 +242,3 @@ int camogm_end_ogm(void)
 	}
 	return 0;
 }
-
-
-

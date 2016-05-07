@@ -1,3 +1,6 @@
+#ifndef _CAMOGM_H
+#define _CAMOGM_H
+
 #define CAMOGM_FRAME_NOT_READY 1        // frame pointer valid, but not yet acquired
 #define CAMOGM_FRAME_INVALID   2        // invalid frame pointer
 #define CAMOGM_FRAME_CHANGED   3        // frame parameters have changed
@@ -155,16 +158,18 @@ typedef struct {
 	int kml_last_uts;                                       //! last generated kml file timestamp, microseconds
 	struct exif_dir_table_t kml_exif[ExifKmlNumber];        //! store locations of the fields needed for KML generations in the Exif block
 
-
+	unsigned int port_num;
 } camogm_state;
+
 extern int debug_level;
 extern FILE* debug_file;
-extern camogm_state * state;
+//extern camogm_state * state;
 void put_uint16(void *buf, u_int16_t val);
 void put_uint32(void *buf, u_int32_t val);
 void put_uint64(void *buf, u_int64_t val);
-unsigned long getGPValue(unsigned long GPNumber);
-void setGValue(unsigned long GNumber,   unsigned long value);
-int  waitDaemonEnabled(int daemonBit);  // <0 - use default
-int  isDaemonEnabled(int daemonBit);    // <0 - use default
+unsigned long getGPValue(unsigned int port, unsigned long GPNumber);
+//void setGValue(unsigned long GNumber,   unsigned long value);
+//int  waitDaemonEnabled(int daemonBit);  // <0 - use default
+//int  isDaemonEnabled(int daemonBit);    // <0 - use default
 
+#endif /* _CAMOGM_H */

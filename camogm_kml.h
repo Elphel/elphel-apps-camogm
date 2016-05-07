@@ -1,18 +1,15 @@
+#ifndef _CAMOGM_KML_H
+#define _CAMOGM_KML_H
+
+#include "camogm.h"
+
 int camogm_init_kml(void);
-int camogm_start_kml(void);
-int camogm_frame_kml(void);
-int camogm_end_kml(void);
+int camogm_start_kml(camogm_state *state);
+int camogm_frame_kml(camogm_state *state);
+int camogm_end_kml(camogm_state *state);
 void camogm_free_kml(void);
 
-
-
-
-
-
-
-
-
-
+#endif /* _CAMOGM_KML_H */
 
 /*
    <?xml version="1.0" encoding="UTF-8"?>

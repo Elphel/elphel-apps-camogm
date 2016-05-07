@@ -63,7 +63,7 @@
 #include "ogmstreams.h" // move it to <>?
 
 #include "camogm_kml.h"
-#include "camogm.h"
+
 const char ExifDirFileName[] = "/dev/exif_metadir";
 
 //! may add something - called first time format is changed to this one (only once) recording is stopped
@@ -93,7 +93,7 @@ void camogm_free_kml(void)
    }
 
  */
-int camogm_start_kml(void)
+int camogm_start_kml(camogm_state *state)
 {
 //  struct exif_dir_table_t kml_exif[ExifKmlNumber] ;  //! store locations of the fields needed for KML generations in the Exif block
 ///exif_metadir
@@ -152,7 +152,7 @@ int camogm_start_kml(void)
 	return 0;
 }
 
-int camogm_frame_kml(void)
+int camogm_frame_kml(camogm_state *state)
 {
 	char JPEGFileName[300];
 	char * filename;
@@ -316,7 +316,7 @@ int camogm_frame_kml(void)
 }
 
 
-int camogm_end_kml(void)
+int camogm_end_kml(camogm_state *state)
 {
 
 	if (state->kml_file) {
@@ -327,4 +327,3 @@ int camogm_end_kml(void)
 	}
 	return 0;
 }
-
