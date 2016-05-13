@@ -180,7 +180,8 @@ int camogm_frame_mov(camogm_state *state)
 	iovlen = writev(state->ivf, chunks_iovec, (state->chunk_index) - 1);
 	if (iovlen < l) {
 		j = errno;
-		D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
+		D0(fprintf(debug_file, "writev error %d (returned %d, expected %d, file descriptor %d, chn %d)\n", j, iovlen, l, state->ivf, state->port_num));
+		perror(strerror(j));
 		close(state->ivf);
 		state->ivf = -1;
 		return -CAMOGM_FRAME_FILE_ERR;

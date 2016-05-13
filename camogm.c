@@ -685,7 +685,7 @@ int sendImageFrame(camogm_state *state)
 	default: rslt = 0; // do nothing
 	}
 	if (rslt) {
-		D3(fprintf(debug_file, "sendImageFrame:12: camogm_frame_***() returned 0x%x\n", rslt));
+		D3(fprintf(debug_file, "sendImageFrame:12: camogm_frame_***() returned %d\n", rslt));
 		return rslt;
 	}
 	if (state->kml_used) rslt = camogm_frame_kml(state);  // will turn on state->kml_used if it can
@@ -1031,7 +1031,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "greedy             %s\n",        state->greedy ? "yes" : "no");
 		fprintf(f, "ignore fps         %s\n",        state->ignore_fps ? "yes" : "no");
 		fprintf(f, "\n");
-		fprintf(f, "buffer overruns    %d\n",        state->last_error_code);
+		fprintf(f, "last error code    %d\n",        state->last_error_code);
 		fprintf(f, "buffer overruns    %d\n",        state->buf_overruns);
 		fprintf(f, "buffer minimal     %d\n",        state->buf_min);
 		fprintf(f, "buffer free        %d\n",        _b_free);
