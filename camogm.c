@@ -164,7 +164,7 @@ const char *ctlFileNames[] = {   "/dev/frameparsall0", "/dev/frameparsall1",
 const char *circbufFileNames[] = {"/dev/circbuf0", "/dev/circbuf1",
 								"/dev/circbuf2", "/dev/circbuf3"
 };
-unsigned long * ccam_dma_buf[SENSOR_PORTS];           /* mmapped array */
+unsigned long * ccam_dma_buf[SENSOR_PORTS];           /* mmapped arrays */
 
 int lastDaemonBit[SENSOR_PORTS] = {DAEMON_BIT_CAMOGM};
 struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
@@ -665,7 +665,7 @@ int sendImageFrame(camogm_state *state)
 		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][state->cirbuf_rp >> 2];
 /*! copy from the beginning of the buffer to the end of the frame */
 		state->packetchunks[state->chunk_index  ].bytes = state->jpeg_len - (state->circ_buff_size - state->cirbuf_rp);
-		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[0];
+		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][0];
 	} else { // single segment
 		D3(fprintf(debug_file, "_11_"));
 
