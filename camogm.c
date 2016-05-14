@@ -145,6 +145,7 @@
 
 /* end of debug code */
 
+#define COMMAND_LOOP_DELAY 500000 //0.5sec
 #define DEFAULT_DEBUG_LVL 6
 #define TRAILER_SIZE   0x02
 #define MAP_OPTIONS MAP_FILE | MAP_PRIVATE
@@ -194,7 +195,7 @@ camogm_state sstate[SENSOR_PORTS];
 int debug_level;
 FILE* debug_file;
 
-int camogm_init(camogm_state *state, unsigned int port);
+void camogm_init(camogm_state *state, unsigned int port, char *pipe_name);
 int camogm_start(camogm_state *state);
 int camogm_stop(camogm_state *state);
 int camogm_reset(camogm_state *state); //! reset circbuf read pointer
@@ -269,13 +270,20 @@ void put_uint64(void *buf, u_int64_t val)
 	tmp[7] = (val >>= 8) & 0xff;
 }
 
-int camogm_init(camogm_state *state, unsigned int port)
+/**
+ * @brief Initialize state for a particular sensor port.
+ * @param[in]   state   pointer to #camogm_state structure for a particular sensor channel
+ * @param[in]   port    sensor port number
+ * @param[in]   pipe_name pointer to command pipe name string
+ * @return      none
+ */
+void camogm_init(camogm_state *state, unsigned int port, char *pipe_name)
 {
 	const char sserial[] = "elp0";
 	int * ipser = (int*)sserial;
 
-	state->running = 0;     // mo
-	state->starting = 0;    // mo
+	state->running = 0;                     // mo
+	state->starting = 0;                    // mo
 	state->vf = NULL;
 	camogm_set_segment_duration(state, DEFAULT_DURATION);
 	camogm_set_segment_length(state, DEFAULT_LENGTH);
@@ -283,17 +291,17 @@ int camogm_init(camogm_state *state, unsigned int port)
 	camogm_set_ignore_fps(state, DEFAULT_IGNORE_FPS);
 	camogm_set_max_frames(state, DEFAULT_FRAMES);
 	camogm_set_frames_per_chunk(state, DEFAULT_FRAMES_PER_CHUNK);
-	camogm_set_start_after_timestamp(state, 0.0); /// start any time
+	camogm_set_start_after_timestamp(state, 0.0); // start any time
 	camogm_set_prefix(state, "\0");
 	camogm_set_save_gp(state, 0);
-	camogm_reset(state); //! sets    state->buf_overruns=-1; //!first does not count
+	camogm_reset(state);                    // sets state->buf_overruns =- 1
 	state->serialno = ipser[0];
 	state->last = 0;
 	debug_file = stderr;
 	camogm_debug_level(DEFAULT_DEBUG_LVL);
 	strcpy(state->debug_name, "stderr");
 	camogm_set_timescale(state, 1.0);
-	camogm_set_frames_skip(state, 0); //! don't skip
+	camogm_set_frames_skip(state, 0);       // don't skip
 	camogm_set_format(state, CAMOGM_FORMAT_OGM);
 	state->exifSize = 0;
 	state->exif = DEFAULT_EXIF;
@@ -302,20 +310,19 @@ int camogm_init(camogm_state *state, unsigned int port)
 	state->formats = 0;
 	state->last_error_code = 0;
 
-///kml stuff
+	// kml stuff
 	camogm_kml_set_enable(state, 0);
 	state->kml_file = NULL;
 	camogm_kml_set_horHalfFov(state, 20.0);
 	camogm_kml_set_vertHalfFov(state, 15.0);
 	camogm_kml_set_height_mode(state, 0);
 	camogm_kml_set_height(state, 10.0);
-	camogm_kml_set_period(state, 2);       // 2 sec
-	camogm_kml_set_near(state, 40.0);      // 40 m (distance to PhotoOverlay)
+	camogm_kml_set_period(state, 2);        // 2 sec
+	camogm_kml_set_near(state, 40.0);       // 40 m (distance to PhotoOverlay)
 	state->kml_path[0] = '\0';
 
 	state->port_num = port;
-
-	return 0;
+	state->pipe_name = pipe_name;
 }
 
 
@@ -1280,16 +1287,22 @@ int create_pipe_names(const char *pipe_name, char **names)
 		names[i] = name;
 	}
 
+	if (ret < 0) {
+		for (int i = 0; i < SENSOR_PORTS; i++) {
+			free(names[i]);
+			names[i] = NULL;
+		}
+	}
+
 	return ret;
 }
 
 /**
  * @brief This function closes open files and deletes allocated memory.
  * @param[in]   state   pointer to #camogm_state structure for a particular sensor channel
- * @param[in]   names   list of strings containing control pipe names
  * return       none
  */
-void clean_up(camogm_state *state, char **names)
+void clean_up(camogm_state *state)
 {
 	if (state->fd_exif > 0)
 		close(state->fd_exif);
@@ -1299,16 +1312,206 @@ void clean_up(camogm_state *state, char **names)
 		close(state->fd_circ);
 	if (state->fd_fparmsall)
 		close(state->fd_fparmsall);
-	for (int i = 0; i < SENSOR_PORTS; i++) {
-		free(names[i]);
-		names[i] = NULL;
+	free(state->pipe_name);
+	state->pipe_name = NULL;
+}
+
+/**
+ * @brief Main processing loop
+ *
+ * If recording is on, this function will check for new commands in command pipe after each frame. If recording is
+ * turn off, it will poll command pipe each #COMMAND_LOOP_DELAYS microseconds and then sleep.
+ * @param[in]   state   #camogm_state structure associated with a single port
+ * @return      normally this function loops indefinitely processing commands but will return negative exit code in case
+ * of error and \e EXIT_SUCCESS it eventually terminates in normal way.
+ */
+int listener_loop(camogm_state *state)
+{
+	FILE *cmd_file;
+	int rslt, ret, cmd;
+	int fp0, fp1;
+	int process = 1;
+	unsigned int port = state->port_num;
+	const char *pipe_name = state->pipe_name;
+
+	// open Exif header file
+#ifdef DISABLE_CODE
+	state->fd_exif = open(exifFileNames[port], O_RDONLY);
+	if (state->fd_exif < 0) { // check control OK
+		D0(fprintf(debug_file, "Error opening %s\n", exifFileNames[port]));
+		clean_up(state);
+		return -1;
 	}
+#endif /* DESABLE_CODE */
+
+	// open JPEG header file
+	state->fd_head = open(headFileNames[port], O_RDWR);
+	if (state->fd_head < 0) { // check control OK
+		D0(fprintf(debug_file, "Error opening %s\n", headFileNames[port]));
+		clean_up(state);
+		return -1;
+	}
+	state->head_size = lseek(state->fd_head, 0, SEEK_END);
+	if (state->head_size > JPEG_HEADER_MAXSIZE) {
+		D0(fprintf(debug_file, "%s:%d: Too big JPEG header (%d > %d)", __FILE__, __LINE__, state->head_size, JPEG_HEADER_MAXSIZE ));
+		clean_up(state);
+		return -2;
+	}
+
+	// open circbuf and mmap it (once at startup)
+	state->fd_circ = open(circbufFileNames[port], O_RDWR);
+	if (state->fd_circ < 0) { // check control OK
+		D0(fprintf(debug_file, "Error opening %s\n", circbufFileNames[port]));
+		clean_up(state);
+		return -2;
+	}
+	// find total buffer length (it is in defines, actually in c313a.h
+	state->circ_buff_size = lseek(state->fd_circ, 0, SEEK_END);
+	ccam_dma_buf[port] = (unsigned long*)mmap(0, state->circ_buff_size, PROT_READ, MAP_SHARED, state->fd_circ, 0);
+	if ((int)ccam_dma_buf[port] == -1) {
+		D0(fprintf(debug_file, "Error in mmap of %s\n", circbufFileNames[port]));
+		clean_up(state);
+		return -3;
+	}
+
+	// now open/mmap file to read sensor/compressor parameters (currently - just free memory in circbuf and compressor state)
+#ifdef DISABLE_CODE
+	state->fd_fparmsall = open(ctlFileNames[port], O_RDWR);
+	if (state->fd_fparmsall < 0) { // check control OK
+		D0(fprintf(debug_file, "%s:%d:%s: Error opening %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileNames[port]));
+		clean_up(state);
+		return -2;
+	}
+
+	// now try to mmap
+	// PROT_WRITE - only to write acknowledge
+	frameParsAll[port] = (struct framepars_all_t*)mmap(0, sizeof(struct framepars_all_t), PROT_READ | PROT_WRITE, MAP_SHARED, state->fd_fparmsall, 0);
+	if ((int)frameParsAll[port] == -1) {
+		D0(fprintf(debug_file, "%s:%d:%s: Error in mmap in %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileNames[port]));
+		clean_up(state);
+		return -3;
+	}
+	framePars[port] = frameParsAll[port]->framePars;
+	globalPars[port] = frameParsAll[port]->globalPars;
+#endif /* DESABLE_CODE */
+
+	// create a named pipe
+	// always delete the pipe if it existed, start a fresh one
+	ret = unlink(pipe_name);
+	if (ret) {
+		D1(fprintf(debug_file, "Unlink %s returned %d, errno=%d \n", pipe_name, ret, errno));
+	}
+	ret = mkfifo(pipe_name, 0777); //EEXIST
+	// now should not exist
+	if (ret) {
+		if (errno == EEXIST) {
+			D1(fprintf(debug_file, "Named pipe %s already exists, will use it.\n", pipe_name));
+		} else {
+			D0(fprintf(debug_file, "Can not create a named pipe %s, errno=%d \n", pipe_name, errno));
+			clean_up(state);
+			return -4;
+		}
+	}
+
+	// now open the pipe - will block until something will be written (or just open for writing,
+	// reads themselves will not block)
+	if (!((cmd_file = fopen(pipe_name, "r")))) {
+		D0(fprintf(debug_file, "Can not open command file %s\n", pipe_name));
+		clean_up(state);
+		return -5;
+	}
+	D0(fprintf(debug_file, "Pipe %s open for reading\n", pipe_name)); // to make sure something is sent out
+
+	// enter main processing loop
+	while (process) {
+		// look at command queue first
+		cmd = parse_cmd(state, cmd_file);
+		if (cmd) {
+			if (cmd < 0) D0(fprintf(debug_file, "Unrecognized command\n"));
+		} else if (state->running) { // no commands in queue, started
+
+			switch ((rslt = -sendImageFrame(state))) {
+			case 0:
+				break;                      // frame sent OK, nothing to do (TODO: check file length/duration)
+			case CAMOGM_FRAME_NOT_READY:    // just wait for the frame to appear at the current pointer
+				// we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
+				// TODO - add another wait with (short) timeout?
+				fp0 = lseek(state->fd_circ, 0, SEEK_CUR);
+				if (fp0 < 0) {
+					D0(fprintf(debug_file, "%s:line %d got broken frame (%d) before waiting for ready\n", __FILE__, __LINE__, fp0));
+					rslt = CAMOGM_FRAME_BROKEN;
+				} else {
+					fp1 = lseek(state->fd_circ, LSEEK_CIRC_WAIT, SEEK_END);
+					if (fp1 < 0) {
+						D0(fprintf(debug_file, "%s:line %d got broken frame (%d) while waiting for ready. Before that fp0=0x%x\n", __FILE__, __LINE__, fp1, fp0));
+						rslt = CAMOGM_FRAME_BROKEN;
+					} else {
+						break;
+					}
+				}
+				// no break
+			case  CAMOGM_FRAME_CHANGED:     // frame parameters have changed
+			case  CAMOGM_FRAME_NEXTFILE:    // next file needed (need to switch to a new file (time/size exceeded limit)
+			case  CAMOGM_FRAME_INVALID:     // invalid frame pointer
+			case  CAMOGM_FRAME_BROKEN:      // frame broken (buffer overrun)
+				// restart the file
+				D3(fprintf(debug_file,"%s:line %d - sendImageFrame() returned -%d\n", __FILE__, __LINE__, rslt));
+				camogm_stop(state);
+				camogm_start(state);
+				break;
+			case  CAMOGM_FRAME_FILE_ERR:    // error with file I/O
+			case  CAMOGM_FRAME_OTHER:       // other errors
+				D0(fprintf(debug_file, "%s:line %d - error=%d\n", __FILE__, __LINE__, rslt));
+				break;
+			default:
+				D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
+				clean_up(state);
+				exit(-1);
+			} // switch sendImageFrame()
+
+			if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED)) state->last_error_code = rslt;
+		} else if (state->starting) { // no commands in queue,starting (but not started yet)
+
+			// retry starting
+			switch ((rslt = -camogm_start(state))) {
+			case 0:
+				break;                      // file started OK, nothing to do
+			case CAMOGM_TOO_EARLY:
+				lseek(state->fd_circ, LSEEK_CIRC_TOWP, SEEK_END);       // set pointer to the frame to wait for
+				lseek(state->fd_circ, LSEEK_CIRC_WAIT, SEEK_END);       // It already passed CAMOGM_FRAME_NOT_READY, so compressor may be running already
+				break;                                                  // no need to wait extra
+			case CAMOGM_FRAME_NOT_READY:                                // just wait for the frame to appear at the current pointer
+			// we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
+			// TODO - add another wait with (short) timeout?
+			case  CAMOGM_FRAME_CHANGED:     // frame parameters have changed
+			case  CAMOGM_FRAME_NEXTFILE:
+			case  CAMOGM_FRAME_INVALID:     // invalid frame pointer
+			case  CAMOGM_FRAME_BROKEN:      // frame broken (buffer overrun)
+				usleep(COMMAND_LOOP_DELAY); // it should be not too long so empty buffer will not be overrun
+				break;
+			case  CAMOGM_FRAME_FILE_ERR:    // error with file I/O
+			case  CAMOGM_FRAME_OTHER:       // other errors
+				D0(fprintf(debug_file, "%s:line %d - error=%d\n", __FILE__, __LINE__, rslt));
+				break;
+			default:
+				D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
+				clean_up(state);
+				exit(-1);
+			} // switch camogm_start()
+			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) ) state->last_error_code = rslt;
+
+		} else {                            // not running, not starting
+			usleep(COMMAND_LOOP_DELAY);     // make it longer but interruptible by signals?
+		}
+	} // while (process)
+
+	// normally, we should not be here
+	clean_up(state);
+	return EXIT_SUCCESS;
 }
 
 int main(int argc, char *argv[])
 {
-//     int fd_circ;
-	FILE * cmd_file;
 	const char usage[] =   "This program allows recording of the video/images acquired by Elphel camera to the storage media.\n" \
 			     "It is designed to run in the background and accept commands through a named pipe.\n\n" \
 			     "Usage:\n\n" \
@@ -1327,220 +1530,30 @@ int main(int argc, char *argv[])
 			     "This program does not control the process of acquisition of the video/images to the camera internal\n" \
 			     "buffer, it only retrieves that data from the buffer (waiting when needed), packages it to selected\n" \
 			     "format and stores the result files.\n\n";
-	int go = 1;
-	int cmd;
-	int i, rslt;
-	int fp0, fp1;           // debugging
-	/* debug code follows */
-	unsigned int port = 2;
-	/*end of debug code */
-	camogm_state *state = &sstate[port];
-	char *pipe_names[SENSOR_PORTS] = {0};
 
-//	state = &sstate;        //extern
-//! no command line options processing yet
+	char *pipe_names[SENSOR_PORTS] = {0};
+	int ret;
+
+	// no command line options processing yet
 	if ((argc < 2) || (argv[1][1] == '-')) {
 		printf(usage, argv[0], argv[0]);
-		clean_up(state, pipe_names);
-		return 0;
+		return EXIT_SUCCESS;
 	}
-	camogm_init(state, port);
-	create_pipe_names(argv[1], pipe_names);
-
-//! open Exif header file
-#ifdef DISABLE_CODE
-	state->fd_exif = open(exifFileNames[port], O_RDONLY);
-	if (state->fd_exif < 0) { // check control OK
-		D0(fprintf(debug_file, "Error opening %s\n", exifFileNames[port]));
-		return -1;
-	}
-#endif /* DESABLE_CODE */
-
-//! open JPEG header file
-	state->fd_head = open(headFileNames[port], O_RDWR);
-	if (state->fd_head < 0) { // check control OK
-		D0(fprintf(debug_file, "Error opening %s\n", headFileNames[port]));
-		clean_up(state, pipe_names);
-		return -1;
-	}
-	state->head_size = lseek(state->fd_head, 0, SEEK_END);
-	if (state->head_size > JPEG_HEADER_MAXSIZE) {
-		D0(fprintf(debug_file, "%s:%d: Too big JPEG header (%d > %d)", __FILE__, __LINE__, state->head_size, JPEG_HEADER_MAXSIZE ));
-		clean_up(state, pipe_names);
-		return -2;
+	if (create_pipe_names(argv[1], pipe_names) < 0) {
+		printf("Error: unable to allocate memory for command pipe name\n");
+		return EXIT_FAILURE;
 	}
 
-//! open circbuf and mmap it (once at startup)
-	state->fd_circ = open(circbufFileNames[port], O_RDWR);
-	if (state->fd_circ < 0) { // check control OK
-		D0(fprintf(debug_file, "Error opening %s\n", circbufFileNames[port]));
-		clean_up(state, pipe_names);
-		return -2;
-	}
-/*! find total buffer length (it is in defines, actually in c313a.h */
-	state->circ_buff_size = lseek(state->fd_circ, 0, SEEK_END);
-	ccam_dma_buf[port] = (unsigned long*)mmap(0, state->circ_buff_size, PROT_READ, MAP_SHARED, state->fd_circ, 0);
-	if ((int)ccam_dma_buf[port] == -1) {
-		D0(fprintf(debug_file, "Error in mmap of %s\n", circbufFileNames[port]));
-		clean_up(state, pipe_names);
-		return -3;
-	}
-
-//! Now open/mmap file to read sensor/compressor parameters (currently - just free memory in circbuf and compressor state)
-
-//! open circbuf and mmap it (once at startup)
-#ifdef DISABLE_CODE
-	state->fd_fparmsall = open(ctlFileNames[port], O_RDWR);
-	if (state->fd_fparmsall < 0) { // check control OK
-		D0(fprintf(debug_file, "%s:%d:%s: Error opening %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileNames[port]));
-		clean_up(state, pipe_names);
-		return -2;
-	}
-
-//! now try to mmap
-///    frameParsAll = (struct framepars_all_t *) mmap(0, sizeof (struct framepars_all_t) , PROT_READ, MAP_SHARED, state->fd_fparmsall, 0);
-/// PROT_WRITE - only to write acknowledge
-	frameParsAll[port] = (struct framepars_all_t*)mmap(0, sizeof(struct framepars_all_t), PROT_READ | PROT_WRITE, MAP_SHARED, state->fd_fparmsall, 0);
-	if ((int)frameParsAll[port] == -1) {
-		D0(fprintf(debug_file, "%s:%d:%s: Error in mmap in %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileNames[port]));
-		clean_up(state, pipe_names);
-		return -3;
-	}
-	framePars[port] = frameParsAll[port]->framePars;
-	globalPars[port] = frameParsAll[port]->globalPars;
-#endif /* DESABLE_CODE */
-
-//!create a named pipe
-//!always delete the pipe if it existed, start a fresh one
-	i = unlink(pipe_names[port]);
-	if (i) {
-		D1(fprintf(debug_file, "Unlink %s returned %d, errno=%d \n", pipe_names[port], i, errno));
-	}
-	i = mkfifo(pipe_names[port], 0777); //EEXIST
-//! now should not exist
-	if (i) {
-		if (errno == EEXIST) {
-			D1(fprintf(debug_file, "Named pipe %s already exists, will use it.\n", pipe_names[port]));
-		} else {
-			D0(fprintf(debug_file, "Can not create a named pipe %s, errno=%d \n", pipe_names[port], errno));
-			clean_up(state, pipe_names);
-			return -4;
+	// spawn a process for each sensor port
+	for (int i = 0; i < SENSOR_PORTS; i++) {
+		camogm_init(&sstate[i], i, pipe_names[i]);
+		if (fork() == 0) {
+			ret = listener_loop(&sstate[i]);
+			exit(ret);
 		}
 	}
 
-//!now open the pipe - will block until something will be written (or just open for writing
-//!Reads themselves will not block
-	if (!((cmd_file = fopen(pipe_names[port], "r")))) {
-		D0(fprintf(debug_file, "Can not open command file %s\n", pipe_names[port]));
-		clean_up(state, pipe_names);
-		return -5;
-	}
-//   D1(fprintf (debug_file,"Pipe %s open for reading\n",argv[1]));
-	D0(fprintf(debug_file, "Pipe %s open for reading\n", pipe_names[port])); // to make sure something is sent out
-
-//! Here is a main loop. If recording is on, it will check for commands after each frame, if it is off - poll with fixed usleep
-#define COMMAND_LOOP_DELAY 500000 //0.5sec
-
-	while (go) {
-//   D3(fprintf (debug_file,"%s:%d: format=%d, set_format=%d\n",__FILE__,__LINE__, state->format, state->set_format));
-
-//! look at command queue first
-		cmd = parse_cmd(state, cmd_file);
-		if (cmd) {
-			if (cmd < 0) D0(fprintf(debug_file, "Unrecognized command\n"));
-/// Acknowledge received command by copying frame number to per-daemon parameter
-//      GLOBALPARS(G_DAEMON_ERR+lastDaemonBit)=GLOBALPARS(G_THIS_FRAME);
-
-		} else if (state->running) { //!no commands in queue, started
-//   D3(fprintf (debug_file,"%s:%d: format=%d, set_format=%d\n",__FILE__,__LINE__, state->format, state->set_format));
-
-			switch ((rslt = -sendImageFrame(state))) {
-			case 0:
-/*
-          D3(fprintf (debug_file,"%s:line %d - sendImageFrame() returned %d\n" \
-                                  "state->cirbuf_rp= 0x%x\n",__FILE__,__LINE__,rslt,state->cirbuf_rp));
- */
-				break;                  //! frame sent OK, nothing to do (TODO: check file length/duration)
-			case CAMOGM_FRAME_NOT_READY:    //!  just wait for the frame to appear at the current pointer
-//! we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
-//! TODO - add another wait with (short) timeout?
-//     D3(fprintf (debug_file,"%s:line %d - sendImageFrame() returned -%d\n",__FILE__,__LINE__,rslt));
-/*
-     D3(fprintf (debug_file,"%s:line %d - sendImageFrame() returned -%d\n" \
-                                  "state->cirbuf_rp= 0x%x\n",__FILE__,__LINE__,rslt,state->cirbuf_rp));
- */
-//                lseek(state->fd_circ,LSEEK_CIRC_WAIT,SEEK_END);
-				fp0 = lseek(state->fd_circ, 0, SEEK_CUR);
-				if (fp0 < 0) {
-					D0(fprintf(debug_file, "%s:line %d got broken frame (%d) before waiting for ready\n", __FILE__, __LINE__, fp0));
-					rslt = CAMOGM_FRAME_BROKEN;
-				} else {
-					fp1 = lseek(state->fd_circ, LSEEK_CIRC_WAIT, SEEK_END);
-					if (fp1 < 0) {
-						D0(fprintf(debug_file, "%s:line %d got broken frame (%d) while waiting for ready. Before that fp0=0x%x\n", __FILE__, __LINE__, fp1, fp0));
-						rslt = CAMOGM_FRAME_BROKEN;
-					} else {
-						break;
-					}
-				}
-//                break;
-			case  CAMOGM_FRAME_CHANGED:     //! frame parameters have changed
-			case  CAMOGM_FRAME_NEXTFILE:    //! next file needed (need to switch to a new file (time/size exceeded limit)
-			case  CAMOGM_FRAME_INVALID:     //! invalid frame pointer
-			case  CAMOGM_FRAME_BROKEN:      //! frame broken (buffer overrun)
-//! restart the file
-//     D3(fprintf (debug_file,"%s:line %d - sendImageFrame() returned -%d\n",__FILE__,__LINE__,rslt));
-				camogm_stop(state);
-				camogm_start(state);
-				break;
-			case  CAMOGM_FRAME_FILE_ERR:    //! error with file I/O
-			case  CAMOGM_FRAME_OTHER:       //! other errors
-				D0(fprintf(debug_file, "%s:line %d - error=%d\n", __FILE__, __LINE__, rslt));
-				break;
-			default:
-				D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
-				clean_up(state, pipe_names);
-				exit(-1);
-			} //switch
-			if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED)) state->last_error_code = rslt;
-		} else if (state->starting) { //!no commands in queue,starting (but not started yet)
-//   D3(fprintf (debug_file,"%s:%d: format=%d, set_format=%d\n",__FILE__,__LINE__, state->format, state->set_format));
-
-//!retry starting
-			switch ((rslt = -camogm_start(state))) {
-			case 0:                       break;                            //! file started OK, nothing to do
-			case CAMOGM_TOO_EARLY:
-				lseek(state->fd_circ, LSEEK_CIRC_TOWP, SEEK_END);       /// set pointer to the frame to wait for
-				lseek(state->fd_circ, LSEEK_CIRC_WAIT, SEEK_END);       /// It already passed CAMOGM_FRAME_NOT_READY, so compressor may be running already
-				break;                                                  /// no need to wait extra
-			case CAMOGM_FRAME_NOT_READY:                                    //!  just wait for the frame to appear at the current pointer
-//! we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
-//! TODO - add another wait with (short) timeout?
-//                lseek(state->fd_circ,LSEEK_CIRC_WAIT,SEEK_END);
-			case  CAMOGM_FRAME_CHANGED:             //! frame parameters have changed
-			case  CAMOGM_FRAME_NEXTFILE:
-			case  CAMOGM_FRAME_INVALID:             //! invalid frame pointer
-			case  CAMOGM_FRAME_BROKEN:              //! frame broken (buffer overrun)
-//     D3(fprintf (debug_file,"%s:line %d - camogm_start() returned -%d,  state->cirbuf_rp= 0x%x\n", __FILE__,__LINE__,rslt,state->cirbuf_rp));
-				usleep( COMMAND_LOOP_DELAY);    //! it should be not too long so empty buffer will not be overrun
-				break;
-			case  CAMOGM_FRAME_FILE_ERR:            //! error with file I/O
-			case  CAMOGM_FRAME_OTHER:               //! other errors
-				D0(fprintf(debug_file, "%s:line %d - error=%d\n", __FILE__, __LINE__, rslt));
-				break;
-			default:
-				D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
-				clean_up(state, pipe_names);
-				exit(-1);
-			} //switch
-			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) ) state->last_error_code = rslt;
-
-		} else {                                //! not running, not starting
-			usleep( COMMAND_LOOP_DELAY);    //! make it longer but interruptible by signals?
-		}
-	}
-	clean_up(state, pipe_names);
-	return 0;
+	return EXIT_SUCCESS;
 }
 
 /**

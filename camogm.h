@@ -87,7 +87,7 @@ typedef struct {
 	int fd_fparmsall;               //! file descriptor for sensor/compressor parameters
 	int fd_exif;                    //! file descriptor for Exif data
 	int head_size;                  //! JPEG header size
-	char jpegHeader [JPEG_HEADER_MAXSIZE];
+	unsigned char jpegHeader [JPEG_HEADER_MAXSIZE];
 	int metadata_start;
 	struct interframe_params_t frame_params;
 	struct interframe_params_t this_frame_params;
@@ -158,7 +158,8 @@ typedef struct {
 	int kml_last_uts;                                       //! last generated kml file timestamp, microseconds
 	struct exif_dir_table_t kml_exif[ExifKmlNumber];        //! store locations of the fields needed for KML generations in the Exif block
 
-	unsigned int port_num;
+	unsigned int port_num;                                  // sensor port this state assigned to
+	char *pipe_name;                                        // command pipe name for this sensor port
 } camogm_state;
 
 extern int debug_level;
