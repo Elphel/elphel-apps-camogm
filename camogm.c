@@ -1328,7 +1328,7 @@ void clean_up(camogm_state *state)
 int listener_loop(camogm_state *state)
 {
 	FILE *cmd_file;
-	int rslt, ret, cmd;
+	int rslt, ret, cmd, f_ok;
 	int fp0, fp1;
 	int process = 1;
 	unsigned int port = state->port_num;
@@ -1397,8 +1397,9 @@ int listener_loop(camogm_state *state)
 
 	// create a named pipe
 	// always delete the pipe if it existed, start a fresh one
+	f_ok = access(pipe_name, F_OK);
 	ret = unlink(pipe_name);
-	if (ret) {
+	if (ret && f_ok == 0) {
 		D1(fprintf(debug_file, "Unlink %s returned %d, errno=%d \n", pipe_name, ret, errno));
 	}
 	ret = mkfifo(pipe_name, 0777); //EEXIST
