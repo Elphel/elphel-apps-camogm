@@ -34,34 +34,53 @@
    *!  Initial release of camogm - program to record video/image to the camera hard drive (or other storage)
    *!
  */
+
+#define LARGEFILES64_SOURCE
+
 //!Not all are needed, just copied from the camogm.c
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
+//#include <signal.h>
 #include <fcntl.h>
 #include <sys/uio.h>
 #include <errno.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
+//#include <sys/socket.h>
+//#include <sys/stat.h>
 //#include <ctype.h>
 //#include <getopt.h>
-#include <time.h>
+//#include <time.h>
 #include <string.h>
 
 #include <netinet/in.h> /*little <-> big endian ?*/
-#include <sys/mman.h>   /* mmap */
-#include <sys/ioctl.h>
+//#include <sys/mman.h>   /* mmap */
+//#include <sys/ioctl.h>
 
 #include <c313a.h>
 #include <asm/byteorder.h>
-
+#include <assert.h>
 
 #include <ogg/ogg.h>    // has to be before ogmstreams.h
 #include "ogmstreams.h" // move it to <>?
 
 #include "camogm_jpeg.h"
+
+/** @brief Size of iovec structures holding data to be written */
+#define IOVEC_SIZE      10
+
+/** @brief Start of file marker, contains "elphelst" string in ASCII symbols */
+const unsigned char elphelst[] = {0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c, 0x73, 0x74};
+/** @brief End of file marker, contains "elphelen" string in ASCII symbols */
+const unsigned char elphelen[] = {0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c, 0x65, 0x6e};
+static struct iovec start_marker = {
+		.iov_base = elphelst,
+		.iov_len = sizeof(elphelst)
+};
+static struct iovec end_marker = {
+		.iov_base = elphelen,
+		.iov_len = sizeof(elphelen)
+};
 
 //! may add something - called first time format is changed to this one (only once) recording is stopped
 int camogm_init_jpeg(void)
@@ -78,58 +97,133 @@ int camogm_start_jpeg(camogm_state *state)
 	char * slash;
 	int rslt;
 
-	strcpy(state->path, state->path_prefix); //!make state->path a directory name (will be replaced when the frames will be written)
-	slash = strrchr(state->path, '/');
-	D2(fprintf(debug_file, "camogm_start_jpeg\n"));
-	if (slash) {
-		D3(fprintf(debug_file, "Full path %s\n", state->path));
-		slash[0] = '\0'; //! truncate path to the directory name
-		D3(fprintf(debug_file, "directory path %s\n", state->path));
-		rslt = mkdir(state->path, 0777);
-		D3(fprintf(debug_file, "mkdir (%s, 0777) returned %d, errno=%d\n", state->path, rslt, errno));
-		if ((rslt < 0) && (errno != EEXIST)) { // already exists is OK
-			D0(fprintf(debug_file, "Error creating directory %s, errno=%d\n", state->path, errno));
+	if (!state->rawdev_op) {
+		strcpy(state->path, state->path_prefix); //!make state->path a directory name (will be replaced when the frames will be written)
+		slash = strrchr(state->path, '/');
+		D2(fprintf(debug_file, "camogm_start_jpeg\n"));
+		if (slash) {
+			D3(fprintf(debug_file, "Full path %s\n", state->path));
+			slash[0] = '\0'; //! truncate path to the directory name
+			D3(fprintf(debug_file, "directory path %s\n", state->path));
+			rslt = mkdir(state->path, 0777);
+			D3(fprintf(debug_file, "mkdir (%s, 0777) returned %d, errno=%d\n", state->path, rslt, errno));
+			if ((rslt < 0) && (errno != EEXIST)) { // already exists is OK
+				D0(fprintf(debug_file, "Error creating directory %s, errno=%d\n", state->path, errno));
+				return -CAMOGM_FRAME_FILE_ERR;
+			}
+		}
+	} else {
+		state->ivf = open(state->path_prefix, O_RDWR);
+		if (state->ivf < 0) {
+			D0(perror(__func__));
+			D0(fprintf(debug_file, "Error opening raw device %s\n", state->path));
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
+		D0(fprintf(debug_file, "Open raw device %s; start_pos = %llu, end_pos = %llu, curr_pos = %llu\n", state->path,
+				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos));
+		lseek64(state->ivf, state->rawdev.curr_pos, SEEK_SET);
 	}
 	return 0;
 }
 
 int camogm_frame_jpeg(camogm_state *state)
 {
-	int i, j;
-//   int fd;
+	int i, j, split_index;
+	int chunks_used = state->chunk_index - 1;
 	ssize_t iovlen, l;
-	struct iovec chunks_iovec[7];
+	struct iovec chunks_iovec[8];
+	unsigned char *split_ptr = NULL;
+	long split_cntr;
+	long total_len;
+	const uint64_t storage_sz = state->rawdev.end_pos - state->rawdev.start_pos;
 
-	l = 0;
-	for (i = 0; i < (state->chunk_index) - 1; i++) {
-		chunks_iovec[i].iov_base = state->packetchunks[i + 1].chunk;
-		chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
-		l += chunks_iovec[i].iov_len;
-	}
+	if (!state->rawdev_op) {
+		l = 0;
+		for (i = 0; i < (state->chunk_index) - 1; i++) {
+			chunks_iovec[i].iov_base = state->packetchunks[i + 1].chunk;
+			chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
+			l += chunks_iovec[i].iov_len;
+		}
 
-	sprintf(state->path, "%s%010ld_%06ld.jpeg", state->path_prefix, state->this_frame_params.timestamp_sec, state->this_frame_params.timestamp_usec);
-// if ((devfd = open("/dev/fpgaio", O_RDWR))<0)  {printf("error opening /dev/fpgaio\r\n"); return -1;}
-//_1__12_Error opening /tmp/z/video1195147018_273452.jpeg for writing
-
-	if (((state->ivf = open(state->path, O_RDWR | O_CREAT, 0777))) < 0) {
-		D0(fprintf(debug_file, "Error opening %s for writing, returned %d, errno=%d\n", state->path, state->ivf, errno));
-		return -CAMOGM_FRAME_FILE_ERR;
-	}
-
-	iovlen = writev(state->ivf, chunks_iovec, (state->chunk_index) - 1);
-	if (iovlen < l) {
-		j = errno;
-		D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
+		sprintf(state->path, "%s%010ld_%06ld.jpeg", state->path_prefix, state->this_frame_params.timestamp_sec, state->this_frame_params.timestamp_usec);
+		if (((state->ivf = open(state->path, O_RDWR | O_CREAT, 0777))) < 0) {
+			D0(fprintf(debug_file, "Error opening %s for writing, returned %d, errno=%d\n", state->path, state->ivf, errno));
+			return -CAMOGM_FRAME_FILE_ERR;
+		}
+		iovlen = writev(state->ivf, chunks_iovec, (state->chunk_index) - 1);
+		if (iovlen < l) {
+			j = errno;
+			D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
+			close(state->ivf);
+			return -CAMOGM_FRAME_FILE_ERR;
+		}
 		close(state->ivf);
-		return -CAMOGM_FRAME_FILE_ERR;
+	} else {
+		D0(fprintf(debug_file, "\n%s: current pointers start_pos = %llu, end_pos = %llu, curr_pos = %llu, data in buffer %d\n", __func__,
+				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos, l));
+		l = 0;
+		split_index = -1;
+		for (int i = 0, total_len = 0; i < state->chunk_index - 1; i++) {
+			total_len += state->packetchunks[i + 1].bytes;
+			if (total_len + state->rawdev.curr_pos > state->rawdev.end_pos) {
+				split_index = i;
+				chunks_used++;
+				D0(fprintf(debug_file, "\n>>> raw storage roll over detected\n"));
+				break;
+			}
+		}
+		chunks_iovec[0] = start_marker;
+		for (int i = 1; i < chunks_used; i++) {
+			if (i == split_index) {
+				// one of the chunks rolls over the end of the raw storage, split it into two segments and
+				// use additional chunk in chunks_iovec for this additional segment
+				split_cntr = state->rawdev.end_pos - (l + state->rawdev.curr_pos);
+				split_ptr = state->packetchunks[i].chunk + split_cntr;
+
+				// be careful with indexes here
+				chunks_iovec[i].iov_base = state->packetchunks[i].chunk;
+				chunks_iovec[i].iov_len = split_cntr;
+				l += chunks_iovec[i].iov_len;
+				chunks_iovec[++i].iov_base = split_ptr + 1;
+				chunks_iovec[i].iov_len = state->packetchunks[i].bytes - split_cntr;
+				l += chunks_iovec[i].iov_len;
+			} else {
+				chunks_iovec[i].iov_base = state->packetchunks[i].chunk;
+				chunks_iovec[i].iov_len = state->packetchunks[i].bytes;
+				l += chunks_iovec[i].iov_len;
+			}
+		}
+		assert(chunks_used < IOVEC_SIZE);
+		// consider start_marker here and increment chunks_used
+		chunks_iovec[chunks_used++] = end_marker;
+
+		/* debug code follows */
+		fprintf(debug_file, "\n=== raw device write, iovec dump ===\n");
+		fprintf(debug_file, "split_cntr = %ld; split_ptr = %p; split_index = %d\n", split_cntr, split_ptr, split_index);
+		for (int i = 0; i < chunks_used; i++) {
+			fprintf(debug_file, "i = %d; iov_base = %p; iov_len = %u\n", i, chunks_iovec[i].iov_base, chunks_iovec[i].iov_len);
+		}
+		fprintf(debug_file, "total len = %d\n======\n", l);
+		/* end of debug code */
+
+		iovlen = writev(state->ivf, chunks_iovec, chunks_used);
+		if (iovlen < l) {
+			j = errno;
+			D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
+			return -CAMOGM_FRAME_FILE_ERR;
+		}
+		state->rawdev.curr_pos += l;
+		if (state->rawdev.curr_pos > state->rawdev.end_pos)
+			state->rawdev.curr_pos = state->rawdev.curr_pos - state->rawdev.end_pos + state->rawdev.start_pos;
+		D0(fprintf(debug_file, "%d bytes written, curr_pos = %llu\n", l, state->rawdev.curr_pos));
 	}
-	close(state->ivf);
+
 	return 0;
 }
 
-int camogm_end_jpeg(void)
+int camogm_end_jpeg(camogm_state *state)
 {
+	close(state->ivf);
+	D0(fprintf(debug_file, "Closing raw device %s\n", state->path_prefix));
 	return 0;
 }

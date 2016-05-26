@@ -113,6 +113,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <linux/limits.h>
+#include <linux/fs.h>
 //#include <ctype.h>
 //#include <getopt.h>
 #include <time.h>
@@ -230,6 +231,7 @@ void  camogm_set_start_after_timestamp(camogm_state *state, double d);
 void  camogm_set_max_frames(camogm_state *state, int d);
 void  camogm_set_frames_per_chunk(camogm_state *state, int d);
 
+uint64_t get_disk_size(const char *name);
 
 //!======================================================================================================
 void put_uint16(void *buf, u_int16_t val)
@@ -323,6 +325,11 @@ void camogm_init(camogm_state *state, unsigned int port, char *pipe_name)
 
 	state->port_num = port;
 	state->pipe_name = pipe_name;
+	state->rawdev.start_pos = RAWDEV_START_OFFSET;
+	state->rawdev.end_pos = state->rawdev.start_pos;
+	state->rawdev.curr_pos = state->rawdev.start_pos;
+	state->rawdev.overrun = 0;
+	state->rawdev_op = 0;
 }
 
 
@@ -732,7 +739,7 @@ int camogm_stop(camogm_state *state)
 	switch (state->format) {
 	case CAMOGM_FORMAT_NONE: rslt = 0; break;
 	case CAMOGM_FORMAT_OGM:  rslt = camogm_end_ogm(state); break;
-	case CAMOGM_FORMAT_JPEG: rslt = camogm_end_jpeg(); break;
+	case CAMOGM_FORMAT_JPEG: rslt = camogm_end_jpeg(state); break;
 	case CAMOGM_FORMAT_MOV:  rslt = camogm_end_mov(state); break;
 ///    default: return 0; // do nothing
 	}
@@ -838,6 +845,23 @@ void  camogm_set_prefix(camogm_state *state, const char * p)
 {
 	strncpy(state->path_prefix, p, sizeof(state->path_prefix) - 1);
 	state->path_prefix[sizeof(state->path_prefix) - 1] = '\0';
+	// check if we are going to write to raw device
+	if (strncmp("/dev/", state->path_prefix, 5) == 0) {
+		state->rawdev.end_pos = get_disk_size(state->path_prefix);
+		if (state->rawdev.end_pos == 0) {
+			state->rawdev_op = 0;
+			state->rawdev.end_pos = state->rawdev.start_pos;
+			state->path_prefix[0] = '\0';
+			printf("ERROR: unable to initiate raw device operation\n");
+		} else {
+			printf("WARNING: raw device write initiated\n");
+			state->rawdev_op = 1;
+			/* debug code follows */
+			state->rawdev.end_pos = state->rawdev.start_pos + 10485760; // 10Mib size
+		}
+	} else {
+		state->rawdev_op = 0;
+	}
 }
 
 void  camogm_set_timescale(camogm_state *state, double d)   //! set timescale, default=1,000,000
@@ -1509,6 +1533,31 @@ int listener_loop(camogm_state *state)
 	// normally, we should not be here
 	clean_up(state);
 	return EXIT_SUCCESS;
+}
+
+/**
+ * @brief Return disk size in bytes
+ *
+ * This function reads disk size using ioctl call.
+ * @param   name   pointer to disk name string
+ * @return  disk size in bytes if it was read correctly and 0 otherwise
+ */
+uint64_t get_disk_size(const char *name)
+{
+	int fd;
+	uint64_t dev_sz;
+
+	if ((fd = open(name, O_RDONLY)) < 0) {
+		perror(__func__);
+		return 0;
+	}
+	if (ioctl(fd, BLKGETSIZE64, &dev_sz) < 0) {
+		perror(__func__);
+		return 0;
+	}
+	close(fd);
+
+	return dev_sz;
 }
 
 int main(int argc, char *argv[])

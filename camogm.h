@@ -72,6 +72,18 @@
    #define  Exif_GPSInfo_CompassRoll_Index         0x10
    #define  ExifKmlNumber                          0x11
  */
+
+/** @brief Offset from the beginning of raw device buffer. Must be aligned to physical sector size */
+#define RAWDEV_START_OFFSET 1024
+
+typedef struct {
+	int rawdev_fd;
+	uint64_t start_pos;
+	uint64_t end_pos;
+	uint64_t curr_pos;
+	uint32_t overrun;
+} rawdev_buffer;
+
 typedef struct {
 	int segment_duration;
 	int segment_length;
@@ -158,8 +170,10 @@ typedef struct {
 	int kml_last_uts;                                       //! last generated kml file timestamp, microseconds
 	struct exif_dir_table_t kml_exif[ExifKmlNumber];        //! store locations of the fields needed for KML generations in the Exif block
 
-	unsigned int port_num;                                  // sensor port this state assigned to
+	unsigned int port_num;                                  // sensor port this state is assigned to
 	char *pipe_name;                                        // command pipe name for this sensor port
+	int rawdev_op;                                          // flag indicating writing to raw device
+	rawdev_buffer rawdev;                            // contains pointers to raw device buffer
 } camogm_state;
 
 extern int debug_level;
