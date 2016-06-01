@@ -945,7 +945,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 					       "other"))) : "none";
 	_using_exif =    state->exif ? "yes" : "no";
 	_using_global_pointer = state->save_gp ? "yes" : "no";
-	_compressor_state = (getGPValue(state->port_num, P_COMPRESSOR_RUN) == 2) ? "running" : "stoppped";
+	_compressor_state = (getGPValue(state->port_num, P_COMPRESSOR_RUN) == 2) ? "running" : "stopped";
 	if ( state->frames_skip > 0 ) {
 		_frames_remain = state->frames_skip_left;
 		_frames_skip = state->frames_skip;
