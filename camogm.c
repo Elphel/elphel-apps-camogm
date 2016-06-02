@@ -172,8 +172,8 @@ struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
 struct framepars_t       *framePars[SENSOR_PORTS];
 unsigned long            *globalPars[SENSOR_PORTS]; /// parameters that are not frame-related, their changes do not initiate any actions
 
-#define DEFAULT_DURATION 60             /*!default segment duration (seconds) */
-#define DEFAULT_LENGTH 100000000        /*!default segment length (B) */
+#define DEFAULT_DURATION 600            /*!default segment duration (seconds) */
+#define DEFAULT_LENGTH 1073741824       /*!default segment length (B) */
 #define DEFAULT_GREEDY     0            /*!behavior for the files: 0 clean buffer, 1 - save as much as possible */
 #define DEFAULT_IGNORE_FPS 0            /*!0 restartf file if fps changed, 1 - ignore variable fps (and skip less frames) */
 
@@ -302,7 +302,7 @@ void camogm_init(camogm_state *state, unsigned int port, char *pipe_name)
 	strcpy(state->debug_name, "stderr");
 	camogm_set_timescale(state, 1.0);
 	camogm_set_frames_skip(state, 0);       // don't skip
-	camogm_set_format(state, CAMOGM_FORMAT_OGM);
+	camogm_set_format(state, CAMOGM_FORMAT_MOV);
 	state->exifSize = 0;
 	state->exif = DEFAULT_EXIF;
 	state->frame_lengths = NULL;
