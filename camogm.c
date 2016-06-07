@@ -173,8 +173,8 @@ struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
 struct framepars_t       *framePars[SENSOR_PORTS];
 unsigned long            *globalPars[SENSOR_PORTS]; /// parameters that are not frame-related, their changes do not initiate any actions
 
-#define DEFAULT_DURATION 60             /*!default segment duration (seconds) */
-#define DEFAULT_LENGTH 100000000        /*!default segment length (B) */
+#define DEFAULT_DURATION 600            /*!default segment duration (seconds) */
+#define DEFAULT_LENGTH 1073741824       /*!default segment length (B) */
 #define DEFAULT_GREEDY     0            /*!behavior for the files: 0 clean buffer, 1 - save as much as possible */
 #define DEFAULT_IGNORE_FPS 0            /*!0 restartf file if fps changed, 1 - ignore variable fps (and skip less frames) */
 
@@ -183,7 +183,6 @@ unsigned long            *globalPars[SENSOR_PORTS]; /// parameters that are not 
 #define DEFAULT_FRAMES           16384  /* Maximal number of frames in file segment (each need 4* (1 + 1/frames_per_chunk) bytes for the frame index */
 #define DEFAULT_FRAMES_PER_CHUNK    10  /*second sparse index - for Quicktime fast forward */
 
-#define DEFAULT_LENGTH 100000000        /*!default segment length (B) */
 #define DEFAULT_EXIF 1                  /* use Exif */
 
 static char cmdbuf[1024];
@@ -304,7 +303,7 @@ void camogm_init(camogm_state *state, unsigned int port, char *pipe_name)
 	strcpy(state->debug_name, "stderr");
 	camogm_set_timescale(state, 1.0);
 	camogm_set_frames_skip(state, 0);       // don't skip
-	camogm_set_format(state, CAMOGM_FORMAT_OGM);
+	camogm_set_format(state, CAMOGM_FORMAT_MOV);
 	state->exifSize = 0;
 	state->exif = DEFAULT_EXIF;
 	state->frame_lengths = NULL;
@@ -969,7 +968,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 					       "other"))) : "none";
 	_using_exif =    state->exif ? "yes" : "no";
 	_using_global_pointer = state->save_gp ? "yes" : "no";
-	_compressor_state = (getGPValue(state->port_num, P_COMPRESSOR_RUN) == 2) ? "running" : "stoppped";
+	_compressor_state = (getGPValue(state->port_num, P_COMPRESSOR_RUN) == 2) ? "running" : "stopped";
 	if ( state->frames_skip > 0 ) {
 		_frames_remain = state->frames_skip_left;
 		_frames_skip = state->frames_skip;
@@ -1538,7 +1537,7 @@ int listener_loop(camogm_state *state)
 /**
  * @brief Return disk size in bytes
  *
- * This function reads disk size using ioctl call.
+ * This function reads disk size using ioctl call and returns it in bytes.
  * @param   name   pointer to disk name string
  * @return  disk size in bytes if it was read correctly and 0 otherwise
  */

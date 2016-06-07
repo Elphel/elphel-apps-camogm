@@ -69,10 +69,10 @@
 /** @brief Size of iovec structures holding data to be written */
 #define IOVEC_SIZE      10
 
-/** @brief Start of file marker, contains "elphelst" string in ASCII symbols */
-const unsigned char elphelst[] = {0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c, 0x73, 0x74};
-/** @brief End of file marker, contains "elphelen" string in ASCII symbols */
-const unsigned char elphelen[] = {0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c, 0x65, 0x6e};
+/** @brief File starting marker, contains "stelphel" string in ASCII symbols */
+const unsigned char elphelst[] = {0x73, 0x74, 0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c};
+/** @brief File ending marker, contains "enelphel" string in ASCII symbols */
+const unsigned char elphelen[] = {0x65, 0x6e, 0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c};
 static struct iovec start_marker = {
 		.iov_base = elphelst,
 		.iov_len = sizeof(elphelst)
@@ -173,6 +173,8 @@ int camogm_frame_jpeg(camogm_state *state)
 			}
 		}
 		chunks_iovec[0] = start_marker;
+		l += start_marker.iov_len;
+		chunks_used++;
 		for (int i = 1; i < chunks_used; i++) {
 			if (i == split_index) {
 				// one of the chunks rolls over the end of the raw storage, split it into two segments and
@@ -193,9 +195,11 @@ int camogm_frame_jpeg(camogm_state *state)
 				l += chunks_iovec[i].iov_len;
 			}
 		}
-		assert(chunks_used < IOVEC_SIZE);
 		// consider start_marker here and increment chunks_used
-		chunks_iovec[chunks_used++] = end_marker;
+		assert(chunks_used < IOVEC_SIZE);
+		chunks_iovec[chunks_used] = end_marker;
+		l += end_marker.iov_len;
+		chunks_used++;
 
 		/* debug code follows */
 		fprintf(debug_file, "\n=== raw device write, iovec dump ===\n");
