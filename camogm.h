@@ -78,10 +78,10 @@
 
 typedef struct {
 	int rawdev_fd;
+	uint32_t overrun;
 	uint64_t start_pos;
 	uint64_t end_pos;
 	uint64_t curr_pos;
-	uint32_t overrun;
 } rawdev_buffer;
 
 typedef struct {
@@ -89,22 +89,21 @@ typedef struct {
 	int segment_length;
 	int greedy;
 	int ignore_fps;
-	int save_gp;             //if non zero, current circbuf pointer will be saved to global pointer, so imgsrv can report /pointers
+	int save_gp;                    //if non zero, current circbuf pointer will be saved to global pointer, so imgsrv can report /pointers
 	char path_prefix[256];
 	char path[300];
-	int cirbuf_rp;                  //!-1 - invalid
-	int fd_circ;                    //! file descriptor for circbuf
-	int fd_head;                    //! file descriptor for JPEG header
-//  int                   fd_sens;   //! file descriptor for sensor/compressor parameters
-	int fd_fparmsall;               //! file descriptor for sensor/compressor parameters
-	int fd_exif;                    //! file descriptor for Exif data
-	int head_size;                  //! JPEG header size
-	unsigned char jpegHeader [JPEG_HEADER_MAXSIZE];
+	int cirbuf_rp[SENSOR_PORTS];    //!-1 - invalid
+	int fd_circ[SENSOR_PORTS];      //! file descriptor for circbuf
+	int fd_head[SENSOR_PORTS];      //! file descriptor for JPEG header
+	int fd_fparmsall[SENSOR_PORTS]; //! file descriptor for sensor/compressor parameters
+	int fd_exif[SENSOR_PORTS];      //! file descriptor for Exif data
+	int head_size[SENSOR_PORTS];    //! JPEG header size
+	unsigned char jpegHeader[SENSOR_PORTS][JPEG_HEADER_MAXSIZE];
 	int metadata_start;
 	struct interframe_params_t frame_params;
 	struct interframe_params_t this_frame_params;
 	int jpeg_len;
-	int frame_period;              //!in microseconds (1/10 of what is needed for the Ogm header)
+	int frame_period[SENSOR_PORTS]; //!in microseconds (1/10 of what is needed for the Ogm header)
 	int width;
 	int height;
 	int starting;
@@ -122,25 +121,23 @@ typedef struct {
 	int last;                       //last packet in a file
 
 	int exif;                       // 1 - calculate and include Exif headers in each frame
-//  exif_pointers_t       ep;
-//  int                   exifValid;
-	int exifSize;             //signed
-	unsigned char ed[MAX_EXIF_SIZE];
+	int exifSize[SENSOR_PORTS];     //signed
+	unsigned char ed[SENSOR_PORTS][MAX_EXIF_SIZE];
 
-	int circ_buff_size;
-	int senspars_size;
+	int circ_buff_size[SENSOR_PORTS];
+//	int senspars_size;
 	char debug_name[256];
 //  FILE*             debug_file;
-	int set_samples_per_unit;
+//	int set_samples_per_unit;
 	double timescale;               //! current timescale, default 1.0
 	double set_timescale;
 	double start_after_timestamp;   /// delay recording start to after frame timestamp
 	int max_frames;
 	int set_max_frames;
 	int frames_per_chunk;
-	int set_frames_per_chunk;             // quicktime -  index for fast forward?
+	int set_frames_per_chunk;       // quicktime -  index for fast forward?
 	int frameno;
-	int*                  frame_lengths;
+	int *frame_lengths;
 	off_t frame_data_start;                 //! Quicktime (and else?) - frame data start (0xff 0xd8...)
 	ogg_int64_t time_unit;
 	int formats;                            //! bitmask of used (initialized) formats
@@ -148,12 +145,12 @@ typedef struct {
 	int set_format;                         //! output format to set (will be updated after stop)
 	elph_packet_chunk packetchunks[7];
 	int chunk_index;
-	int buf_overruns;
-	int buf_min;
+	int buf_overruns[SENSOR_PORTS];
+	int buf_min[SENSOR_PORTS];
 	int set_frames_skip;                                    //! will be copied to frames_skip if stopped or at start
 	int frames_skip;                                        //! number of frames to skip after the one recorded (for time lapse)
 	                                                        //! if negetive - -(interval between frames in seconds)
-	int frames_skip_left;                                   //! number of frames left to skip before the next one to be processed
+	int frames_skip_left[SENSOR_PORTS];                     //! number of frames left to skip before the next one to be processed
 	                                                        //! if (frames_skip <0) - next timestamp to save an image
 //kml stuff
 	int kml_enable;                                         //! enable KML file generation
@@ -170,10 +167,11 @@ typedef struct {
 	int kml_last_uts;                                       //! last generated kml file timestamp, microseconds
 	struct exif_dir_table_t kml_exif[ExifKmlNumber];        //! store locations of the fields needed for KML generations in the Exif block
 
-	unsigned int port_num;                                  // sensor port this state is assigned to
-	char *pipe_name;                                        // command pipe name for this sensor port
+	unsigned int port_num;                                  // sensor port we are currently working with
+	char *pipe_name;                                        // command pipe name
 	int rawdev_op;                                          // flag indicating writing to raw device
-	rawdev_buffer rawdev;                            // contains pointers to raw device buffer
+	rawdev_buffer rawdev;                                  // contains pointers to raw device buffer
+	int active_chn;                                         // bitmask of active sensor ports
 } camogm_state;
 
 extern int debug_level;

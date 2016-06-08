@@ -165,6 +165,7 @@ int camogm_frame_kml(camogm_state *state)
 	int hours = 0, minutes = 0;
 	double seconds = 0.0;
 	int * ip;
+	int port = state->port_num;
 
 	if (state->kml_file) { // probably not needed
 		i = state->this_frame_params.timestamp_sec - (state->kml_last_ts + state->kml_period);
@@ -204,7 +205,7 @@ int camogm_frame_kml(camogm_state *state)
 ///generating KML itself
 /// Using GPS time - in the same structure
 			if (state->kml_exif[Exif_GPSInfo_GPSDateStamp_Index].ltag == Exif_GPSInfo_GPSDateStamp) { // Exif_GPSInfo_GPSDateStamp is present in template
-				memcpy(datestr, &(state->ed[state->kml_exif[Exif_GPSInfo_GPSDateStamp_Index].dst]), 10);
+				memcpy(datestr, &(state->ed[port][state->kml_exif[Exif_GPSInfo_GPSDateStamp_Index].dst]), 10);
 				datestr[4] = '-'; datestr[7] = '-'; datestr[10] = '\0';
 			}
 			if (state->kml_exif[Exif_GPSInfo_GPSTimeStamp_Index].ltag == Exif_GPSInfo_GPSTimeStamp) { // Exif_GPSInfo_GPSTimeStamp is present in template
@@ -227,31 +228,31 @@ int camogm_frame_kml(camogm_state *state)
 				ip = (int*)&(state->ed[state->kml_exif[Exif_GPSInfo_GPSLongitude_Index].dst]);
 				longitude = __cpu_to_be32( ip[0]) / (1.0 * __cpu_to_be32( ip[1])) + __cpu_to_be32( ip[2]) / (60.0 * __cpu_to_be32( ip[3]));
 				if ((state->kml_exif[Exif_GPSInfo_GPSLongitudeRef_Index].ltag == Exif_GPSInfo_GPSLongitudeRef) &&
-				    (state->ed[state->kml_exif[Exif_GPSInfo_GPSLongitudeRef_Index].dst] != 'E')) longitude = -longitude;
-				D2(fprintf(debug_file, "(longitude) 0x%x 0x%x 0x%x 0x%x '%c'\n", ip[0], ip[1], ip[2], ip[3], state->ed[state->kml_exif[Exif_GPSInfo_GPSLongitudeRef_Index].dst]));
+				    (state->ed[port][state->kml_exif[Exif_GPSInfo_GPSLongitudeRef_Index].dst] != 'E')) longitude = -longitude;
+				D2(fprintf(debug_file, "(longitude) 0x%x 0x%x 0x%x 0x%x '%c'\n", ip[0], ip[1], ip[2], ip[3], state->ed[port][state->kml_exif[Exif_GPSInfo_GPSLongitudeRef_Index].dst]));
 			}
 
 			if (state->kml_exif[Exif_GPSInfo_GPSLatitude_Index].ltag == Exif_GPSInfo_GPSLatitude) { // Exif_GPSInfo_GPSLatitude is present in template
-				ip = (int*)&(state->ed[state->kml_exif[Exif_GPSInfo_GPSLatitude_Index].dst]);
+				ip = (int*)&(state->ed[port][state->kml_exif[Exif_GPSInfo_GPSLatitude_Index].dst]);
 				latitude = __cpu_to_be32( ip[0]) / (1.0 * __cpu_to_be32( ip[1])) + __cpu_to_be32( ip[2]) / (60.0 * __cpu_to_be32( ip[3]));
 				if ((state->kml_exif[Exif_GPSInfo_GPSLatitudeRef_Index].ltag == Exif_GPSInfo_GPSLatitudeRef) &&
-				    (state->ed[state->kml_exif[Exif_GPSInfo_GPSLatitudeRef_Index].dst] != 'N')) latitude = -latitude;
-				D2(fprintf(debug_file, "(latitude) 0x%x 0x%x 0x%x 0x%x '%c'\n", ip[0], ip[1], ip[2], ip[3], state->ed[state->kml_exif[Exif_GPSInfo_GPSLatitudeRef_Index].dst] ? '-' : '+'));
+				    (state->ed[port][state->kml_exif[Exif_GPSInfo_GPSLatitudeRef_Index].dst] != 'N')) latitude = -latitude;
+				D2(fprintf(debug_file, "(latitude) 0x%x 0x%x 0x%x 0x%x '%c'\n", ip[0], ip[1], ip[2], ip[3], state->ed[port][state->kml_exif[Exif_GPSInfo_GPSLatitudeRef_Index].dst] ? '-' : '+'));
 			}
 /// altitude - will be modified/replaced later
 			if (state->kml_exif[Exif_GPSInfo_GPSAltitude_Index].ltag == Exif_GPSInfo_GPSAltitude) { // Exif_GPSInfo_GPSAltitude is present in template
-				ip = (int*)&(state->ed[state->kml_exif[Exif_GPSInfo_GPSAltitude_Index].dst]);
+				ip = (int*)&(state->ed[port][state->kml_exif[Exif_GPSInfo_GPSAltitude_Index].dst]);
 				altitude = (1.0 * __cpu_to_be32( ip[0])) / __cpu_to_be32( ip[1]);
 				if ((state->kml_exif[Exif_GPSInfo_GPSAltitudeRef_Index].ltag == Exif_GPSInfo_GPSAltitudeRef) &&
-				    (state->ed[state->kml_exif[Exif_GPSInfo_GPSAltitudeRef_Index].dst] != '\0')) altitude = -altitude;
-				D2(fprintf(debug_file, "(altitude) 0x%x 0x%x '%c'\n", ip[0], ip[1], state->ed[state->kml_exif[Exif_GPSInfo_GPSAltitudeRef_Index].dst]));
+				    (state->ed[port][state->kml_exif[Exif_GPSInfo_GPSAltitudeRef_Index].dst] != '\0')) altitude = -altitude;
+				D2(fprintf(debug_file, "(altitude) 0x%x 0x%x '%c'\n", ip[0], ip[1], state->ed[port][state->kml_exif[Exif_GPSInfo_GPSAltitudeRef_Index].dst]));
 			}
 
 			D1(fprintf(debug_file, "longitude=%f, latitude=%f, altitude=%f\n", longitude, latitude, altitude));
 
 /// Heading - no processing of "True/Magnetic" Exif_GPSInfo_CompassDirectionRef now (always M)
 			if (state->kml_exif[Exif_GPSInfo_CompassDirection_Index].ltag == Exif_GPSInfo_CompassDirection) { // Exif_GPSInfo_CompassDirection is present in template
-				ip = (int*)&(state->ed[state->kml_exif[Exif_GPSInfo_CompassDirection_Index].dst]);
+				ip = (int*)&(state->ed[port][state->kml_exif[Exif_GPSInfo_CompassDirection_Index].dst]);
 				heading = (1.0 * __cpu_to_be32( ip[0])) / __cpu_to_be32( ip[1]);
 				D2(fprintf(debug_file, "(heading) 0x%x 0x%x\n", ip[0], ip[1]));
 			}
@@ -260,16 +261,16 @@ int camogm_frame_kml(camogm_state *state)
 				ip = (int*)&(state->ed[state->kml_exif[Exif_GPSInfo_CompassRoll_Index].dst]);
 				roll = __cpu_to_be32( ip[0]) / (1.0 * __cpu_to_be32( ip[1])) + __cpu_to_be32( ip[2]) / (60.0 * __cpu_to_be32( ip[3]));
 				if ((state->kml_exif[Exif_GPSInfo_CompassRollRef_Index].ltag == Exif_GPSInfo_CompassRollRef) &&
-				    (state->ed[state->kml_exif[Exif_GPSInfo_CompassRollRef_Index].dst] != EXIF_COMPASS_ROLL_ASCII[0])) roll = -roll;
-				D2(fprintf(debug_file, "(roll) 0x%x 0x%x '%c'\n", ip[0], ip[1], state->ed[state->kml_exif[Exif_GPSInfo_CompassRollRef_Index].dst]));
+				    (state->ed[port][state->kml_exif[Exif_GPSInfo_CompassRollRef_Index].dst] != EXIF_COMPASS_ROLL_ASCII[0])) roll = -roll;
+				D2(fprintf(debug_file, "(roll) 0x%x 0x%x '%c'\n", ip[0], ip[1], state->ed[port][state->kml_exif[Exif_GPSInfo_CompassRollRef_Index].dst]));
 			}
 
 			if (state->kml_exif[Exif_GPSInfo_CompassPitch_Index].ltag == Exif_GPSInfo_CompassPitch) { // Exif_GPSInfo_CompassPitch is present in template
-				ip = (int*)&(state->ed[state->kml_exif[Exif_GPSInfo_CompassPitch_Index].dst]);
+				ip = (int*)&(state->ed[port][state->kml_exif[Exif_GPSInfo_CompassPitch_Index].dst]);
 				pitch = __cpu_to_be32( ip[0]) / (1.0 * __cpu_to_be32( ip[1])) + __cpu_to_be32( ip[2]) / (60.0 * __cpu_to_be32( ip[3]));
 				if ((state->kml_exif[Exif_GPSInfo_CompassPitchRef_Index].ltag == Exif_GPSInfo_CompassPitchRef) &&
-				    (state->ed[state->kml_exif[Exif_GPSInfo_CompassPitchRef_Index].dst] !=  EXIF_COMPASS_PITCH_ASCII[0])) pitch = -pitch;
-				D2(fprintf(debug_file, "(pitch) 0x%x 0x%x '%c'\n", ip[0], ip[1], state->ed[state->kml_exif[Exif_GPSInfo_CompassPitchRef_Index].dst]));
+				    (state->ed[port][state->kml_exif[Exif_GPSInfo_CompassPitchRef_Index].dst] !=  EXIF_COMPASS_PITCH_ASCII[0])) pitch = -pitch;
+				D2(fprintf(debug_file, "(pitch) 0x%x 0x%x '%c'\n", ip[0], ip[1], state->ed[port][state->kml_exif[Exif_GPSInfo_CompassPitchRef_Index].dst]));
 			}
 /// convert from GPS heading, pitch, roll to KML heading, tilt, roll
 			tilt = pitch + 90.0;

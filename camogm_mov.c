@@ -200,7 +200,7 @@ int camogm_end_mov(camogm_state *state)
 	off_t l/*,he;
 	          unsigned char mdat_tag[8];
 	          unsigned char skip_tag[]="\0\0\0\0skip"*/;
-
+	int port = state->port_num;
 	timescale = 10000;                                                      //! frame period measured in 1/10000 of a second?
 	//! that was in old code. If that works - try to switch to microseconds
 	l = lseek(state->ivf, 0, SEEK_CUR) - (state->frame_data_start) + 8;     //!4-byte length+"mdat"
@@ -213,7 +213,7 @@ int camogm_end_mov(camogm_state *state)
 				  state->width, //! width in pixels
 				  state->height,
 				  state->frameno,
-				  state->frame_period / (1000000 / timescale),
+				  state->frame_period[port] / (1000000 / timescale),
 				  state->frames_per_chunk,
 				  0,                    //!frame size - will look in the table
 				  (int)((float)timescale / (state->timescale)),

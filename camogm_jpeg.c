@@ -35,7 +35,7 @@
    *!
  */
 
-#define LARGEFILES64_SOURCE
+#define _LARGEFILE64_SOURCE
 
 //!Not all are needed, just copied from the camogm.c
 #include <unistd.h>
@@ -47,7 +47,7 @@
 #include <errno.h>
 #include <sys/types.h>
 //#include <sys/socket.h>
-//#include <sys/stat.h>
+#include <sys/stat.h>
 //#include <ctype.h>
 //#include <getopt.h>
 //#include <time.h>
@@ -70,9 +70,9 @@
 #define IOVEC_SIZE      10
 
 /** @brief File starting marker, contains "stelphel" string in ASCII symbols */
-const unsigned char elphelst[] = {0x73, 0x74, 0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c};
+unsigned char elphelst[] = {0x73, 0x74, 0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c};
 /** @brief File ending marker, contains "enelphel" string in ASCII symbols */
-const unsigned char elphelen[] = {0x65, 0x6e, 0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c};
+unsigned char elphelen[] = {0x65, 0x6e, 0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c};
 static struct iovec start_marker = {
 		.iov_base = elphelst,
 		.iov_len = sizeof(elphelst)
@@ -130,12 +130,10 @@ int camogm_frame_jpeg(camogm_state *state)
 {
 	int i, j, split_index;
 	int chunks_used = state->chunk_index - 1;
-	ssize_t iovlen, l;
+	ssize_t iovlen, l = 0;
 	struct iovec chunks_iovec[8];
 	unsigned char *split_ptr = NULL;
-	long split_cntr;
-	long total_len;
-	const uint64_t storage_sz = state->rawdev.end_pos - state->rawdev.start_pos;
+	long split_cntr = 0;
 
 	if (!state->rawdev_op) {
 		l = 0;
