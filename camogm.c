@@ -911,15 +911,13 @@ void  camogm_set_start_after_timestamp(camogm_state *state, double d)
 	state->start_after_timestamp =  d;
 }
 
-
 void  camogm_status(camogm_state *state, char * fn, int xml)
 {
 	int _len = 0;
-	int _dur[SENSOR_PORTS], _udur[SENSOR_PORTS];
-//TODO:make it XML file
+	int _dur = 0, _udur = 0, _dur_raw, _udur_raw;
 	FILE* f;
 	char *_state, *_output_format, *_using_exif, *_using_global_pointer, *_compressor_state[SENSOR_PORTS];
-	int _b_free, _b_used, _b_size; // , save_p;
+	int _b_free[SENSOR_PORTS], _b_used[SENSOR_PORTS], _b_size[SENSOR_PORTS];
 	int _frames_remain[SENSOR_PORTS] = {0};
 	int _sec_remain[SENSOR_PORTS] = {0};
 	int _frames_skip = 0;
@@ -930,10 +928,37 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	_kml_used =        state->kml_used ? "yes" : "no";
 	_kml_height_mode = state->kml_height_mode ? "GPS altitude" : "map ground level"; //! 1 - actual, 0 - ground
 
+	for (int chn = 0; chn < SENSOR_PORTS; chn++) {
+		_b_free[chn] = getGPValue(chn, G_FREECIRCBUF);
+		_b_used[chn] = getGPValue(chn, G_CIRCBUFSIZE) - getGPValue(state->port_num, G_FREECIRCBUF);
+		_b_size[chn] = getGPValue(chn, G_FRAME_SIZE);
+		_compressor_state[chn] = (getGPValue(chn, P_COMPRESSOR_RUN) == 2) ? "running" : "stopped";
+		if (state->frames_skip > 0)
+			_frames_remain[chn] = state->frames_skip_left[chn];
+		else if (state->frames_skip < 0)
+			_sec_remain[chn] = (state->frames_skip_left[chn] - state->this_frame_params[chn].timestamp_sec);
 
-	_b_free = getGPValue(state->port_num, G_FREECIRCBUF);
-	_b_used = getGPValue(state->port_num, G_CIRCBUFSIZE) - getGPValue(state->port_num, G_FREECIRCBUF);
-	_b_size = getGPValue(state->port_num, G_FRAME_SIZE);
+		_dur_raw = state->this_frame_params[chn].timestamp_sec - state->frame_params[chn].timestamp_sec;
+		_udur_raw = state->this_frame_params[chn].timestamp_usec - state->frame_params[chn].timestamp_usec;
+		if (_udur_raw < 0) {
+			_dur_raw -= 1;
+			_udur_raw += 1000000;
+		} else if (_udur_raw >= 1000000) {
+			_dur_raw += 1;
+			_udur_raw -= 1000000;
+		}
+		_dur += _dur_raw;
+		_udur += _udur_raw;
+		if (_udur > 1000000) {
+			_dur += 1;
+			_udur -= 1000000;
+		}
+	}
+	if ( state->frames_skip > 0 ) {
+		_frames_skip = state->frames_skip;
+	} else if ( state->frames_skip < 0 ) {
+		_sec_skip = -(state->frames_skip);
+	}
 
 	if (!fn) f = stdout;
 	else if (strcmp(fn, "stdout") == 0) f = stdout;
@@ -946,17 +971,6 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	}
 	if (state->vf) _len = ftell(state->vf);                                 //! for ogm
 	else if ((state->ivf) >= 0) _len = lseek(state->ivf, 0, SEEK_CUR);      //!for mov
-	FOR_EACH_PORT(int, chn) {
-		_dur[chn] = state->this_frame_params[chn].timestamp_sec - state->frame_params[chn].timestamp_sec;
-		_udur[chn] = state->this_frame_params[chn].timestamp_usec - state->frame_params[chn].timestamp_usec;
-		if (_udur[chn] < 0) {
-			_dur[chn] -= 1;
-			_udur[chn] += 1000000;
-		} else if (_udur[chn] >= 1000000) {
-			_dur[chn] += 1;
-			_udur[chn] -= 1000000;
-		}
-	}
 	_state =         state->running ? "running" : (state->starting ? "starting" : "stopped");
 	_output_format = state->format ? ((state->format == CAMOGM_FORMAT_OGM) ? "ogm" :
 					  ((state->format == CAMOGM_FORMAT_JPEG) ? "jpeg" :
@@ -964,30 +978,16 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 					       "other"))) : "none";
 	_using_exif =    state->exif ? "yes" : "no";
 	_using_global_pointer = state->save_gp ? "yes" : "no";
-	FOR_EACH_PORT(int, chn) {_compressor_state[chn] = (getGPValue(chn, P_COMPRESSOR_RUN) == 2) ? "running" : "stopped";}
-	if ( state->frames_skip > 0 ) {
-		FOR_EACH_PORT(int, chn) {_frames_remain[chn] = state->frames_skip_left[chn];}
-		_frames_skip = state->frames_skip;
-	} else if ( state->frames_skip < 0 ) {
-		FOR_EACH_PORT(int, chn) {_sec_remain[chn] = (state->frames_skip_left[chn] - state->this_frame_params[chn].timestamp_sec);}
-		_sec_skip = -(state->frames_skip);
-	}
-
 
 	if (xml) {
 		fprintf(f, "<?xml version=\"1.0\"?>\n" \
 			"<camogm_state>\n" \
 			"  <state>\"%s\"</state>\n" \
-			"  <compressor_state>\"%s\"</compressor_state>\n" \
 			"  <file_name>\"%s\"</file_name>\n" \
 			"  <frame_number>%d</frame_number>\n" \
-			"  <frame_size>%d</frame_size>\n" \
 			"  <start_after_timestamp>%f</start_after_timestamp>\n"	\
 			"  <file_duration>%d.%06d</file_duration>\n" \
 			"  <file_length>%d</file_length>\n" \
-			"  <frame_period>%d</frame_period>\n" \
-			"  <frames_skip>%d</frames_skip>\n" \
-			"  <seconds_skip>%d</seconds_skip>\n" \
 			"  <frames_skip_left>%d</frames_skip_left>\n" \
 			"  <seconds_skip_left>%d</seconds_skip_left>\n"	\
 			"  <frame_width>%d</frame_width>\n" \
@@ -1001,11 +1001,6 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <timescale>%f</timescale>\n"	\
 			"  <frames_per_chunk>%d</frames_per_chunk>\n" \
 			"  <last_error_code>%d</last_error_code>\n" \
-			"  <buffer_overruns>%d</buffer_overruns>\n" \
-			"  <buffer_minimal>%d</buffer_minimal>\n" \
-			"  <buffer_free>%d</buffer_free>\n" \
-			"  <buffer_used>%d</buffer_used>\n" \
-			"  <circbuf_rp>%d</circbuf_rp>\n" \
 			"  <debug_output>\"%s\"</debug_output>\n" \
 			"  <debug_level>%d</debug_level>\n" \
 			"  <use_global_rp>\"%s\"</use_global_rp>\n" \
@@ -1020,75 +1015,110 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <kml_period>%d</kml_period>\n" \
 			"  <kml_last_ts>%d.%06d</kml_last_ts>\n" \
 			"  <greedy>\"%s\"</greedy>\n" \
-			"  <ignore_fps>\"%s\"</ignore_fps>\n" \
-			"</camogm_state>\n",
-			_state, _compressor_state[0], state->path, state->frameno, _b_size, state->start_after_timestamp, _dur[0], _udur[0], _len, state->frame_period[0], \
-			_frames_skip, _sec_skip, _frames_remain[0], _sec_remain[0], \
+			"  <ignore_fps>\"%s\"</ignore_fps>\n",
+			_state,  state->path, state->frameno, state->start_after_timestamp, _dur, _udur, _len, \
+			_frames_skip, _sec_skip, \
 			state->width, state->height, _output_format, _using_exif, \
 			state->path_prefix, state->segment_duration, state->segment_length, state->max_frames, state->timescale, \
-			state->frames_per_chunk,  state->last_error_code, state->buf_overruns[0], state->buf_min[0], _b_free, _b_used, state->cirbuf_rp[0], \
+			state->frames_per_chunk,  state->last_error_code, \
 			state->debug_name, debug_level, _using_global_pointer, \
 			_kml_enable, _kml_used, state->kml_path, state->kml_horHalfFov, state->kml_vertHalfFov, state->kml_near, \
 			_kml_height_mode, state->kml_height, state->kml_period, state->kml_last_ts, state->kml_last_uts, \
 			state->greedy ? "yes" : "no", state->ignore_fps ? "yes" : "no");
-	} else {
-		fprintf(f, "state              %s\n",        _state);
-		FOR_EACH_PORT(int, chn) {fprintf(f, "compressor %d state   %s\n", chn, _compressor_state[chn]);}
-		fprintf(f, "file               %s\n",        state->path);
-		fprintf(f, "frame              %d\n",        state->frameno);
-		fprintf(f, "frame size         %d\n",        _b_size);
-		fprintf(f, "start_after_timestamp %f\n",     state->start_after_timestamp);
-		FOR_EACH_PORT(int, chn) {fprintf(f, "file duration      %d.%06d sec\n", _dur[chn], _udur[chn]);}
-		fprintf(f, "file length        %d B\n",      _len);
-		FOR_EACH_PORT(int, chn) {fprintf(f, "frame period       %d (0x%x)\n", state->frame_period[chn], state->frame_period[chn]);}
-		if ( _frames_skip > 0 ) {
-			FOR_EACH_PORT(int, chn) {fprintf(f, "frames to skip on port %d   %d (left %d)\n", chn, _frames_skip, _frames_remain[chn]);}
-		}
-		if ( _sec_skip    < 0 ) {
-			FOR_EACH_PORT(int, chn) {fprintf(f, "timelapse period on port %d %d sec (remaining %d sec)\n", chn, _sec_skip, _sec_remain[chn]);}
-		}
-		fprintf(f, "width              %d (0x%x)\n", state->width, state->width);
-		fprintf(f, "height             %d (0x%x)\n", state->height, state->height);
-		fprintf(f, "\n");
-		fprintf(f, "output format      %s\n",        _output_format);
-		fprintf(f, "using exif         %s\n",        _using_exif);
-		fprintf(f, "path prefix:       %s\n",        state->path_prefix);
-		fprintf(f, "max file duration: %d sec\n",    state->segment_duration);
-		fprintf(f, "max file length:   %d B\n",      state->segment_length);
-		fprintf(f, "max frames         %d\n",        state->max_frames);
-		fprintf(f, "timescale          %f\n",        state->timescale);
-		fprintf(f, "frames per chunk   %d\n",        state->frames_per_chunk);
-		fprintf(f, "greedy             %s\n",        state->greedy ? "yes" : "no");
-		fprintf(f, "ignore fps         %s\n",        state->ignore_fps ? "yes" : "no");
-		fprintf(f, "\n");
-		fprintf(f, "last error code    %d\n",        state->last_error_code);
-		FOR_EACH_PORT(int, chn) {fprintf(f, "buffer %d overruns %d\n", chn, state->buf_overruns[chn]);}
-		FOR_EACH_PORT(int, chn) {fprintf(f, "buffer %d minimal %d\n", chn, state->buf_min[chn]);}
-		fprintf(f, "buffer free        %d\n",        _b_free);
-		fprintf(f, "buffer used        %d\n",        _b_used);
-		FOR_EACH_PORT(int, chn) {fprintf(f, "circbuf_rp         %d (0x%x)\n", state->cirbuf_rp[chn], state->cirbuf_rp[chn]);}
-		fprintf(f, "\n");
-		fprintf(f, "debug output to    %s\n",        state->debug_name);
-		fprintf(f, "debug level        %d\n",        debug_level);
-		fprintf(f, "use global pointer %s\n",        _using_global_pointer);
-		fprintf(f, "\n\n");
-		fprintf(f, "kml_enable         %s\n",        _kml_enable);
-		fprintf(f, "kml_used           %s\n",        _kml_used);
-		fprintf(f, "kml_path           %s\n",        state->kml_path);
-		fprintf(f, "kml_horHalfFov     %f degrees\n", state->kml_horHalfFov);
-		fprintf(f, "kml_vertHalfFov    %f degrees\n", state->kml_vertHalfFov);
-		fprintf(f, "kml_near           %f m\n",      state->kml_near);
-		fprintf(f, "kml height mode    %s\n",        _kml_height_mode);
-		fprintf(f, "kml_height (extra) %f m\n",      state->kml_height);
-		fprintf(f, "kml_period         %d\n",        state->kml_period);
-		fprintf(f, "kml_last_ts        %d.%06d\n",   state->kml_last_ts, state->kml_last_uts);
-		fprintf(f, "\n\n");
 
+		FOR_EACH_PORT(int, chn) {
+			char *_active = is_chn_active(state, chn) ? "yes" : "no";
+			fprintf(f,
+			"\t<sensor_port_%d>\n" \
+			"\t\t<channel_active>\"%s\"<\channel_active>\n" \
+			"\t\t<compressor_state>\"%s\"</compressor_state>\n" \
+			"\t\t<frame_size>%d</frame_size>\n" \
+			"\t\t<frames_skip>%d</frames_skip>\n" \
+			"\t\t<seconds_skip>%d</seconds_skip>\n" \
+			"\t\t<buffer_overruns>%d</buffer_overruns>\n" \
+			"\t\t<buffer_minimal>%d</buffer_minimal>\n" \
+			"\t\t<frame_period>%d</frame_period>\n" \
+			"\t\t<buffer_free>%d</buffer_free>\n" \
+			"\t\t<buffer_used>%d</buffer_used>\n" \
+			"\t\t<circbuf_rp>%d</circbuf_rp>\n" \
+			"\t</sensor_port_%d>\n",
+				chn,
+				_active,
+				_compressor_state[chn],
+				_b_size[chn],
+				_frames_remain[chn],
+				_sec_remain[chn],
+				state->buf_overruns[chn],
+				state->buf_min[chn],
+				state->frame_period[chn],
+				_b_free[chn],
+				_b_used[chn],
+				state->cirbuf_rp[chn],
+				chn
+				);
+		}
+		fprintf(f, "</camogm_state>\n");
+	} else {
+		fprintf(f, "state              \t%s\n",        _state);
+		fprintf(f, "file               \t%s\n",        state->path);
+		fprintf(f, "frame              \t%d\n",        state->frameno);
+		fprintf(f, "start_after_timestamp \t%f\n",     state->start_after_timestamp);
+		fprintf(f, "file duration      \t%d.%06d sec\n", _dur, _udur);
+		fprintf(f, "file length        \t%d B\n",      _len);
+		fprintf(f, "width              \t%d (0x%x)\n", state->width, state->width);
+		fprintf(f, "height             \t%d (0x%x)\n", state->height, state->height);
+		fprintf(f, "\n");
+		fprintf(f, "output format      \t%s\n",        _output_format);
+		fprintf(f, "using exif         \t%s\n",        _using_exif);
+		fprintf(f, "path prefix:       \t%s\n",        state->path_prefix);
+		fprintf(f, "max file duration: \t%d sec\n",    state->segment_duration);
+		fprintf(f, "max file length:   \t%d B\n",      state->segment_length);
+		fprintf(f, "max frames         \t%d\n",        state->max_frames);
+		fprintf(f, "timescale          \t%f\n",        state->timescale);
+		fprintf(f, "frames per chunk   \t%d\n",        state->frames_per_chunk);
+		fprintf(f, "greedy             \t%s\n",        state->greedy ? "yes" : "no");
+		fprintf(f, "ignore fps         \t%s\n",        state->ignore_fps ? "yes" : "no");
+		fprintf(f, "\n");
+		fprintf(f, "last error code    \t%d\n",        state->last_error_code);
+		fprintf(f, "\n");
+		fprintf(f, "debug output to    \t%s\n",        state->debug_name);
+		fprintf(f, "debug level        \t%d\n",        debug_level);
+		fprintf(f, "use global pointer \t%s\n",        _using_global_pointer);
+		fprintf(f, "\n\n");
+		fprintf(f, "kml_enable         \t%s\n",        _kml_enable);
+		fprintf(f, "kml_used           \t%s\n",        _kml_used);
+		fprintf(f, "kml_path           \t%s\n",        state->kml_path);
+		fprintf(f, "kml_horHalfFov     \t%f degrees\n", state->kml_horHalfFov);
+		fprintf(f, "kml_vertHalfFov    \t%f degrees\n", state->kml_vertHalfFov);
+		fprintf(f, "kml_near           \t%f m\n",      state->kml_near);
+		fprintf(f, "kml height mode    \t%s\n",        _kml_height_mode);
+		fprintf(f, "kml_height (extra) \t%f m\n",      state->kml_height);
+		fprintf(f, "kml_period         \t%d\n",        state->kml_period);
+		fprintf(f, "kml_last_ts        \t%d.%06d\n",   state->kml_last_ts, state->kml_last_uts);
+		fprintf(f, "\n");
+		FOR_EACH_PORT(int, chn) {
+			char *_active = is_chn_active(state, chn) ? "yes" : "no";
+			fprintf(f, "===== Sensor port %d status =====\n", chn);
+			fprintf(f, "enabled            \t%s\n",    _active);
+			fprintf(f, "compressor state   \t%s\n",    _compressor_state[chn]);
+			fprintf(f, "frame size         \t%d\n",    _b_size[chn]);
+			if (_frames_skip > 0)
+				fprintf(f, "frames to skip \t%d (left %d)\n", _frames_skip, _frames_remain[chn]);
+			if (_sec_skip < 0 )
+				fprintf(f, "timelapse period \t%d sec (remaining %d sec)\n", _sec_skip, _sec_remain[chn]);
+			fprintf(f, "buffer overruns    \t%d\n",    state->buf_overruns[chn]);
+			fprintf(f, "buffer minimal     \t%d\n",    state->buf_min[chn]);
+			fprintf(f, "frame period       \t%d (0x%x)\n", state->frame_period[chn], state->frame_period[chn]);
+			fprintf(f, "buffer free        \t%d\n",    _b_free[chn]);
+			fprintf(f, "buffer used        \t%d\n",    _b_used[chn]);
+			fprintf(f, "circbuf_rp         \t%d (0x%x)\n", state->cirbuf_rp[chn], state->cirbuf_rp[chn]);
+			fprintf(f, "\n");
+		}
 	}
 	if ((f != stdout) && (f != stderr)) fclose(f);
 	FOR_EACH_PORT(int, chn) {if (state->buf_overruns[chn] >= 0) state->buf_overruns[chn] = 0;}  //! resets overruns after reading status , so "overruns" means since last reading status
 	state->last_error_code = 0;                             //! Reset error
-	FOR_EACH_PORT(int, chn) {state->buf_min[chn] = _b_free;}
+	FOR_EACH_PORT(int, chn) {state->buf_min[chn] = _b_free[chn];}
 }
 
 //! will read from pipe, return pointer to null terminated string if available, NULL otherwise
@@ -1345,7 +1375,6 @@ int listener_loop(camogm_state *state)
 	while (process) {
 		curr_port = select_port(state);
 		state->port_num = curr_port;
-		printf("Selected port: %d\n", curr_port);
 		// look at command queue first
 		cmd = parse_cmd(state, cmd_file);
 		if (cmd) {
@@ -1481,7 +1510,6 @@ unsigned int select_port(camogm_state *state)
 		if (free_sz[i] < free_sz[i - 1])
 			chn = i;
 	}
-	printf("free sizes: %lx, %lx, %lx, %lx\n", free_sz[0], free_sz[1], free_sz[2], free_sz[3]);
 	return chn;
 }
 
