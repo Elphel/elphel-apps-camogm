@@ -139,7 +139,7 @@ int camogm_start_kml(camogm_state *state)
 		}
 	}
 	close(fd_ExifDir);
-	sprintf(state->kml_path, "%s%010ld_%06ld.kml", state->path_prefix, state->this_frame_params.timestamp_sec, state->this_frame_params.timestamp_usec);
+	sprintf(state->kml_path, "%s%010ld_%06ld.kml", state->path_prefix, state->this_frame_params[state->port_num].timestamp_sec, state->this_frame_params[state->port_num].timestamp_usec);
 	if (!((state->kml_file = fopen(state->kml_path, "w+"))) ) {
 		D0(fprintf(debug_file, "Error opening %s for writing\n", state->kml_path));
 		return -CAMOGM_FRAME_FILE_ERR;
@@ -168,15 +168,15 @@ int camogm_frame_kml(camogm_state *state)
 	int port = state->port_num;
 
 	if (state->kml_file) { // probably not needed
-		i = state->this_frame_params.timestamp_sec - (state->kml_last_ts + state->kml_period);
-		if ((i > 1) || ((i == 0) && ( state->this_frame_params.timestamp_usec > state->kml_last_uts  ))) {
+		i = state->this_frame_params[state->port_num].timestamp_sec - (state->kml_last_ts + state->kml_period);
+		if ((i > 1) || ((i == 0) && ( state->this_frame_params[state->port_num].timestamp_usec > state->kml_last_uts  ))) {
 //    if (state->this_frame_params.timestamp_sec > (state->kml_last_ts + state->kml_period)) { // this way it is safe to put kml_period=1000, then kml_period=1
-			state->kml_last_ts = state->this_frame_params.timestamp_sec;
-			state->kml_last_uts = state->this_frame_params.timestamp_usec;
+			state->kml_last_ts = state->this_frame_params[state->port_num].timestamp_sec;
+			state->kml_last_uts = state->this_frame_params[state->port_num].timestamp_usec;
 			if (state->format == CAMOGM_FORMAT_JPEG) {
 				strcpy(JPEGFileName, state->path);
 			} else {
-				sprintf(JPEGFileName, "%s%010ld_%06ld.jpeg", state->path_prefix, state->this_frame_params.timestamp_sec, state->this_frame_params.timestamp_usec);
+				sprintf(JPEGFileName, "%s%010ld_%06ld.jpeg", state->path_prefix, state->this_frame_params[state->port_num].timestamp_sec, state->this_frame_params[state->port_num].timestamp_usec);
 				if (((fd_JPEG = open(JPEGFileName, O_RDWR | O_CREAT, 0777))) >= 0) {
 					l = 0;
 					for (i = 0; i < (state->chunk_index) - 1; i++) {

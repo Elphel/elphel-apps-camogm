@@ -134,6 +134,7 @@ int camogm_frame_jpeg(camogm_state *state)
 	struct iovec chunks_iovec[8];
 	unsigned char *split_ptr = NULL;
 	long split_cntr = 0;
+	int port = state->port_num;
 
 	if (!state->rawdev_op) {
 		l = 0;
@@ -143,7 +144,7 @@ int camogm_frame_jpeg(camogm_state *state)
 			l += chunks_iovec[i].iov_len;
 		}
 
-		sprintf(state->path, "%s%010ld_%06ld.jpeg", state->path_prefix, state->this_frame_params.timestamp_sec, state->this_frame_params.timestamp_usec);
+		sprintf(state->path, "%s%010ld_%06ld.jpeg", state->path_prefix, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
 		if (((state->ivf = open(state->path, O_RDWR | O_CREAT, 0777))) < 0) {
 			D0(fprintf(debug_file, "Error opening %s for writing, returned %d, errno=%d\n", state->path, state->ivf, errno));
 			return -CAMOGM_FRAME_FILE_ERR;

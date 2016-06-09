@@ -100,8 +100,8 @@ typedef struct {
 	int head_size[SENSOR_PORTS];    //! JPEG header size
 	unsigned char jpegHeader[SENSOR_PORTS][JPEG_HEADER_MAXSIZE];
 	int metadata_start;
-	struct interframe_params_t frame_params;
-	struct interframe_params_t this_frame_params;
+	struct interframe_params_t frame_params[SENSOR_PORTS];
+	struct interframe_params_t this_frame_params[SENSOR_PORTS];
 	int jpeg_len;
 	int frame_period[SENSOR_PORTS]; //!in microseconds (1/10 of what is needed for the Ogm header)
 	int width;

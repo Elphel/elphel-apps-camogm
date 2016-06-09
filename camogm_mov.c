@@ -153,7 +153,7 @@ int camogm_start_mov(camogm_state *state)
 //! allocate memory for the frame index table
 	if (!((state->frame_lengths = malloc(4 * state->max_frames)))) return -CAMOGM_FRAME_MALLOC;
 //! open file for writing
-	sprintf(state->path, "%s%010ld_%06ld.mov", state->path_prefix, state->frame_params.timestamp_sec, state->frame_params.timestamp_usec);
+	sprintf(state->path, "%s%010ld_%06ld.mov", state->path_prefix, state->frame_params[state->port_num].timestamp_sec, state->frame_params[state->port_num].timestamp_usec);
 	if (((state->ivf = open(state->path, O_RDWR | O_CREAT, 0777))) < 0) {
 		D0(fprintf(debug_file, "Error opening %s for writing, returned %d, errno=%d\n", state->path, state->ivf, errno));
 		return -CAMOGM_FRAME_FILE_ERR;

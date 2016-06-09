@@ -73,10 +73,10 @@ int camogm_start_ogm(camogm_state *state)
 	char vendor[] = "ElphelOgm v 0.1";
 	int pos;
 	stream_header sh;
-	char hdbuf[sizeof(sh) + 1];
+	unsigned char hdbuf[sizeof(sh) + 1];
 	ogg_packet ogg_header;
 
-	sprintf(state->path, "%s%010ld_%06ld.ogm", state->path_prefix, state->frame_params.timestamp_sec, state->frame_params.timestamp_usec);
+	sprintf(state->path, "%s%010ld_%06ld.ogm", state->path_prefix, state->frame_params[state->port_num].timestamp_sec, state->frame_params[state->port_num].timestamp_usec);
 	if (!((state->vf = fopen(state->path, "w+"))) ) {
 		D0(fprintf(debug_file, "Error opening %s for writing\n", state->path));
 		return -CAMOGM_FRAME_FILE_ERR;
@@ -153,8 +153,8 @@ int camogm_start_ogm(camogm_state *state)
  */
 //! calculate initial absolute granulepos (from 1970), then increment with each frame. Later try calculating granulepos of each frame
 //! from the absolute time (actual timestamp)
-	state->granulepos = (ogg_int64_t)( (((double)state->frame_params.timestamp_usec) +
-					    (((double)1000000) * ((double)state->frame_params.timestamp_sec))) *
+	state->granulepos = (ogg_int64_t)( (((double)state->frame_params[state->port_num].timestamp_usec) +
+					    (((double)1000000) * ((double)state->frame_params[state->port_num].timestamp_sec))) *
 					   ((double)10) /
 					   ((double)state->time_unit) *
 					   ((double)state->timescale));
