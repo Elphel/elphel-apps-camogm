@@ -168,16 +168,17 @@ unsigned long            *aglobalPars[SENSOR_PORTS]; /// parameters that are not
 #define DEFAULT_GREEDY     0            /*!behavior for the files: 0 clean buffer, 1 - save as much as possible */
 #define DEFAULT_IGNORE_FPS 0            /*!0 restartf file if fps changed, 1 - ignore variable fps (and skip less frames) */
 
+/** @brief Bit mask indicating all 4 sensor port channels are active */
+#define ALL_CHN_ACTIVE            0x0f
+/** @brief Bit mask indicating all 4 sensor port channels are inactive */
+#define ALL_CHN_INACTIVE          0x00
+
 
 //!Next 2 for Quicktime (mostly)
 #define DEFAULT_FRAMES           16384  /* Maximal number of frames in file segment (each need 4* (1 + 1/frames_per_chunk) bytes for the frame index */
 #define DEFAULT_FRAMES_PER_CHUNK    10  /*second sparse index - for Quicktime fast forward */
 
 #define DEFAULT_EXIF 1                  /* use Exif */
-
-static char cmdbuf[1024];
-static int cmdbufp = 0; // current input pointer in the command buffer (read from pipe)
-static int cmdstrt = 0; // start of the next partial command
 
 camogm_state sstate;
 //camogm_state * state;
@@ -325,7 +326,7 @@ void camogm_init(camogm_state *state, unsigned int port, char *pipe_name)
 	state->rawdev.curr_pos = state->rawdev.start_pos;
 	state->rawdev.overrun = 0;
 	state->rawdev_op = 0;
-	FOR_EACH_PORT(int, chn) {set_chn_state(state, chn, 1);}
+	state->active_chn = ALL_CHN_ACTIVE;
 }
 
 
@@ -363,6 +364,11 @@ int camogm_start(camogm_state *state)
 	int rslt;
 	int next_metadata_start, next_jpeg_len, fp;
 	int port = state->port_num;
+
+	if (state->active_chn == ALL_CHN_INACTIVE) {
+		D1(fprintf(debug_file, "All channels are disabled, will not start\n"));
+		return 0;
+	}
 
 	D1(fprintf(debug_file, "Starting recording\n"));
 	double dtime_stamp;
@@ -1126,6 +1132,9 @@ char * getLineFromPipe(FILE* npipe)
 {
 	int fl;
 	char * nlp;
+	static char cmdbuf[1024];
+	static int cmdbufp = 0; // current input pointer in the command buffer (read from pipe)
+	static int cmdstrt = 0; // start of the next partial command
 
 //!remove used string if any
 	if (cmdstrt > 0) {
@@ -1302,7 +1311,16 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 		dd = strtod(args, NULL);
 		camogm_set_ignore_fps(state, dd);
 		return 25;
+	} else if (strcmp(cmd, "port_enable") == 0) {
+		d = strtol(args, NULL, 10);
+		set_chn_state(state, d, 1);
+		return 26;
+	} else if (strcmp(cmd, "port_disable") == 0) {
+		d = strtol(args, NULL, 10);
+		set_chn_state(state, d, 0);
+		return 27;
 	}
+
 	return -1;
 }
 
@@ -1380,7 +1398,6 @@ int listener_loop(camogm_state *state)
 		if (cmd) {
 			if (cmd < 0) D0(fprintf(debug_file, "Unrecognized command\n"));
 		} else if (state->running) { // no commands in queue, started
-
 			switch ((rslt = -sendImageFrame(state))) {
 			case 0:
 				break;                      // frame sent OK, nothing to do (TODO: check file length/duration)
@@ -1487,28 +1504,31 @@ uint64_t get_disk_size(const char *name)
 }
 
 /**
- * @brief Select a sensor channel with minimum free space left in the buffer.
+ * @brief Select a sensor channel with minimum free space left in the buffer. The channel will
+ * be selected from the list of active channels.
  * @param[in]   state   a pointer to a structure containing current state
- * @return      The number of of a channel with minimum free space left
+ * @return      The number of a channel with minimum free space left. This function
+ * will return 0 in case all channels are disabled.
  */
 unsigned int select_port(camogm_state *state)
 {
 	unsigned int chn = 0;
-	off_t free_sz[SENSOR_PORTS] = {-1};
+	off_t free_sz;
 	off_t file_pos;
+	off_t min_sz = -1;
 
 	for (int i = 0; i < SENSOR_PORTS; i++) {
 		if (is_chn_active(state, i)) {
 			file_pos = lseek(state->fd_circ[i], 0, SEEK_CUR);
 			if (file_pos != -EINVAL) {
-				free_sz[i] = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
+				free_sz = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
 				lseek(state->fd_circ[i], file_pos, SEEK_SET);
+				if ((free_sz < min_sz && free_sz >= 0) || min_sz == -1) {
+					min_sz = free_sz;
+					chn = i;
+				}
 			}
 		}
-	}
-	for (int i = 1; i < SENSOR_PORTS; i++) {
-		if (free_sz[i] < free_sz[i - 1])
-			chn = i;
 	}
 	return chn;
 }
@@ -1527,10 +1547,11 @@ inline int is_chn_active(camogm_state *s, unsigned int port)
  */
 inline void set_chn_state(camogm_state *s, unsigned int port, unsigned int new_state)
 {
-	if (new_state)
-		s->active_chn |= 1 << port;
-	else
-		s->active_chn &= ~(1 << port);
+	if (port >= 0 && port < SENSOR_PORTS)
+		if (new_state)
+			s->active_chn |= 1 << port;
+		else
+			s->active_chn &= ~(1 << port);
 }
 
 /**

@@ -170,8 +170,8 @@ typedef struct {
 	unsigned int port_num;                                  // sensor port we are currently working with
 	char *pipe_name;                                        // command pipe name
 	int rawdev_op;                                          // flag indicating writing to raw device
-	rawdev_buffer rawdev;                                  // contains pointers to raw device buffer
-	int active_chn;                                         // bitmask of active sensor ports
+	rawdev_buffer rawdev;                                   // contains pointers to raw device buffer
+	unsigned int active_chn;                                // bitmask of active sensor ports
 } camogm_state;
 
 extern int debug_level;
