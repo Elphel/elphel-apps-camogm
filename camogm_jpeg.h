@@ -3,7 +3,7 @@
 
 #include "camogm.h"
 
-int camogm_init_jpeg(void);
+int camogm_init_jpeg(camogm_state *state);
 int camogm_start_jpeg(camogm_state *state);
 int camogm_frame_jpeg(camogm_state *state);
 int camogm_end_jpeg(camogm_state *state);

@@ -183,6 +183,11 @@ unsigned long            *aglobalPars[SENSOR_PORTS]; /// parameters that are not
 camogm_state sstate;
 //camogm_state * state;
 
+typedef enum {
+	RAW_PATH,
+	FILE_PATH
+} path_type;
+
 int debug_level;
 FILE* debug_file;
 
@@ -198,7 +203,7 @@ void  camogm_set_greedy(camogm_state *state, int d);
 void  camogm_set_ignore_fps(camogm_state *state, int d);
 
 void  camogm_set_save_gp(camogm_state *state, int d);
-void  camogm_set_prefix(camogm_state *state, const char * p);
+void  camogm_set_prefix(camogm_state *state, const char * p, path_type type);
 void  camogm_set_exif(camogm_state *state, int d);
 void  camogm_set_timescale(camogm_state *state, double d);   //! set timescale, default=1.0
 void  camogm_set_frames_skip(camogm_state *state, int d);    //! set number of frames to skip, if negative - seconds between frames
@@ -280,52 +285,53 @@ void camogm_init(camogm_state *state, unsigned int port, char *pipe_name)
 	const char sserial[] = "elp0";
 	int * ipser = (int*)sserial;
 
-	state->running = 0;                     // mo
-	state->starting = 0;                    // mo
-	state->vf = NULL;
+	memset(state, 0, sizeof(camogm_state));
+//	state->running = 0;                     // mo
+//	state->starting = 0;                    // mo
+//	state->vf = NULL;
 	camogm_set_segment_duration(state, DEFAULT_DURATION);
 	camogm_set_segment_length(state, DEFAULT_LENGTH);
 	camogm_set_greedy(state, DEFAULT_GREEDY);
 	camogm_set_ignore_fps(state, DEFAULT_IGNORE_FPS);
 	camogm_set_max_frames(state, DEFAULT_FRAMES);
 	camogm_set_frames_per_chunk(state, DEFAULT_FRAMES_PER_CHUNK);
-	camogm_set_start_after_timestamp(state, 0.0); // start any time
-	camogm_set_prefix(state, "\0");
-	camogm_set_save_gp(state, 0);
+//	camogm_set_start_after_timestamp(state, 0.0); // start any time
+//	camogm_set_prefix(state, "\0", FILE_PATH);
+//	camogm_set_save_gp(state, 0);
 	camogm_reset(state);                    // sets state->buf_overruns =- 1
 	state->serialno = ipser[0];
-	state->last = 0;
+//	state->last = 0;
 	debug_file = stderr;
 	camogm_debug_level(DEFAULT_DEBUG_LVL);
 	strcpy(state->debug_name, "stderr");
 	camogm_set_timescale(state, 1.0);
 	camogm_set_frames_skip(state, 0);       // don't skip
 	camogm_set_format(state, CAMOGM_FORMAT_MOV);
-	FOR_EACH_PORT(int, chn) {state->exifSize[chn] = 0;}
+//	FOR_EACH_PORT(int, chn) {state->exifSize[chn] = 0;}
 	state->exif = DEFAULT_EXIF;
 	state->frame_lengths = NULL;
-	state->frameno = 0;
-	state->formats = 0;
-	state->last_error_code = 0;
+//	state->frameno = 0;
+//	state->formats = 0;
+//	state->last_error_code = 0;
 
 	// kml stuff
-	camogm_kml_set_enable(state, 0);
-	state->kml_file = NULL;
+//	camogm_kml_set_enable(state, 0);
+//	state->kml_file = NULL;
 	camogm_kml_set_horHalfFov(state, 20.0);
 	camogm_kml_set_vertHalfFov(state, 15.0);
 	camogm_kml_set_height_mode(state, 0);
 	camogm_kml_set_height(state, 10.0);
 	camogm_kml_set_period(state, 2);        // 2 sec
 	camogm_kml_set_near(state, 40.0);       // 40 m (distance to PhotoOverlay)
-	state->kml_path[0] = '\0';
+//	state->kml_path[0] = '\0';
 
 	state->port_num = port;
 	state->pipe_name = pipe_name;
 	state->rawdev.start_pos = RAWDEV_START_OFFSET;
 	state->rawdev.end_pos = state->rawdev.start_pos;
 	state->rawdev.curr_pos = state->rawdev.start_pos;
-	state->rawdev.overrun = 0;
-	state->rawdev_op = 0;
+//	state->rawdev.overrun = 0;
+//	state->rawdev_op = 0;
 	state->active_chn = ALL_CHN_ACTIVE;
 }
 
@@ -366,8 +372,12 @@ int camogm_start(camogm_state *state)
 	int port = state->port_num;
 
 	if (state->active_chn == ALL_CHN_INACTIVE) {
-		D1(fprintf(debug_file, "All channels are disabled, will not start\n"));
-		return 0;
+		D0(fprintf(debug_file, "All channels are disabled, will not start\n"));
+		return CAMOGM_FRAME_OTHER;
+	}
+	if (state->rawdev_op && state->format != CAMOGM_FORMAT_JPEG) {
+		D0(fprintf(debug_file, "Raw device write initiated, but file format is not JPEG. Will not start\n"));
+		return CAMOGM_FRAME_OTHER;
 	}
 
 	D1(fprintf(debug_file, "Starting recording\n"));
@@ -384,7 +394,7 @@ int camogm_start(camogm_state *state)
 		switch (state->format) {
 		case CAMOGM_FORMAT_NONE: rslt = 0; break;
 		case CAMOGM_FORMAT_OGM:  rslt = camogm_init_ogm(); break;
-		case CAMOGM_FORMAT_JPEG: rslt = camogm_init_jpeg(); break;
+		case CAMOGM_FORMAT_JPEG: rslt = camogm_init_jpeg(state); break;
 		case CAMOGM_FORMAT_MOV:  rslt = camogm_init_mov(); break;
 		}
 		state->formats |= 1 << (state->format);
@@ -841,26 +851,27 @@ void  camogm_set_ignore_fps(camogm_state *state, int d)
 	state->ignore_fps =   d ? 1 : 0;
 }
 
-void  camogm_set_prefix(camogm_state *state, const char * p)
+void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 {
-	strncpy(state->path_prefix, p, sizeof(state->path_prefix) - 1);
-	state->path_prefix[sizeof(state->path_prefix) - 1] = '\0';
-	// check if we are going to write to raw device
-	if (strncmp("/dev/", state->path_prefix, 5) == 0) {
-		state->rawdev.end_pos = get_disk_size(state->path_prefix);
+	if (type == FILE_PATH) {
+		strncpy(state->path_prefix, p, sizeof(state->path_prefix) - 1);
+		state->path_prefix[sizeof(state->path_prefix) - 1] = '\0';
+	} else if (type == RAW_PATH && (strncmp(p, "/dev/", 5) == 0)) {
+		strncpy(state->rawdev.rawdev_path, p, sizeof(state->rawdev.rawdev_path) - 1);
+		state->rawdev.rawdev_path[sizeof(state->rawdev.rawdev_path) - 1] = '\0';
+		state->rawdev.end_pos = get_disk_size(state->rawdev.rawdev_path);
 		if (state->rawdev.end_pos == 0) {
 			state->rawdev_op = 0;
 			state->rawdev.end_pos = state->rawdev.start_pos;
-			state->path_prefix[0] = '\0';
-			printf("ERROR: unable to initiate raw device operation\n");
+			state->rawdev.rawdev_path[0] = '\0';
+			D0(fprintf(debug_file, "ERROR: unable to initiate raw device operation\n"));
 		} else {
-			printf("WARNING: raw device write initiated\n");
+			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
 			/* debug code follows */
-			state->rawdev.end_pos = state->rawdev.start_pos + 10485760; // 10Mib size
+			state->rawdev.end_pos =  20971520; // 20Mib size
+			/* end of debug code */
 		}
-	} else {
-		state->rawdev_op = 0;
 	}
 }
 
@@ -892,7 +903,7 @@ void  camogm_set_format(camogm_state *state, int d)
 		switch (state->format) {
 		case CAMOGM_FORMAT_NONE: rslt = 0; break;
 		case CAMOGM_FORMAT_OGM:  rslt = camogm_init_ogm(); break;
-		case CAMOGM_FORMAT_JPEG: rslt = camogm_init_jpeg(); break;
+		case CAMOGM_FORMAT_JPEG: rslt = camogm_init_jpeg(state); break;
 		case CAMOGM_FORMAT_MOV:  rslt = camogm_init_mov(); break;
 		}
 		if (rslt) {
@@ -1021,7 +1032,9 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <kml_period>%d</kml_period>\n" \
 			"  <kml_last_ts>%d.%06d</kml_last_ts>\n" \
 			"  <greedy>\"%s\"</greedy>\n" \
-			"  <ignore_fps>\"%s\"</ignore_fps>\n",
+			"  <ignore_fps>\"%s\"</ignore_fps>\n" \
+			"  <raw_device_path>\"%s\"</raw_device_path>\n" \
+			"  <raw_device_overruns>%d</raw_device_overruns>\n",
 			_state,  state->path, state->frameno, state->start_after_timestamp, _dur, _udur, _len, \
 			_frames_skip, _sec_skip, \
 			state->width, state->height, _output_format, _using_exif, \
@@ -1030,7 +1043,8 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			state->debug_name, debug_level, _using_global_pointer, \
 			_kml_enable, _kml_used, state->kml_path, state->kml_horHalfFov, state->kml_vertHalfFov, state->kml_near, \
 			_kml_height_mode, state->kml_height, state->kml_period, state->kml_last_ts, state->kml_last_uts, \
-			state->greedy ? "yes" : "no", state->ignore_fps ? "yes" : "no");
+			state->greedy ? "yes" : "no", state->ignore_fps ? "yes" : "no", state->rawdev.rawdev_path,
+			state->rawdev.overrun);
 
 		FOR_EACH_PORT(int, chn) {
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";
@@ -1076,9 +1090,11 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "\n");
 		fprintf(f, "output format      \t%s\n",        _output_format);
 		fprintf(f, "using exif         \t%s\n",        _using_exif);
-		fprintf(f, "path prefix:       \t%s\n",        state->path_prefix);
-		fprintf(f, "max file duration: \t%d sec\n",    state->segment_duration);
-		fprintf(f, "max file length:   \t%d B\n",      state->segment_length);
+		fprintf(f, "path prefix        \t%s\n",        state->path_prefix);
+		fprintf(f, "raw device path    \t%s\n",        state->rawdev.rawdev_path);
+		fprintf(f, "raw device overruns\t%d\n",        state->rawdev.overrun);
+		fprintf(f, "max file duration  \t%d sec\n",    state->segment_duration);
+		fprintf(f, "max file length    \t%d B\n",      state->segment_length);
 		fprintf(f, "max frames         \t%d\n",        state->max_frames);
 		fprintf(f, "timescale          \t%f\n",        state->timescale);
 		fprintf(f, "frames per chunk   \t%d\n",        state->frames_per_chunk);
@@ -1217,7 +1233,7 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 		camogm_set_segment_length(state, d);
 		return 5;
 	} else if (strcmp(cmd, "prefix") == 0) {
-		if (args) camogm_set_prefix(state, args);
+		if (args) camogm_set_prefix(state, args, FILE_PATH);
 		return 6;
 	} else if (strcmp(cmd, "status") == 0) {
 		camogm_status(state, args, 0);
@@ -1319,6 +1335,14 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 		d = strtol(args, NULL, 10);
 		set_chn_state(state, d, 0);
 		return 27;
+	} else if (strcmp(cmd, "rawdev_path") == 0) {
+		if (args) {
+			camogm_set_prefix(state, args, RAW_PATH);
+		} else {
+			state->rawdev_op = 0;
+			state->rawdev.rawdev_path[0] = '\0';
+		}
+		return 28;
 	}
 
 	return -1;
@@ -1547,11 +1571,12 @@ inline int is_chn_active(camogm_state *s, unsigned int port)
  */
 inline void set_chn_state(camogm_state *s, unsigned int port, unsigned int new_state)
 {
-	if (port >= 0 && port < SENSOR_PORTS)
+	if (port >= 0 && port < SENSOR_PORTS) {
 		if (new_state)
 			s->active_chn |= 1 << port;
 		else
 			s->active_chn &= ~(1 << port);
+	}
 }
 
 /**

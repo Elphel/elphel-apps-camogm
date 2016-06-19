@@ -73,7 +73,7 @@ int camogm_start_ogm(camogm_state *state)
 	char vendor[] = "ElphelOgm v 0.1";
 	int pos;
 	stream_header sh;
-	unsigned char hdbuf[sizeof(sh) + 1];
+	char hdbuf[sizeof(sh) + 1];
 	ogg_packet ogg_header;
 
 	sprintf(state->path, "%s%010ld_%06ld.ogm", state->path_prefix, state->frame_params[state->port_num].timestamp_sec, state->frame_params[state->port_num].timestamp_usec);
@@ -133,7 +133,7 @@ int camogm_start_ogm(camogm_state *state)
 	pos += 4;
 	hdbuf[pos++] = 1;
 //! put it into Ogg stream
-	ogg_header.packet = hdbuf;
+	ogg_header.packet = (unsigned char *)hdbuf;
 	ogg_header.bytes = pos;
 	ogg_header.b_o_s = 0;
 	ogg_header.e_o_s = 0;

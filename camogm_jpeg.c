@@ -59,41 +59,31 @@
 
 #include <c313a.h>
 #include <asm/byteorder.h>
-#include <assert.h>
 
 #include <ogg/ogg.h>    // has to be before ogmstreams.h
 #include "ogmstreams.h" // move it to <>?
 
 #include "camogm_jpeg.h"
 
-/** @brief Size of iovec structures holding data to be written */
-#define IOVEC_SIZE      10
-
-/** @brief File starting marker, contains "stelphel" string in ASCII symbols */
-unsigned char elphelst[] = {0x73, 0x74, 0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c};
-/** @brief File ending marker, contains "enelphel" string in ASCII symbols */
-unsigned char elphelen[] = {0x65, 0x6e, 0x65, 0x6c, 0x70, 0x68, 0x65, 0x6c};
-static struct iovec start_marker = {
-		.iov_base = elphelst,
-		.iov_len = sizeof(elphelst)
-};
-static struct iovec end_marker = {
-		.iov_base = elphelen,
-		.iov_len = sizeof(elphelen)
-};
-
-//! may add something - called first time format is changed to this one (only once) recording is stopped
-int camogm_init_jpeg(void)
+int camogm_init_jpeg(camogm_state *state)
 {
 	return 0;
 }
+
 void camogm_free_jpeg(void)
 {
 }
 
+/**
+ * @brief Called every time the JPEG files recording is started.
+ *
+ * This function checks if the raw device write is initiated and tries to open the device specified. The device
+ * will be closed in #camogm_end_jpeg function.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      0 if the device was opened successfully and negative error code otherwise
+ */
 int camogm_start_jpeg(camogm_state *state)
 {
-//!TODO: make directory if it does not exist (find the last "/" in the state->path
 	char * slash;
 	int rslt;
 
@@ -113,22 +103,32 @@ int camogm_start_jpeg(camogm_state *state)
 			}
 		}
 	} else {
-		state->ivf = open(state->path_prefix, O_RDWR);
-		if (state->ivf < 0) {
-			D0(perror(__func__));
-			D0(fprintf(debug_file, "Error opening raw device %s\n", state->path));
-			return -CAMOGM_FRAME_FILE_ERR;
+		if (state->rawdev_op) {
+			state->rawdev.rawdev_fd = open(state->rawdev.rawdev_path, O_RDWR);
+			if (state->rawdev.rawdev_fd < 0) {
+				D0(perror(__func__));
+				D0(fprintf(debug_file, "Error opening raw device %s\n", state->rawdev.rawdev_path));
+				return -CAMOGM_FRAME_FILE_ERR;
+			}
+			D3(fprintf(debug_file, "Open raw device %s; start_pos = %llu, end_pos = %llu, curr_pos = %llu\n", state->rawdev.rawdev_path,
+					state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos));
+			lseek64(state->rawdev.rawdev_fd, state->rawdev.curr_pos, SEEK_SET);
 		}
-		D0(fprintf(debug_file, "Open raw device %s; start_pos = %llu, end_pos = %llu, curr_pos = %llu\n", state->path,
-				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos));
-		lseek64(state->ivf, state->rawdev.curr_pos, SEEK_SET);
 	}
+
 	return 0;
 }
 
+/**
+ * @brief Write single JPEG frame
+ *
+ * This function will write single JPEG file
+ * @param   state   a pointer to a structure containing current state
+ * @return
+ */
 int camogm_frame_jpeg(camogm_state *state)
 {
-	int i, j, split_index;
+	int i, j, k, split_index;
 	int chunks_used = state->chunk_index - 1;
 	ssize_t iovlen, l = 0;
 	struct iovec chunks_iovec[8];
@@ -160,7 +160,6 @@ int camogm_frame_jpeg(camogm_state *state)
 	} else {
 		D0(fprintf(debug_file, "\n%s: current pointers start_pos = %llu, end_pos = %llu, curr_pos = %llu, data in buffer %d\n", __func__,
 				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos, l));
-		l = 0;
 		split_index = -1;
 		for (int i = 0, total_len = 0; i < state->chunk_index - 1; i++) {
 			total_len += state->packetchunks[i + 1].bytes;
@@ -171,34 +170,36 @@ int camogm_frame_jpeg(camogm_state *state)
 				break;
 			}
 		}
-		chunks_iovec[0] = start_marker;
-		l += start_marker.iov_len;
-		chunks_used++;
-		for (int i = 1; i < chunks_used; i++) {
+		k = 0;
+		l = 0;
+		for (int i = 0; i < chunks_used; i++) {
+			++k;
 			if (i == split_index) {
 				// one of the chunks rolls over the end of the raw storage, split it into two segments and
 				// use additional chunk in chunks_iovec for this additional segment
 				split_cntr = state->rawdev.end_pos - (l + state->rawdev.curr_pos);
-				split_ptr = state->packetchunks[i].chunk + split_cntr;
+				split_ptr = state->packetchunks[k].chunk + split_cntr;
+
+				fprintf(debug_file, "Splitting chunk #%d: total chunk size = %ld, start address = 0x%p\n",
+						i, state->packetchunks[k].bytes, state->packetchunks[k].chunk);
 
 				// be careful with indexes here
-				chunks_iovec[i].iov_base = state->packetchunks[i].chunk;
+				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
 				chunks_iovec[i].iov_len = split_cntr;
 				l += chunks_iovec[i].iov_len;
 				chunks_iovec[++i].iov_base = split_ptr + 1;
-				chunks_iovec[i].iov_len = state->packetchunks[i].bytes - split_cntr;
+				chunks_iovec[i].iov_len = state->packetchunks[k].bytes - split_cntr;
 				l += chunks_iovec[i].iov_len;
+
+				fprintf(debug_file, "Lump 1: size = %ld, start address = 0x%p\n", chunks_iovec[i - 1].iov_len, chunks_iovec[i - 1].iov_base);
+				fprintf(debug_file, "Lump 2: size = %ld, start address = 0x%p\n\n", chunks_iovec[i].iov_len, chunks_iovec[i].iov_base);
+
 			} else {
-				chunks_iovec[i].iov_base = state->packetchunks[i].chunk;
-				chunks_iovec[i].iov_len = state->packetchunks[i].bytes;
+				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
+				chunks_iovec[i].iov_len = state->packetchunks[k].bytes;
 				l += chunks_iovec[i].iov_len;
 			}
 		}
-		// consider start_marker here and increment chunks_used
-		assert(chunks_used < IOVEC_SIZE);
-		chunks_iovec[chunks_used] = end_marker;
-		l += end_marker.iov_len;
-		chunks_used++;
 
 		/* debug code follows */
 		fprintf(debug_file, "\n=== raw device write, iovec dump ===\n");
@@ -209,9 +210,24 @@ int camogm_frame_jpeg(camogm_state *state)
 		fprintf(debug_file, "total len = %d\n======\n", l);
 		/* end of debug code */
 
-		iovlen = writev(state->ivf, chunks_iovec, chunks_used);
+		if (split_index < 0) {
+			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, chunks_used);
+		} else {
+			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, split_index + 1);
+			fprintf(debug_file, "write first part: split_index = %d, %d bytes written\n", split_index, iovlen);
+			if (lseek64(state->rawdev.rawdev_fd, state->rawdev.start_pos, SEEK_SET) != state->rawdev.start_pos) {
+				perror(__func__);
+				D0(fprintf(debug_file, "error positioning file pointer to the beginning of raw device\n"));
+				return -CAMOGM_FRAME_FILE_ERR;
+			}
+			state->rawdev.overrun++;
+			iovlen += writev(state->rawdev.rawdev_fd, &chunks_iovec[split_index + 1], chunks_used - split_index);
+			fprintf(debug_file, "write second part: split_index + 1 = %d, chunks_used - split_index = %d, %d bytes written in total\n",
+					split_index + 1, chunks_used - split_index, iovlen);
+		}
 		if (iovlen < l) {
 			j = errno;
+			perror(__func__);
 			D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
@@ -224,9 +240,19 @@ int camogm_frame_jpeg(camogm_state *state)
 	return 0;
 }
 
+/**
+ * @brief Finish JPEG file write operation
+ *
+ * This function checks whether raw device write was on and closes raw device file.
+ * @param   state   a pointer to a structure containing current state
+ * @return  0 if the device was closed successfully and -1 otherwise
+ */
 int camogm_end_jpeg(camogm_state *state)
 {
-	close(state->ivf);
-	D0(fprintf(debug_file, "Closing raw device %s\n", state->path_prefix));
-	return 0;
+	int ret = 0;
+	if (state->rawdev_op) {
+		ret = close(state->rawdev.rawdev_fd);
+		D0(fprintf(debug_file, "Closing raw device %s\n", state->rawdev.rawdev_path));
+	}
+	return ret;
 }

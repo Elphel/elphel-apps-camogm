@@ -74,10 +74,13 @@
  */
 
 /** @brief Offset from the beginning of raw device buffer. Must be aligned to physical sector size */
-#define RAWDEV_START_OFFSET 1024
+#define RAWDEV_START_OFFSET       1024
+/** @brief Maximum length of file or raw device path */
+#define ELPHEL_PATH_MAX           300
 
 typedef struct {
 	int rawdev_fd;
+	char rawdev_path[ELPHEL_PATH_MAX];
 	uint32_t overrun;
 	uint64_t start_pos;
 	uint64_t end_pos;
@@ -91,7 +94,7 @@ typedef struct {
 	int ignore_fps;
 	int save_gp;                    //if non zero, current circbuf pointer will be saved to global pointer, so imgsrv can report /pointers
 	char path_prefix[256];
-	char path[300];
+	char path[ELPHEL_PATH_MAX];
 	int cirbuf_rp[SENSOR_PORTS];    //!-1 - invalid
 	int fd_circ[SENSOR_PORTS];      //! file descriptor for circbuf
 	int fd_head[SENSOR_PORTS];      //! file descriptor for JPEG header
