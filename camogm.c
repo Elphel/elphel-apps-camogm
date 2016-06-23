@@ -123,16 +123,17 @@
 #include <sys/mman.h>   /* mmap */
 #include <sys/ioctl.h>
 
-#include <c313a.h>
+//#include <c313a.h>
 #include <exifa.h>
 #include <asm/byteorder.h>
 
-#include <ogg/ogg.h>    // has to be before ogmstreams.h
-#include "ogmstreams.h"
+//#include <ogg/ogg.h>    // has to be before ogmstreams.h
+//#include "ogmstreams.h"
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
 #include "camogm_mov.h"
 #include "camogm_kml.h"
+#include "camogm_read.h"
 #include "camogm.h"
 
 #define COMMAND_LOOP_DELAY 500000 //0.5sec
@@ -1343,6 +1344,10 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 			state->rawdev.rawdev_path[0] = '\0';
 		}
 		return 28;
+	} else if (strcmp(cmd, "rawdev_read") == 0) {
+		if (state->rawdev_op)
+			camogm_read(state);
+		return 29;
 	}
 
 	return -1;

@@ -51,11 +51,11 @@
 #include <sys/mman.h>   /* mmap */
 #include <sys/ioctl.h>
 
-#include <c313a.h>
+//#include <c313a.h>
 #include <asm/byteorder.h>
 
-#include <ogg/ogg.h>    // has to be before ogmstreams.h
-#include "ogmstreams.h" // move it to <>?
+//#include <ogg/ogg.h>    // has to be before ogmstreams.h
+//#include "ogmstreams.h" // move it to <>?
 
 #include "camogm_ogm.h"
 

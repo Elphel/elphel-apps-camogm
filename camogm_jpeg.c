@@ -57,11 +57,11 @@
 //#include <sys/mman.h>   /* mmap */
 //#include <sys/ioctl.h>
 
-#include <c313a.h>
+//#include <c313a.h>
 #include <asm/byteorder.h>
 
-#include <ogg/ogg.h>    // has to be before ogmstreams.h
-#include "ogmstreams.h" // move it to <>?
+//#include <ogg/ogg.h>    // has to be before ogmstreams.h
+//#include "ogmstreams.h" // move it to <>?
 
 #include "camogm_jpeg.h"
 
@@ -119,6 +119,17 @@ int camogm_start_jpeg(camogm_state *state)
 	return 0;
 }
 
+
+void dump_chunk(struct iovec *vec)
+{
+	unsigned char *ptr = vec->iov_base;
+	for (int i = 0; i < vec->iov_len; i++) {
+		printf("0x%02x ", ptr[i]);
+		if (i % 15 == 0)
+			printf("\n");
+	}
+}
+
 /**
  * @brief Write single JPEG frame
  *
@@ -143,6 +154,11 @@ int camogm_frame_jpeg(camogm_state *state)
 			chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
 			l += chunks_iovec[i].iov_len;
 		}
+
+		printf("0 chunk dump:\n");
+		dump_chunk(&chunks_iovec[0]);
+		printf("1 chunk dump\n");
+		dump_chunk(&chunks_iovec[1]);
 
 		sprintf(state->path, "%s%010ld_%06ld.jpeg", state->path_prefix, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
 		if (((state->ivf = open(state->path, O_RDWR | O_CREAT, 0777))) < 0) {

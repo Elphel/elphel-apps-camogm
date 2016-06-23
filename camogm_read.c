@@ -27,17 +27,25 @@
 #include <string.h>
 #include <linux/limits.h>
 #include <netinet/in.h>
+#include <errno.h>
+#include <time.h>
+#include <ctype.h>
+#include <asm/byteorder.h>
 
-#include "camogm.h"
+#include "camogm_read.h"
 
+/** @brief Offset in Exif where TIFF header starts */
+#define TIFF_HDR_OFFSET           12
+/** @brief Separator character between seconds and microseconds in JPEG file name */
+#define SUBSEC_SEPARATOR          '.'
 /** @brief The size of read buffer in bytes. The data will be read from disk in blocks of this size */
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
 #define INCLUDE_MARKERS           1
 /** @brief File starting marker on a raw device. It corresponds to SOI JPEG marker */
-static const unsigned char elphelst[] = {0xff, 0xd8};
+static unsigned char elphelst[] = {0xff, 0xd8};
 /** @brief File ending marker on a raw device. It corresponds to EOI JPEG marker */
-static const unsigned char elphelen[] = {0xff, 0xd9};
+static unsigned char elphelen[] = {0xff, 0xd9};
 static const struct iovec elphel_st = {
 		.iov_base = elphelst,
 		.iov_len = sizeof(elphelst)
@@ -105,6 +113,68 @@ enum file_ops {
 };
 
 /**
+ * @brief Exif data format table.
+ *
+ * This table is used to convert Exif data format to its byte length and then calculate the length
+ * of a record in Image File Directory. The data format value 0 does not exist thus the first
+ * element of the array is 0 too which gives zero length field. Exif data format can one of the
+ * following:
+ * Value | Format            | Bytes/Components
+ * ------|-------------------|-----------------
+ *  1    | unsigned byte     | 1
+ *  2    | ascii string      | 1
+ *  3    | unsigned short    | 2
+ *  4    | unsigned long     | 4
+ *  5    | unsigned rational | 8
+ *  6    | signed byte       | 1
+ *  7    | undefined         | 1
+ *  8    | signed short      | 2
+ *  9    | signed long       | 4
+ *  10   | signed rational   | 8
+ *  11   | signed float      | 4
+ *  12   | double float      | 8
+ */
+const unsigned char exif_data_fmt[] = {
+		0, 1, 1, 2, 4, 8, 1,
+		1, 2, 4, 8, 4, 8
+};
+
+/**
+ * @struct ifd_entry
+ * @brief Represents a single Image File Directory record
+ * @var ifd_entry::tag
+ * Exif tag number
+ * @var ifd_entry::format
+ * Data format in the record
+ * @var ifd_entry::len
+ * The number of components in the record
+ * @var ifd_entry::offset
+ * The data value or offset to the data
+ */
+struct ifd_entry {
+	unsigned short tag;
+	unsigned short format;
+	unsigned long len;
+	unsigned long offset;
+};
+
+/**
+ * @struct tiff_hdr
+ * @brief TIFF header structure
+ * @var tiff_hdr::byte_order
+ * Motorola (MM) or Inter (II) byte order
+ * @var tiff_hdr::mark
+ * Tag mark
+ * @var tiff_hdr::offset
+ * Offset to first IFD
+ */
+struct tiff_hdr {
+	unsigned short byte_order;
+	unsigned short mark;
+	unsigned long offset;
+};
+
+/**
  * @struct file_opts
  * @brief This structure holds data associated with currently opened file.
  * @var file_opts::fh
@@ -120,37 +190,9 @@ enum file_ops {
  */
 struct file_opts {
 	FILE                *fh;
-	char                path_prefix[NAME_MAX];
-	char                file_name[PATH_MAX];
 	unsigned int        file_cntr;
 	int                 file_state;
-};
-
-/**
- * @struct dev_opts
- * @brief This structure holds data associated with raw storage device.
- * @var dev_opts::dev_name
- * Contains full path to raw storage device
- * @var dev_opts::verbose
- * Indicates vebosity level, just a flag as for now
- * @var dev_opts::fd
- * Contains file descriptor
- * @var dev_opts::start_pos
- * Contains start pointer for raw device storage, used when starting position does not coincide with
- * the beginning of device file
- * @var dev_opts::end_pos
- * Contains end pointer for raw device storage, used when end position does not coincide with
- * the end of device file
- * @var dev_opts::curr_pos
- * Contains current read pointer for raw device storage
- */
-struct dev_opts {
-	char                dev_name[PATH_MAX];
-	int                 verbose;
-	int                 fd;
-	uint64_t            start_pos;
-	uint64_t            end_pos;
-	uint64_t            curr_pos;
+	camogm_state        *state;
 };
 
 /**
@@ -166,19 +208,6 @@ struct crb_ptrs {
 	struct iovec        second_buff;
 };
 
-void print_array(const struct iovec *buff)
-{
-	const int spl = 8;
-	unsigned char *a = buff->iov_base;
-
-	for (int i = 0; i < buff->iov_len; i++) {
-		if (i % spl == 0)
-			printf("\n");
-		printf("0x%02x ", a[i]);
-	}
-	printf("\n");
-}
-
 /**
  * @brief Find pattern in a data buffer
  *
@@ -190,7 +219,7 @@ void print_array(const struct iovec *buff)
  * @param[in]   pt_sz     size of the pattern array
  * @return      the index in data buffer where pattern matches or error code from #match_result if it was not found
  */
-int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const unsigned char * restrict pattern, ssize_t pt_sz)
+static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const unsigned char * restrict pattern, ssize_t pt_sz)
 {
 	int ret = MATCH_NOT_FOUND;
 	int j = 0;
@@ -213,9 +242,168 @@ int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const 
 	if (j > 0) {
 		// partial match found in the end of data buffer, we need more data for further comparison
 		ret = MATCH_PARTIAL;
-		fprintf(stderr, "Match partial; j = %d, loop conter = %d\n", j, i);
 	}
 	return ret;
+}
+
+/**
+ * @brief Converts byte order for all fields in #ifd_entry structure
+ * @param[in,out] ifd   a pointer to a structure which should be converted
+ * @return        None
+ */
+void ifd_byte_order(struct ifd_entry *ifd)
+{
+	unsigned long offset;
+
+	ifd->tag = __be16_to_cpu(ifd->tag);
+	ifd->format = __be16_to_cpu(ifd->format);
+	ifd->len = __be32_to_cpu(ifd->len);
+	ifd->offset = __be32_to_cpu(ifd->offset);
+	if (exif_data_fmt[ifd->format] == 2) {
+		ifd->offset = (ifd->offset >> 16) & 0xffff;
+	}
+}
+
+/**
+ * @brief Convert byte order for all fields in #tiff_hdr structure
+ * @param[in,out] ifd   a pointer to a structure which should be converted
+ * @return        None
+ */
+void hdr_byte_order(struct tiff_hdr *hdr)
+{
+	hdr->byte_order = __be16_to_cpu(hdr->byte_order);
+	hdr->mark = __be16_to_cpu(hdr->mark);
+	hdr->offset = __be32_to_cpu(hdr->offset);
+}
+
+/**
+ * @brief Read a string from Exif for a given record. This function is intended for
+ * reading date and time from Exif and it omits any non-digit symbols from resulting string.
+ * Spaces and tabs are converted to underscores. Terminating null byte is not added to the resulting string.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @param[in]   ifd     Exif image file directory record containing string offset
+ * @param[out]  buff    buffer for the string
+ * @return      The number of bytes placed to the read buffer
+ */
+size_t exif_get_text(camogm_state *state, struct ifd_entry *ifd, unsigned char *buff)
+{
+	size_t j = 0;
+	size_t sz = ifd->len * exif_data_fmt[ifd->format];
+	uint64_t curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + ifd->offset;
+	unsigned char read_buff[MAX_EXIF_SIZE] = {0};
+
+	lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
+	read(state->rawdev.rawdev_fd, read_buff, sz);
+	for (int i = 0; i < sz; i++) {
+		if (isdigit(read_buff[i]))
+			buff[j++] = read_buff[i];
+		else if (isblank(read_buff[i]))
+			buff[j++] = '_';
+	}
+
+	return j;
+}
+
+/**
+ * @brief Create JPEG file name from Exif data
+ *
+ * This function reads Exif data from file, extracts PageNumber, DateTimeOriginal and
+ * SubSecTimeOriginal fields and assembles a file name in the following format:
+ *
+ * NN_YYYYMMDD_HHMMSS.UUUUUU.jpeg
+ *
+ * where NN is PageNumber; YYYY, MM and DD are year, month and date extracted from DateTimeOriginal
+ * field; HH, MM and SS are hours, minutes and seconds extracted from DateTimeOriginal field; UUUUUU is us
+ * value extracted from SubSecTimeOriginal field. The function assumes that <e> name buffer is big enough
+ * to hold the file name in the format shown above including the terminating null byte.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @param[out]  name    resulting file name
+ * @return      0 if file name was successfully created and negative value otherwise
+ */
+static int make_fname(camogm_state *state, char *name)
+{
+	int process = 2;
+	size_t sz = 0;
+	uint32_t data32;
+	uint16_t num_entries = 0;
+	uint64_t curr_pos;
+	uint64_t subifd_offset = 0;
+	struct tiff_hdr hdr;
+	struct ifd_entry ifd;
+	struct ifd_entry ifd_page_num;
+	struct ifd_entry ifd_date_time;
+	struct ifd_entry ifd_subsec;
+	unsigned char read_buff[TIFF_HDR_OFFSET] = {0};
+	uint64_t save_pos = lseek64(state->rawdev.rawdev_fd, 0, SEEK_CUR);
+
+	if (name == NULL)
+		return -1;
+
+	curr_pos = state->rawdev.file_start;
+	lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
+	if (read(state->rawdev.rawdev_fd, read_buff, sizeof(read_buff)) <= 0) {
+		lseek64(state->rawdev.rawdev_fd, save_pos, SEEK_SET);
+		return -1;
+	}
+	if (read_buff[2] == 0xff && read_buff[3] == 0xe1) {
+		// get IFD0 offset from TIFF header
+		read(state->rawdev.rawdev_fd, &hdr, sizeof(struct tiff_hdr));
+		hdr_byte_order(&hdr);
+		curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + hdr.offset;
+		lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
+		// process IFD0 and SubIFD fields
+		do {
+			read(state->rawdev.rawdev_fd, &num_entries, sizeof(num_entries));
+			num_entries = __be16_to_cpu(num_entries);
+			for (int i = 0; i < num_entries; i++) {
+				read(state->rawdev.rawdev_fd, &ifd, sizeof(struct ifd_entry));
+				ifd_byte_order(&ifd);
+				switch (ifd.tag) {
+				case Exif_Image_PageNumber:
+					ifd_page_num = ifd;
+					break;
+				case Exif_Photo_DateTimeOriginal & 0xffff:
+					ifd_date_time = ifd;
+					break;
+				case Exif_Image_ExifTag:
+					subifd_offset = ifd.offset;
+					break;
+				case Exif_Photo_SubSecTimeOriginal & 0xffff:
+					ifd_subsec = ifd;
+					break;
+				}
+			}
+			// ensure that IFD0 finished correctly (0x00000000 in the end), set file pointer to SubIFD and
+			// process remaining fields
+			read(state->rawdev.rawdev_fd, &data32, sizeof(data32));
+			process -= (subifd_offset == 0 || data32 != 0) ? 2 : 1;
+			curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + subifd_offset;
+			lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
+		} while (process > 0);
+
+		// assemble file name from collected Exif fields
+		if (ifd_page_num.len != 0) {
+			sz = sprintf(name, "%02u_", ifd_page_num.offset);
+		}
+		if (ifd_date_time.len != 0) {
+			sz += exif_get_text(state, &ifd_date_time, name + sz);
+		}
+		if (ifd_subsec.len != 0) {
+			name[sz++] = SUBSEC_SEPARATOR;
+			sz += exif_get_text(state, &ifd_subsec, name + sz);
+		}
+		sprintf(name + sz, ".jpeg");
+	} else {
+		// a fallback option in case exif is not found - randomly generate file name
+		int num;
+		srand(time(NULL));
+		num = rand();
+		sprintf(name, "%010d.jpeg", num);
+		D3(fprintf(debug_file, "Exif marker is not found not found, using randomly generated file name: %s\n", name));
+	}
+
+	lseek64(state->rawdev.rawdev_fd, save_pos, SEEK_SET);
+	return 0;
 }
 
 /**
@@ -224,27 +412,21 @@ int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const 
  * @return      \e FILE_OK if file was successfully opened and \e FILE_OPEN_ERR otherwise
  * @todo retrieve time stamp and use it in file name
  */
-int start_new_file(struct file_opts *f_op)
+static int start_new_file(struct file_opts *f_op)
 {
 	int ret;
-	static int name_ind = 1;
+	int err;
+	char file_name[ELPHEL_PATH_MAX] = {0};
 
-	if (f_op->path_prefix[strlen(f_op->path_prefix) - 1] == '/')
-		ret = sprintf(f_op->file_name, "%s%d.jpeg", f_op->path_prefix, name_ind);
-	else
-		ret = sprintf(f_op->file_name, "%s%c%d.jpeg", f_op->path_prefix, '/', name_ind);
-	name_ind++;
-
-	if (ret > 0) {
-		f_op->fh = fopen(f_op->file_name, "w");
-		if (f_op->fh == NULL)
-			ret = FILE_OPEN_ERR;
-		else
-			ret = FILE_OK;
-	} else {
-		ret = FILE_OPEN_ERR;
+	make_fname(f_op->state, file_name);
+	if ((f_op->fh = fopen(file_name, "w")) == NULL) {
+		err = errno;
+		D0(fprintf(debug_file, "Error opening %s for writing\n", file_name));
+		D0(fprintf(debug_file, "%s\n", strerror(err)));
+		return -CAMOGM_FRAME_FILE_ERR;
 	}
-	return ret;
+
+	return FILE_OK;
 }
 
 /**
@@ -257,7 +439,7 @@ int start_new_file(struct file_opts *f_op)
  * @param[in]   crbp   pointer to a structure which will store two cross border pointers
  * @return      a constant of #match_result type
  */
-int check_edge_case(const struct iovec *from, const struct iovec *to, const struct iovec *marker, struct crb_ptrs *crbp)
+static int check_edge_case(const struct iovec *from, const struct iovec *to, const struct iovec *marker, struct crb_ptrs *crbp)
 {
 	unsigned char *start_ptr = from->iov_base + from->iov_len - marker->iov_len;
 	unsigned char *end_ptr = from->iov_base + from->iov_len;
@@ -285,8 +467,6 @@ int check_edge_case(const struct iovec *from, const struct iovec *to, const stru
 		return MATCH_NOT_FOUND;
 	}
 
-	fprintf(stderr, "First array checked, %d bytes of marker processed\n", bytes_processed);
-
 	// search for the second part of marker in the beginning of *to* array
 	start_ptr = to->iov_base;
 	end_ptr = to->iov_base + (marker->iov_len - bytes_processed);
@@ -301,8 +481,6 @@ int check_edge_case(const struct iovec *from, const struct iovec *to, const stru
 	crbp->second_buff.iov_base = to->iov_base;
 	crbp->second_buff.iov_len = marker->iov_len - bytes_processed;
 
-	fprintf(stderr, "Second array checked, match found\n");
-
 	return MATCH_FOUND;
 }
 
@@ -313,14 +491,13 @@ int check_edge_case(const struct iovec *from, const struct iovec *to, const stru
  * @param[in]   to     end pointer to data buffer
  * @return      a constant of #file_result type
  */
-int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned char *to)
+static int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned char *to)
 {
 	int ret = FILE_OK;
 	int len;
 	unsigned int sz;
 
 	sz = to - from;
-	fprintf(stderr, "%s: sz = %d, file state = %d\n", __func__, sz, f_op->file_state);
 	switch (f_op->file_state) {
 	case WRITE_RUNNING:
 		len = fwrite(from, sz, 1, f_op->fh);
@@ -332,7 +509,6 @@ int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned char *to)
 	case WRITE_START:
 		if (start_new_file(f_op) == FILE_OK) {
 			len = fwrite(from, sz, 1, f_op->fh);
-			fprintf(stderr, "Starting new file %s\n", f_op->file_name);
 			if (len != 1) {
 				perror(__func__);
 				ret = FILE_WR_ERR;
@@ -362,42 +538,42 @@ int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned char *to)
 	return ret;
 }
 
+/**
+ * @brief Extract JPEG files from raw device buffer
+ *
+ * Data from raw device is read to a buffer in #PHY_BLK_SZ blocks. The buffer is
+ * analyzed for JPEG markers and then the data from buffer is written to a file.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      0 if files were extracted successfully and negative error code otherwise
+ */
 int camogm_read(camogm_state *state)
 {
 	const int include_markers = INCLUDE_MARKERS;
 	int process;
 	int zero_cross;
 	int file_op;
-	ssize_t rd;
+	int err;
 	int pos_start, pos_stop;
 	int buff_processed;
+	int file_pos_saved;
+	ssize_t rd;
 	unsigned char buff[PHY_BLK_SZ];
 	unsigned char next_buff[PHY_BLK_SZ];
-	struct dev_opts d_opts;
+	unsigned char *save_from = NULL;
+	unsigned char *save_to = NULL;
 	struct file_opts f_opts;
-	unsigned char *save_from;
-	unsigned char *save_to;
+	uint64_t dev_curr_pos = 0;
 	uint64_t include_st_marker, include_en_marker;
 
-	d_opts.curr_pos = 0;
-	d_opts.verbose = 0;
-	f_opts.fh = NULL;
-	f_opts.file_cntr = 0;
+	memset(&f_opts, 0, sizeof(struct file_opts));
 	f_opts.file_state = WRITE_STOP;
-	if (parse_cmd_opts(argc, argv, &f_opts, &d_opts) < 0) {
-		print_help();
-		return EXIT_FAILURE;
-	}
+	f_opts.state = state;
 
-	d_opts.fd = open(d_opts.dev_name, O_RDONLY);
-	if (d_opts.fd < 0) {
-		perror("Can not open device: ");
-		return EXIT_FAILURE;
-	}
-
-	if (d_opts.verbose) {
-		printf("Open block device %s\n", d_opts.dev_name);
-		printf("Start reading from %lu to %lu\n", d_opts.start_pos, d_opts.end_pos);
+	state->rawdev.rawdev_fd = open(state->rawdev.rawdev_path, O_RDONLY);
+	if (state->rawdev.rawdev_fd < 0) {
+		D0(perror(__func__));
+		D0(fprintf(debug_file, "Error opening raw device %s\n", state->rawdev.rawdev_path));
+		return -CAMOGM_FRAME_FILE_ERR;
 	}
 
 	if (include_markers) {
@@ -407,45 +583,39 @@ int camogm_read(camogm_state *state)
 		include_st_marker = 0;
 		include_en_marker = 0;
 	}
+
 	process = 1;
 	zero_cross = 0;
 	file_op = FILE_OK;
 	while (process) {
-		rd = read(d_opts.fd, buff, sizeof(buff));
-		fprintf(stderr, "read %ld bytes from %lu to %lu\n", rd, d_opts.curr_pos, d_opts.curr_pos + rd);
-		if ((rd > 0) && (d_opts.curr_pos + rd > d_opts.end_pos)) {
+		rd = read(state->rawdev.rawdev_fd, buff, sizeof(buff));
+		err = errno;
+		if ((rd > 0) && (dev_curr_pos + rd > state->rawdev.end_pos)) {
 			// read pointer jumped over the raw storage buffer end, truncate excessive data
-			if (d_opts.verbose) {
-				fprintf(stderr, "End of raw storage buffer is reached, will start from beginning\n");
-				fprintf(stderr, "\tstart_pos = %lu, curr_pos = %lu, end_pos = %lu\n", d_opts.start_pos, d_opts.curr_pos, d_opts.end_pos);
-			}
-			rd = d_opts.end_pos - d_opts.curr_pos;
+			D3(fprintf(stderr, "End of raw storage buffer is reached, will start from the beginning\n"));
+			rd = state->rawdev.end_pos - dev_curr_pos;
 			zero_cross = 1;
-			lseek64(d_opts.fd, d_opts.start_pos, SEEK_SET);
-			d_opts.curr_pos = d_opts.start_pos;
+			lseek64(state->rawdev.rawdev_fd, state->rawdev.start_pos, SEEK_SET);
+			dev_curr_pos = state->rawdev.start_pos;
 			if (rd == 0) {
 				continue;
 			}
 		} else if (rd < 0) {
 			// read error or read pointer exceeded raw storage capacity, close files and terminate
 			process = 0;
-			if (d_opts.verbose) {
-				fprintf(stderr, "read() was unsuccessful:\n");
-				fprintf(stderr, "\tstart_pos = %lu, curr_pos = %lu, end_pos = %lu\n", d_opts.start_pos, d_opts.curr_pos, d_opts.end_pos);
-			}
+			D0(fprintf(stderr, "Raw device read was unsuccessful: %s\n", strerror(err)));
 		} else if (rd == 0) {
 			// end of device file reached
-			if (d_opts.verbose) {
-				fprintf(stderr, "End of raw storage device file is reached, will start from beginning\n");
-			}
+			D3(fprintf(stderr, "End of raw storage device file is reached, will start from the beginning\n"));
 			zero_cross = 1;
-			lseek64(d_opts.fd, d_opts.start_pos, SEEK_SET);
-			d_opts.curr_pos = d_opts.start_pos;
+			lseek64(state->rawdev.rawdev_fd, state->rawdev.start_pos, SEEK_SET);
+			dev_curr_pos = state->rawdev.start_pos;
 		}
 		if (process) {
 			save_from = buff;
 			save_to = buff + rd;
 			buff_processed = 0;
+			file_pos_saved = 0;
 			do {
 				// process data in read buffer
 				fprintf(stderr, "Searching start marker from %p to %p\n", save_from, save_to);
@@ -467,6 +637,9 @@ int camogm_read(camogm_state *state)
 						f_opts.file_state == WRITE_STOP) {
 					// not writing, start marker found - start writing
 					f_opts.file_state = WRITE_START;
+					if (file_pos_saved == 0)
+						state->rawdev.file_start = dev_curr_pos + pos_start;
+					fprintf(stderr, "File start position: %llu\n", state->rawdev.file_start);
 					save_from = save_from + pos_start + elphel_st.iov_len;
 					file_op = write_buffer(&f_opts, save_from - include_st_marker, save_to);
 					buff_processed = 1;
@@ -486,6 +659,8 @@ int camogm_read(camogm_state *state)
 						f_opts.file_state == WRITE_RUNNING) {
 					// writing in progress, start marker following stop marker found - this indicates a new file
 					f_opts.file_state = WRITE_STOP;
+					state->rawdev.file_start = dev_curr_pos + pos_start;
+					file_pos_saved = 1;
 					save_to = save_from + pos_stop;
 					file_op = write_buffer(&f_opts, save_from, save_to + include_en_marker);
 					save_from = save_from + pos_start;
@@ -507,15 +682,17 @@ int camogm_read(camogm_state *state)
 							.iov_base = save_from,
 							.iov_len = save_to - save_from
 					};
-					ssize_t next_rd = read(d_opts.fd, next_buff, sizeof(next_buff));
-					fprintf(stderr, "process MATCH_PARTIAL pos_start: read %ld\n", next_rd);
+					ssize_t next_rd = read(state->rawdev.rawdev_fd, next_buff, sizeof(next_buff));
+					fprintf(stderr, "process MATCH_PARTIAL pos_start: read %d\n", next_rd);
 					next_chunk.iov_len = next_rd;
-					d_opts.curr_pos += next_rd;
+					dev_curr_pos += next_rd;
 					result = check_edge_case(&curr_chunk, &next_chunk, &elphel_st, &field_markers);
 					fprintf(stderr, "process MATCH_PARTIAL: check edge case, result = %d\n", result);
 					if (result == MATCH_FOUND  && f_opts.file_state == WRITE_STOP) {
 						fprintf(stderr, "process MATCH_PARTIAL: match found\n");
 						f_opts.file_state = WRITE_START;
+						state->rawdev.file_start = dev_curr_pos + pos_start;
+						fprintf(stderr, "File start position: %llu\n", state->rawdev.file_start);
 						if (include_markers) {
 							unsigned char *from = field_markers.first_buff.iov_base;
 							unsigned char *to = from + field_markers.first_buff.iov_len;
@@ -545,10 +722,10 @@ int camogm_read(camogm_state *state)
 							.iov_base = save_from,
 							.iov_len = save_to - save_from
 					};
-					ssize_t next_rd = read(d_opts.fd, next_buff, sizeof(next_buff));
+					ssize_t next_rd = read(state->rawdev.rawdev_fd, next_buff, sizeof(next_buff));
 					fprintf(stderr, "process MATCH_PARTIAL pos_stop: read %ld\n", next_rd);
 					next_chunk.iov_len = next_rd;
-					d_opts.curr_pos += next_rd;
+					dev_curr_pos += next_rd;
 					result = check_edge_case(&curr_chunk, &next_chunk, &elphel_en, &field_markers);
 					fprintf(stderr, "process MATCH_PARTIAL: check edge case, result = %d\n", result);
 					if (result == MATCH_FOUND) {
@@ -585,20 +762,20 @@ int camogm_read(camogm_state *state)
 			if (file_op != FILE_OK) {
 				process = 0;
 			}
-			d_opts.curr_pos += rd;
+			dev_curr_pos += rd;
 		}
 	}
 
-	fprintf(stderr, "\n%d files read from %s\n", f_opts.file_cntr, d_opts.dev_name);
+	fprintf(stderr, "\n%d files read from %s\n", f_opts.file_cntr, state->rawdev.rawdev_path);
 
-	if (close(d_opts.fd) != 0) {
+	if (close(state->rawdev.rawdev_fd) != 0) {
 		perror("Unable to close raw device: ");
-		return EXIT_FAILURE;
+		return -CAMOGM_FRAME_FILE_ERR;
 	}
 	if (f_opts.fh != NULL && fclose(f_opts.fh) != 0) {
 		perror("Unable to close data file: ");
-		return EXIT_FAILURE;
+		return -CAMOGM_FRAME_FILE_ERR;
 	}
 
-	return EXIT_SUCCESS;
+	return 0;
 }

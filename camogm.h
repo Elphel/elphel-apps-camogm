@@ -32,6 +32,9 @@
 
 //#include "camogm_exif.h"
 #include <exifa.h>
+#include <c313a.h>
+#include <ogg/ogg.h>    // has to be before ogmstreams.h
+#include "ogmstreams.h" // move it to <>?
 
 
 /*
@@ -78,6 +81,25 @@
 /** @brief Maximum length of file or raw device path */
 #define ELPHEL_PATH_MAX           300
 
+/**
+ * @struct rawdev_buffer
+ * @brief Holds pointers related to raw device buffer operation
+ * @var rawdv_buffer::rawdev_fd
+ * File descriptor of open raw device
+ * @var rawdev_buffer::rawdev_path
+ * A string containing full path to raw device
+ * @var rawdev_buffer::overrun
+ * The number of times the buffer has overrun during current work session
+ * @var rawdev_buffer::start_pos
+ * The start position of raw device buffer
+ * @var rawdev_buffer::end_pos
+ * The end position of raw device buffer
+ * @var rawdev_buffer::curr_pos
+ * Current read position in raw device buffer
+ * @var rawdev_buffer::file_start
+ * Pointer to the beginning of current file. This pointer is set during raw device reading and
+ * updated every time new file is found.
+ */
 typedef struct {
 	int rawdev_fd;
 	char rawdev_path[ELPHEL_PATH_MAX];
@@ -85,6 +107,7 @@ typedef struct {
 	uint64_t start_pos;
 	uint64_t end_pos;
 	uint64_t curr_pos;
+	uint64_t file_start;
 } rawdev_buffer;
 
 typedef struct {
