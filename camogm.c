@@ -1,107 +1,21 @@
-/*!***************************************************************************
-   *! FILE NAME  : camogm.c
-   *! DESCRIPTION: Program to write captured video (and audio) to camera file system
-   *! using Ogg container.
-   *! Original implementation will copy package data to a buffer to use library calls?
-   *! Copyright (C) 2007 Elphel, Inc.
-   *! -----------------------------------------------------------------------------**
-   *!  This program is free software: you can redistribute it and/or modify
-   *!  it under the terms of the GNU General Public License as published by
-   *!  the Free Software Foundation, either version 3 of the License, or
-   *!  (at your option) any later version.
-   *!
-   *!  This program is distributed in the hope that it will be useful,
-   *!  but WITHOUT ANY WARRANTY; without even the implied warranty of
-   *!  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   *!  GNU General Public License for more details.
-   *!
-   *!  You should have received a copy of the GNU General Public License
-   *!  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-   *! -----------------------------------------------------------------------------**
-   *!
-   *!  $Log: camogm.c,v $
-   *!  Revision 1.13  2011/04/22 22:38:30  elphel
-   *!  added "greedy" and "ignore_fps" options
-   *!
-   *!  Revision 1.12  2010/08/16 17:10:59  elphel
-   *!  typo
-   *!
-   *!  Revision 1.11  2010/08/08 21:14:04  elphel
-   *!  8.0.8.38
-   *!
-   *!  Revision 1.10  2010/08/07 23:38:01  elphel
-   *!  fixed skipping (sometimes) frames at start recording
-   *!
-   *!  Revision 1.9  2010/08/03 06:19:57  elphel
-   *!  more debug for debug-level>=3
-   *!
-   *!  Revision 1.8  2010/08/02 01:26:42  elphel
-   *!  error tracking
-   *!
-   *!  Revision 1.7  2010/08/01 19:30:24  elphel
-   *!  new readonly parameter FRAME_SIZE and it support in the applications
-   *!
-   *!  Revision 1.6  2010/07/18 16:59:09  elphel
-   *!  8.0.8.31 - added parameters to camogm (one is to start at certain absolute time, helps to synchronize multiple cameras)
-   *!
-   *!  Revision 1.5  2010/07/04 19:06:02  elphel
-   *!  moved acknowledge earlier
-   *!
-   *!  Revision 1.4  2010/06/22 18:27:26  elphel
-   *!  bug fix
-   *!
-   *!  Revision 1.3  2010/06/22 16:53:30  elphel
-   *!  camogm acknowledges received command by copying G_THIS_FRAME value to G_DAEMON_ERR+3 (default number for camogm)
-   *!
-   *!  Revision 1.2  2009/02/25 17:50:02  spectr_rain
-   *!  removed deprecated dependency
-   *!
-   *!  Revision 1.1.1.1  2008/11/27 20:04:01  elphel
-   *!
-   *!
-   *!  Revision 1.6  2008/11/21 01:52:53  elphel
-   *!  updated for 8.0
-   *!
-   *!  Revision 1.5  2008/11/20 23:21:32  elphel
-   *!  Put FIXME notes and removed parameters that are not used anymore
-   *!
-   *!  Revision 1.4  2008/10/29 04:18:28  elphel
-   *!  v.8.0.alpha10 made a separate structure for global parameters (not related to particular frames in a frame queue)
-   *!
-   *!  Revision 1.3  2008/10/13 16:55:53  elphel
-   *!  removed (some) obsolete P_* parameters, renamed CIRCLSEEK to LSEEK_CIRC constants (same as other similar)
-   *!
-   *!  Revision 1.2  2008/09/07 19:48:08  elphel
-   *!  snapshot
-   *!
-   *!  Revision 1.9  2008/04/13 21:05:19  elphel
-   *!  Fixing KML generation
-   *!
-   *!  Revision 1.8  2008/04/11 23:09:33  elphel
-   *!  modified to handle kml generation
-   *!
-   *!  Revision 1.7  2008/04/07 09:13:34  elphel
-   *!  Changes related to new Exif generation/processing
-   *!
-   *!  Revision 1.6  2008/01/14 22:59:00  elphel
-   *!  7.1.7.4 - added timelapse mode to camogm
-   *!
-   *!  Revision 1.5  2007/12/03 08:28:45  elphel
-   *!  Multiple changes, mostly cleanup
-   *!
-   *!  Revision 1.4  2007/11/29 00:38:57  elphel
-   *!  fixed timescale bug
-   *!
-   *!  Revision 1.3  2007/11/19 05:07:19  elphel
-   *!  fixed 2 typos
-   *!
-   *!  Revision 1.2  2007/11/19 03:23:21  elphel
-   *!  7.1.5.5 Added support for *.mov files in camogm.
-   *!
-   *!  Revision 1.1  2007/11/16 08:49:56  elphel
-   *!  Initial release of camogm - program to record video/image to the camera hard drive (or other storage)
-   *!
+/** @file camogm.c
+ * @brief Program to write captured video (and audio) to camera file system
+ * using Ogg container.
+ * @copyright Copyright (C) 2016 Elphel, Inc.
+ *
+ * @par <b>License</b>
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -110,18 +24,40 @@
 #include <linux/fs.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <string.h>
 
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
 #include "camogm_mov.h"
 #include "camogm_kml.h"
 #include "camogm_read.h"
-#include "camogm.h"
 
-#define COMMAND_LOOP_DELAY 500000 //0.5sec
-#define DEFAULT_DEBUG_LVL 6
-#define TRAILER_SIZE   0x02
-#define MAP_OPTIONS MAP_FILE | MAP_PRIVATE
+/** @brief Time interval (in microseconds) for processing commands */
+#define COMMAND_LOOP_DELAY        500000 //0.5sec
+/** @brief Default debug level */
+#define DEFAULT_DEBUG_LVL         6
+/** @brief JPEG trailer syze in bytes */
+#define TRAILER_SIZE              0x02
+/** @brief Default segment duration in seconds */
+#define DEFAULT_DURATION          600
+/** @brief Default segment length in bytes */
+#define DEFAULT_LENGTH            1073741824
+/** @brief Behavior for the files: 0 clean buffer, 1 - save as much as possible */
+#define DEFAULT_GREEDY            0
+/** @brief 0 - restartf file if fps changed, 1 - ignore variable fps (and skip less frames) */
+#define DEFAULT_IGNORE_FPS        0
+/** @brief Maximal number of frames in file segment (each need 4* (1 + 1/frames_per_chunk) bytes for the frame index.
+ * This parameter is mostrly for Quicktime */
+#define DEFAULT_FRAMES            16384
+/** @brief Second sparse index - for Quicktime fast forward */
+#define DEFAULT_FRAMES_PER_CHUNK  10
+/** @brief Use Exif */
+#define DEFAULT_EXIF              1
+/** @brief Bit mask indicating all 4 sensor port channels are active */
+#define ALL_CHN_ACTIVE            0x0f
+/** @brief Bit mask indicating all 4 sensor port channels are inactive */
+#define ALL_CHN_INACTIVE          0x00
+/** @brief This is a basic helper macro for processing all sensor ports at a time */
 #define FOR_EACH_PORT(indtype, indvar) for (indtype indvar = 0; indvar < SENSOR_PORTS; indvar++)
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
@@ -139,33 +75,25 @@ const char *ctlFileNames[] = {   "/dev/frameparsall0", "/dev/frameparsall1",
 const char *circbufFileNames[] = {"/dev/circbuf0", "/dev/circbuf1",
 								"/dev/circbuf2", "/dev/circbuf3"
 };
-unsigned long * ccam_dma_buf[SENSOR_PORTS];           /* mmapped arrays */
 
 int lastDaemonBit[SENSOR_PORTS] = {DAEMON_BIT_CAMOGM};
 struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
 struct framepars_t       *framePars[SENSOR_PORTS];
-unsigned long            *aglobalPars[SENSOR_PORTS]; /// parameters that are not frame-related, their changes do not initiate any actions
-
-#define DEFAULT_DURATION 600            /*!default segment duration (seconds) */
-#define DEFAULT_LENGTH 1073741824       /*!default segment length (B) */
-#define DEFAULT_GREEDY     0            /*!behavior for the files: 0 clean buffer, 1 - save as much as possible */
-#define DEFAULT_IGNORE_FPS 0            /*!0 restartf file if fps changed, 1 - ignore variable fps (and skip less frames) */
-
-/** @brief Bit mask indicating all 4 sensor port channels are active */
-#define ALL_CHN_ACTIVE            0x0f
-/** @brief Bit mask indicating all 4 sensor port channels are inactive */
-#define ALL_CHN_INACTIVE          0x00
-
-
-//!Next 2 for Quicktime (mostly)
-#define DEFAULT_FRAMES           16384  /* Maximal number of frames in file segment (each need 4* (1 + 1/frames_per_chunk) bytes for the frame index */
-#define DEFAULT_FRAMES_PER_CHUNK    10  /*second sparse index - for Quicktime fast forward */
-
-#define DEFAULT_EXIF 1                  /* use Exif */
-
+/** @brief Parameters that are not frame-related, their changes do not initiate any actions */
+unsigned long            *aglobalPars[SENSOR_PORTS];
+/** @brief Global structure containing current state of the running program */
 camogm_state sstate;
-//camogm_state * state;
+/** @brief Memory mapped circular buffer arrays */
+unsigned long * ccam_dma_buf[SENSOR_PORTS];
 
+/**
+ * @enum path_type
+ * @brief Define the path type passed to a function
+ * @var path_type::RAW_PATH
+ * The path specified is a path to raw device buffer and it starts with /dev
+ * @var path_type::FILE_PATH
+ * The path specified is a regular path
+ */
 typedef enum {
 	RAW_PATH,
 	FILE_PATH
@@ -174,10 +102,10 @@ typedef enum {
 int debug_level;
 FILE* debug_file;
 
-void camogm_init(camogm_state *state, unsigned int port, char *pipe_name);
+void camogm_init(camogm_state *state, char *pipe_name);
 int camogm_start(camogm_state *state);
 int camogm_stop(camogm_state *state);
-int camogm_reset(camogm_state *state); //! reset circbuf read pointer
+void camogm_reset(camogm_state *state);
 int camogm_debug(camogm_state *state, const char *fname);
 int camogm_debug_level(int d);
 void  camogm_set_segment_duration(camogm_state *state, int sd);
@@ -217,7 +145,6 @@ unsigned int select_port(camogm_state *states);
 inline void set_chn_state(camogm_state *s, unsigned int port, unsigned int new_state);
 inline int is_chn_active(camogm_state *s, unsigned int port);
 
-//!======================================================================================================
 void put_uint16(void *buf, u_int16_t val)
 {
 	unsigned char  *tmp;
@@ -257,68 +184,55 @@ void put_uint64(void *buf, u_int64_t val)
 }
 
 /**
- * @brief Initialize state for a particular sensor port.
- * @param[in]   state   pointer to #camogm_state structure for a particular sensor channel
- * @param[in]   port    sensor port number
+ * @brief Initialize the state of the program
+ * @param[in]   state   pointer to #camogm_state structure containing program state
  * @param[in]   pipe_name pointer to command pipe name string
  * @return      none
  */
-void camogm_init(camogm_state *state, unsigned int port, char *pipe_name)
+void camogm_init(camogm_state *state, char *pipe_name)
 {
 	const char sserial[] = "elp0";
 	int * ipser = (int*)sserial;
 
 	memset(state, 0, sizeof(camogm_state));
-//	state->running = 0;                     // mo
-//	state->starting = 0;                    // mo
-//	state->vf = NULL;
 	camogm_set_segment_duration(state, DEFAULT_DURATION);
 	camogm_set_segment_length(state, DEFAULT_LENGTH);
 	camogm_set_greedy(state, DEFAULT_GREEDY);
 	camogm_set_ignore_fps(state, DEFAULT_IGNORE_FPS);
 	camogm_set_max_frames(state, DEFAULT_FRAMES);
 	camogm_set_frames_per_chunk(state, DEFAULT_FRAMES_PER_CHUNK);
-//	camogm_set_start_after_timestamp(state, 0.0); // start any time
-//	camogm_set_prefix(state, "\0", FILE_PATH);
-//	camogm_set_save_gp(state, 0);
 	camogm_reset(state);                    // sets state->buf_overruns =- 1
 	state->serialno = ipser[0];
-//	state->last = 0;
 	debug_file = stderr;
 	camogm_debug_level(DEFAULT_DEBUG_LVL);
 	strcpy(state->debug_name, "stderr");
 	camogm_set_timescale(state, 1.0);
 	camogm_set_frames_skip(state, 0);       // don't skip
 	camogm_set_format(state, CAMOGM_FORMAT_MOV);
-//	FOR_EACH_PORT(int, chn) {state->exifSize[chn] = 0;}
 	state->exif = DEFAULT_EXIF;
 	state->frame_lengths = NULL;
-//	state->frameno = 0;
-//	state->formats = 0;
-//	state->last_error_code = 0;
 
 	// kml stuff
-//	camogm_kml_set_enable(state, 0);
-//	state->kml_file = NULL;
 	camogm_kml_set_horHalfFov(state, 20.0);
 	camogm_kml_set_vertHalfFov(state, 15.0);
 	camogm_kml_set_height_mode(state, 0);
 	camogm_kml_set_height(state, 10.0);
 	camogm_kml_set_period(state, 2);        // 2 sec
 	camogm_kml_set_near(state, 40.0);       // 40 m (distance to PhotoOverlay)
-//	state->kml_path[0] = '\0';
 
-	state->port_num = port;
 	state->pipe_name = pipe_name;
 	state->rawdev.start_pos = RAWDEV_START_OFFSET;
 	state->rawdev.end_pos = state->rawdev.start_pos;
 	state->rawdev.curr_pos = state->rawdev.start_pos;
-//	state->rawdev.overrun = 0;
-//	state->rawdev_op = 0;
 	state->active_chn = ALL_CHN_ACTIVE;
 }
 
-
+/**
+ * @brief Set debug output file
+ * @param[in]   state   a pointer to a structure containing current state
+ * @param[in]   fname   file used for debug output
+ * @return      0 if the file was opened successfully and negative error code otherwise
+ */
 int camogm_debug(camogm_state *state, const char * fname)
 {
 	int none = 1;
@@ -341,12 +255,18 @@ int camogm_debug(camogm_state *state, const char * fname)
 	return 0;
 }
 
+/** @brief Set current debug level */
 int camogm_debug_level(int d)
 {
 	debug_level = d;
 	return 0;
 }
 
+/**
+ * @brief Start recording for each active sensor port
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      0 if the recording finished successfully and negative error code otherwise
+ */
 int camogm_start(camogm_state *state)
 {
 	int timestamp_start;
@@ -533,6 +453,11 @@ int camogm_start(camogm_state *state)
 	return 0;
 }
 
+/**
+ * @brief Save a single image from circular buffer to a file.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      0 if the image was successfully saved and negative error code otherwise
+ */
 int sendImageFrame(camogm_state *state)
 {
 	int rslt;
@@ -712,6 +637,12 @@ int sendImageFrame(camogm_state *state)
 	return 0;
 }
 
+/**
+ * @brief Stop current recording. If recording was not started, this function has no effect. This function
+ * calls @e camogm_end_* for the current file format.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      0 if the operation was stopped successfully and negative error code otherwise
+ */
 int camogm_stop(camogm_state *state)
 {
 	int rslt = 0;
@@ -745,13 +676,15 @@ int camogm_stop(camogm_state *state)
 	return 0;
 }
 
+/**
+ * @brief Free all file format handlers that were used. @e camogm_free_* for
+ * each format used will be called.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      None
+ */
 void camogm_free(camogm_state *state)
 {
-	int f;
-
-//! free all file format handlers that were used
-//add kml when needed
-	for (f = 0; f < 31; f++) {
+	for (int f = 0; f < 31; f++) {
 		if (state->formats & ( 1 << (state->format))) {
 			switch (f) {
 			case CAMOGM_FORMAT_NONE: break;
@@ -764,43 +697,52 @@ void camogm_free(camogm_state *state)
 	state->formats = 0;
 }
 
-int camogm_reset(camogm_state *state)   //! reset circbuf read pointer
+/**
+ * @brief Reset read pointer and overruns counter for each sensor port
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      None
+ */
+void camogm_reset(camogm_state *state)
 {
 	FOR_EACH_PORT(int, chn) {
-		state->port_num = chn;
-		state->cirbuf_rp[state->port_num] = -1;
-		state->buf_overruns[state->port_num] = -1; //!first will not count
+		state->cirbuf_rp[chn] = -1;
+		state->buf_overruns[chn] = -1; // first overrun will not count
 	}
-	return 0;
 }
 
-///kml stuff
+/** @brief kml parameter setter */
 void  camogm_kml_set_enable(camogm_state *state, int d)
 {
 	state->kml_enable = d;
 }
+/** @brief kml parameter setter */
 void  camogm_kml_set_horHalfFov(camogm_state *state, double dd)
 {
 	state->kml_horHalfFov = dd;
 }
+/** @brief kml parameter setter */
 void  camogm_kml_set_vertHalfFov(camogm_state *state, double dd)
 {
 	state->kml_vertHalfFov = dd;
 }
+/** @brief kml parameter setter */
 void  camogm_kml_set_height_mode(camogm_state *state, int d)
 {
 	state->kml_height_mode = d;
 }
+/** @brief kml parameter setter */
 void  camogm_kml_set_height(camogm_state *state, double dd)
 {
 	state->kml_height = dd;
 }
+/** @brief kml parameter setter */
 void  camogm_kml_set_period(camogm_state *state, int d)
 {
 	state->kml_period = d;
 	state->kml_last_ts = 0;
 	state->kml_last_uts = 0;
 }
+/** @brief kml parameter setter */
 void  camogm_kml_set_near(camogm_state *state, double dd)   // distance to PhotoOverlay
 {
 	state->kml_near = dd;
@@ -824,7 +766,6 @@ void  camogm_set_exif(camogm_state *state, int d)
 	state->exif =   d;
 }
 
-
 void  camogm_set_greedy(camogm_state *state, int d)
 {
 	state->greedy =   d ? 1 : 0;
@@ -834,6 +775,13 @@ void  camogm_set_ignore_fps(camogm_state *state, int d)
 	state->ignore_fps =   d ? 1 : 0;
 }
 
+/**
+ * @brief Set file name prefix or raw device file name.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @param[in]   p       a pointer to the prefix string. The string is prepended to
+ * the file name as is.
+ * @param[in]   type    the type of prefix, can be one of #path_type
+ */
 void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 {
 	if (type == FILE_PATH) {
@@ -858,6 +806,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 	}
 }
 
+/** @brief Set timescale @e d */
 void  camogm_set_timescale(camogm_state *state, double d)   //! set timescale, default=1,000,000
 {
 	state->set_timescale =  d;
@@ -866,6 +815,7 @@ void  camogm_set_timescale(camogm_state *state, double d)   //! set timescale, d
 	}
 }
 
+/** @brief Set the number of frames @e d to be skipped during recording. This values is common for each sensor port */
 void  camogm_set_frames_skip(camogm_state *state, int d)   //! set frames to skip (for time lapse)
 {
 	state->set_frames_skip =  d;
@@ -875,7 +825,8 @@ void  camogm_set_frames_skip(camogm_state *state, int d)   //! set frames to ski
 	}
 }
 
-
+/** @brief Set file format @e d the images will be recorded to. This function calls corresponding @e camogm_init_*
+ * function for the format selected.*/
 void  camogm_set_format(camogm_state *state, int d)
 {
 	int rslt = 0;
@@ -895,22 +846,35 @@ void  camogm_set_format(camogm_state *state, int d)
 		state->formats |= 1 << (state->format);
 	}
 }
-//! needed for Quicktime - maybe something else?
+
+/** @brief Set max number of frames @e d */
 void  camogm_set_max_frames(camogm_state *state, int d)
 {
 	state->set_max_frames =  d;
 	if ((state->running == 0) && (state->starting == 0)) state->max_frames =  d;
 }
+
+/** @brief Set the number of frames @e d recorded per chunk */
 void  camogm_set_frames_per_chunk(camogm_state *state, int d)
 {
 	state->set_frames_per_chunk =  d;
 	if ((state->running == 0) && (state->starting == 0)) state->frames_per_chunk =  d;
 }
+
+/** @brief Set the time stamp @e d when recording should be started */
 void  camogm_set_start_after_timestamp(camogm_state *state, double d)
 {
 	state->start_after_timestamp =  d;
 }
 
+/**
+ * @brief Print current status either as plain text or in xml format
+ * @param[in]   state   to a structure containing current state
+ * @param[in]   fn      a pointer to a file name which will be used for output. Can be NULL or 'stdout' for
+ * output to stdout, 'stderr' for output to stderr and a file name for output to a file
+ * @param[in]   xml     flag indicating that the output should be in xml format
+ * @return      None
+ */
 void  camogm_status(camogm_state *state, char * fn, int xml)
 {
 	int _len = 0;
@@ -1126,7 +1090,11 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	FOR_EACH_PORT(int, chn) {state->buf_min[chn] = _b_free[chn];}
 }
 
-//! will read from pipe, return pointer to null terminated string if available, NULL otherwise
+/**
+ * @brief Read from a single command from pipe
+ * @param[in]   npipe   pointer to command pipe
+ * @return Pointer to null terminated string if a command is available or NULL otherwise
+ */
 char * getLineFromPipe(FILE* npipe)
 {
 	int fl;
@@ -1162,6 +1130,13 @@ char * getLineFromPipe(FILE* npipe)
 	}
 }
 
+/**
+ * @brief Read and execute commands sent over command pipe
+ * @param state   pointer to a structure containing current state
+ * @param npipe   pointer to command pipe
+ * @return        0 if pipe was empty, positive value corresponding to a command processed or
+ * -1 in case of an error
+ */
 int parse_cmd(camogm_state *state, FILE* npipe)
 {
 	char * cmd;
@@ -1170,7 +1145,6 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 	int d;
 	double dd;
 
-//  if (!((cmd=getLineFromPipe(npipe)))) return 0; //! nothing in the pipe
 //!skip empty commands
 	while (((cmd = getLineFromPipe(npipe))) && !cmd[0]) ;
 	if (!cmd) return 0;  //! nothing in the pipe
@@ -1338,7 +1312,7 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 /**
  * @brief This function closes open files and deletes allocated memory.
  * @param[in]   state   pointer to #camogm_state structure for a particular sensor channel
- * return       none
+ * return       None
  */
 void clean_up(camogm_state *state)
 {
@@ -1358,10 +1332,10 @@ void clean_up(camogm_state *state)
  * @brief Main processing loop
  *
  * If recording is on, this function will check for new commands in command pipe after each frame. If recording is
- * turn off, it will poll command pipe each #COMMAND_LOOP_DELAYS microseconds and then sleep.
+ * turn off, it will poll command pipe each #COMMAND_LOOP_DELAY microseconds and then sleep.
  * @param[in]   state   #camogm_state structure associated with a single port
  * @return      normally this function loops indefinitely processing commands but will return negative exit code in case
- * of error and \e EXIT_SUCCESS it eventually terminates in normal way.
+ * of error and @e EXIT_SUCCESS it eventually terminates in normal way.
  */
 int listener_loop(camogm_state *state)
 {
@@ -1490,7 +1464,7 @@ int listener_loop(camogm_state *state)
 }
 
 /**
- * @brief Return disk size in bytes
+ * @brief Return total disk size in bytes
  *
  * This function reads disk size using ioctl call and returns it in bytes.
  * @param   name   pointer to disk name string
@@ -1544,6 +1518,12 @@ unsigned int select_port(camogm_state *state)
 	return chn;
 }
 
+/**
+ * @brief Check if channel is enabled or disabled
+ * @param[in]   s      a pointer to a structure containing current state
+ * @param[in]  port   a port which should be checked
+ * @return     0 if the channel is disabled and 1 otherwise
+ */
 inline int is_chn_active(camogm_state *s, unsigned int port)
 {
 	return (s->active_chn >> port) & 0x1;
@@ -1551,7 +1531,7 @@ inline int is_chn_active(camogm_state *s, unsigned int port)
 
 /**
  * @brief Change the state of a given sensor channel.
- * @param[in,out] s   a pointer to a structure containing current state
+ * @param[in,out] s      a pointer to a structure containing current state
  * @param[in]     port   port which state should be changed
  * @param[in]     new_state   new state of the channel
  * @return        None
@@ -1667,7 +1647,7 @@ int main(int argc, char *argv[])
 		return EXIT_SUCCESS;
 	}
 
-	camogm_init(&sstate, 0, argv[1]);
+	camogm_init(&sstate, argv[1]);
 	ret = open_files(&sstate);
 	if (ret < 0)
 		return ret;
@@ -1696,9 +1676,10 @@ unsigned long getGPValue(unsigned int port, unsigned long GPNumber)
 
 /**
  * @brief Set value of the specified global (G_*) parameter
+ * @param[in]   port      sensor port number
  * @param[in]   GNumber   parameter number (as defined in c313a.h)
  * @param[in]   value     value to set
- * @return      none
+ * @return      None
  */
 void setGValue(unsigned int port, unsigned long GNumber, unsigned long value)
 {
@@ -1708,6 +1689,7 @@ void setGValue(unsigned int port, unsigned long GNumber, unsigned long value)
 /**
  * @brief Check if this application is enabled (by appropriate bit in P_DAEMON_EN), if not -
  * and wait until enabled (return false when enabled)
+ * @param[in]   port        sensor port number
  * @param[in]   daemonBit   bit number to accept control in P_DAEMON_EN parameter
  * @return      (after possible waiting) true if there was no waiting, false if there was waiting
  */
@@ -1725,6 +1707,7 @@ int waitDaemonEnabled(unsigned int port, int daemonBit)   // <0 - use default
 
 /**
  * @brief Check if this application is enabled (by appropriate bit in P_DAEMON_EN)
+ * @param[in]   port        sensor port number
  * @param[in]   daemonBit   bit number to accept control in P_DAEMON_EN parameter
  * @return      (after possible waiting) true if there was no waiting, false if there was waiting
  */
