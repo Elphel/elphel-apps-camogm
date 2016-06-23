@@ -102,33 +102,15 @@
    *!  Initial release of camogm - program to record video/image to the camera hard drive (or other storage)
    *!
  */
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
 #include <fcntl.h>
 #include <sys/uio.h>
 #include <errno.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <linux/limits.h>
 #include <linux/fs.h>
-//#include <ctype.h>
-//#include <getopt.h>
-#include <time.h>
-#include <string.h>
-
-#include <netinet/in.h> /*little <-> big endian ?*/
-#include <sys/mman.h>   /* mmap */
+#include <sys/mman.h>
 #include <sys/ioctl.h>
 
-//#include <c313a.h>
-#include <exifa.h>
-#include <asm/byteorder.h>
-
-//#include <ogg/ogg.h>    // has to be before ogmstreams.h
-//#include "ogmstreams.h"
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
 #include "camogm_mov.h"

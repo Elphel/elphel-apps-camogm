@@ -18,31 +18,14 @@
 /** @brief This define is needed to use lseek64 and should be set before includes */
 #define _LARGEFILE64_SOURCE
 
-//!Not all are needed, just copied from the camogm.c
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-//#include <signal.h>
 #include <fcntl.h>
 #include <sys/uio.h>
 #include <errno.h>
 #include <sys/types.h>
-//#include <sys/socket.h>
-#include <sys/stat.h>
-//#include <ctype.h>
-//#include <getopt.h>
-//#include <time.h>
 #include <string.h>
-
-#include <netinet/in.h> /*little <-> big endian ?*/
-//#include <sys/mman.h>   /* mmap */
-//#include <sys/ioctl.h>
-
-//#include <c313a.h>
-//#include <asm/byteorder.h>
-
-//#include <ogg/ogg.h>    // has to be before ogmstreams.h
-//#include "ogmstreams.h" // move it to <>?
 
 #include "camogm_jpeg.h"
 
