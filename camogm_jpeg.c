@@ -1,40 +1,21 @@
-/*!***************************************************************************
-   *! FILE NAME  : camogm_jpeg.c
-   *! DESCRIPTION: Provides writing to series of individual JPEG files for camogm
-   *! Copyright (C) 2007 Elphel, Inc.
-   *! -----------------------------------------------------------------------------**
-   *!  This program is free software: you can redistribute it and/or modify
-   *!  it under the terms of the GNU General Public License as published by
-   *!  the Free Software Foundation, either version 3 of the License, or
-   *!  (at your option) any later version.
-   *!
-   *!  This program is distributed in the hope that it will be useful,
-   *!  but WITHOUT ANY WARRANTY; without even the implied warranty of
-   *!  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   *!  GNU General Public License for more details.
-   *!
-   *!  You should have received a copy of the GNU General Public License
-   *!  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-   *! -----------------------------------------------------------------------------**
-   *!
-   *!  $Log: camogm_jpeg.c,v $
-   *!  Revision 1.2  2009/02/25 17:50:51  spectr_rain
-   *!  removed deprecated dependency
-   *!
-   *!  Revision 1.1.1.1  2008/11/27 20:04:01  elphel
-   *!
-   *!
-   *!  Revision 1.3  2008/04/11 23:09:33  elphel
-   *!  modified to handle kml generation
-   *!
-   *!  Revision 1.2  2007/11/19 03:23:21  elphel
-   *!  7.1.5.5 Added support for *.mov files in camogm.
-   *!
-   *!  Revision 1.1  2007/11/16 08:49:57  elphel
-   *!  Initial release of camogm - program to record video/image to the camera hard drive (or other storage)
-   *!
+/** @file camogm_jpeg.c
+ * @brief Provides writing to series of individual JPEG files for camogm
+ * @copyright Copyright (C) 2016 Elphel, Inc.
+ *
+ * @par <b>License</b>
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/** @brief This define is needed to use lseek64 and should be set before includes */
 #define _LARGEFILE64_SOURCE
 
 //!Not all are needed, just copied from the camogm.c
@@ -58,7 +39,7 @@
 //#include <sys/ioctl.h>
 
 //#include <c313a.h>
-#include <asm/byteorder.h>
+//#include <asm/byteorder.h>
 
 //#include <ogg/ogg.h>    // has to be before ogmstreams.h
 //#include "ogmstreams.h" // move it to <>?
@@ -119,17 +100,6 @@ int camogm_start_jpeg(camogm_state *state)
 	return 0;
 }
 
-
-void dump_chunk(struct iovec *vec)
-{
-	unsigned char *ptr = vec->iov_base;
-	for (int i = 0; i < vec->iov_len; i++) {
-		printf("0x%02x ", ptr[i]);
-		if (i % 15 == 0)
-			printf("\n");
-	}
-}
-
 /**
  * @brief Write single JPEG frame
  *
@@ -154,12 +124,6 @@ int camogm_frame_jpeg(camogm_state *state)
 			chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
 			l += chunks_iovec[i].iov_len;
 		}
-
-		printf("0 chunk dump:\n");
-		dump_chunk(&chunks_iovec[0]);
-		printf("1 chunk dump\n");
-		dump_chunk(&chunks_iovec[1]);
-
 		sprintf(state->path, "%s%010ld_%06ld.jpeg", state->path_prefix, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
 		if (((state->ivf = open(state->path, O_RDWR | O_CREAT, 0777))) < 0) {
 			D0(fprintf(debug_file, "Error opening %s for writing, returned %d, errno=%d\n", state->path, state->ivf, errno));

@@ -84,7 +84,7 @@
 /**
  * @struct rawdev_buffer
  * @brief Holds pointers related to raw device buffer operation
- * @var rawdv_buffer::rawdev_fd
+ * @var rawdev_buffer::rawdev_fd
  * File descriptor of open raw device
  * @var rawdev_buffer::rawdev_path
  * A string containing full path to raw device

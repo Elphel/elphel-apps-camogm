@@ -2,7 +2,7 @@
  * @brief Provides reading data written to raw device storage and saving the data to a device with file system.
  * @copyright  Copyright (C) 2016 Elphel, Inc.
  *
- * <b>License:</b>
+ * @par <b>License</b>
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -15,7 +15,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/** @brief This define is needed to used lseek64 and should be set before includes */
+/** @brief This define is needed to use lseek64 and should be set before includes */
 #define _LARGEFILE64_SOURCE
 
 #include <stdio.h>
@@ -179,10 +179,6 @@ struct tiff_hdr {
  * @brief This structure holds data associated with currently opened file.
  * @var file_opts::fh
  * FILE pointer
- * @var file_opts::path_prefix
- * Contains path to currently opened file
- * @var file_opts::file_name
- * Contains full path to file currently opened file
  * @var file_opts::file_cntr
  * Indicates the number of files read from raw storage device
  * @var file_opts::file_state
@@ -251,7 +247,7 @@ static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz,
  * @param[in,out] ifd   a pointer to a structure which should be converted
  * @return        None
  */
-void ifd_byte_order(struct ifd_entry *ifd)
+static void ifd_byte_order(struct ifd_entry *ifd)
 {
 	unsigned long offset;
 
@@ -266,10 +262,10 @@ void ifd_byte_order(struct ifd_entry *ifd)
 
 /**
  * @brief Convert byte order for all fields in #tiff_hdr structure
- * @param[in,out] ifd   a pointer to a structure which should be converted
+ * @param[in,out] hdr   a pointer to a structure which should be converted
  * @return        None
  */
-void hdr_byte_order(struct tiff_hdr *hdr)
+static void hdr_byte_order(struct tiff_hdr *hdr)
 {
 	hdr->byte_order = __be16_to_cpu(hdr->byte_order);
 	hdr->mark = __be16_to_cpu(hdr->mark);
@@ -285,7 +281,7 @@ void hdr_byte_order(struct tiff_hdr *hdr)
  * @param[out]  buff    buffer for the string
  * @return      The number of bytes placed to the read buffer
  */
-size_t exif_get_text(camogm_state *state, struct ifd_entry *ifd, unsigned char *buff)
+static size_t exif_get_text(camogm_state *state, struct ifd_entry *ifd, unsigned char *buff)
 {
 	size_t j = 0;
 	size_t sz = ifd->len * exif_data_fmt[ifd->format];
@@ -314,7 +310,7 @@ size_t exif_get_text(camogm_state *state, struct ifd_entry *ifd, unsigned char *
  *
  * where NN is PageNumber; YYYY, MM and DD are year, month and date extracted from DateTimeOriginal
  * field; HH, MM and SS are hours, minutes and seconds extracted from DateTimeOriginal field; UUUUUU is us
- * value extracted from SubSecTimeOriginal field. The function assumes that <e> name buffer is big enough
+ * value extracted from SubSecTimeOriginal field. The function assumes that @e name buffer is big enough
  * to hold the file name in the format shown above including the terminating null byte.
  * @param[in]   state   a pointer to a structure containing current state
  * @param[out]  name    resulting file name
@@ -410,7 +406,6 @@ static int make_fname(camogm_state *state, char *name)
  * @brief Create new file name string and open a file
  * @param[in]   f_op   pointer to a structure holding information about currently opened file
  * @return      \e FILE_OK if file was successfully opened and \e FILE_OPEN_ERR otherwise
- * @todo retrieve time stamp and use it in file name
  */
 static int start_new_file(struct file_opts *f_op)
 {
