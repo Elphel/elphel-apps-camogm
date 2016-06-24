@@ -19,11 +19,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
-#include <sys/uio.h>
 #include <errno.h>
 #include <linux/fs.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <sys/uio.h>
+#include <sys/stat.h>
 #include <string.h>
 
 #include "camogm_ogm.h"
@@ -799,9 +800,6 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 		} else {
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
-			/* debug code follows */
-			state->rawdev.end_pos =  20971520; // 20Mib size
-			/* end of debug code */
 		}
 	}
 }
@@ -997,7 +995,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";
 			fprintf(f,
 			"\t<sensor_port_%d>\n" \
-			"\t\t<channel_active>\"%s\"<\channel_active>\n" \
+			"\t\t<channel_active>\"%s\"</channel_active>\n" \
 			"\t\t<compressor_state>\"%s\"</compressor_state>\n" \
 			"\t\t<frame_size>%d</frame_size>\n" \
 			"\t\t<frames_skip>%d</frames_skip>\n" \

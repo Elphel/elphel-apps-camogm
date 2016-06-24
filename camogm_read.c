@@ -31,6 +31,7 @@
 #include <time.h>
 #include <ctype.h>
 #include <asm/byteorder.h>
+#include <sys/statvfs.h>
 
 #include "camogm_read.h"
 
@@ -42,6 +43,8 @@
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
 #define INCLUDE_MARKERS           1
+/** @brief The amount of free disk space in bytes that should be left on the device during copying from raw device buffer to this disk */
+#define FREE_SIZE_LIMIT           10485760
 /** @brief File starting marker on a raw device. It corresponds to SOI JPEG marker */
 static unsigned char elphelst[] = {0xff, 0xd8};
 /** @brief File ending marker on a raw device. It corresponds to EOI JPEG marker */
@@ -249,8 +252,6 @@ static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz,
  */
 static void ifd_byte_order(struct ifd_entry *ifd)
 {
-	unsigned long offset;
-
 	ifd->tag = __be16_to_cpu(ifd->tag);
 	ifd->format = __be16_to_cpu(ifd->format);
 	ifd->len = __be32_to_cpu(ifd->len);
@@ -281,12 +282,12 @@ static void hdr_byte_order(struct tiff_hdr *hdr)
  * @param[out]  buff    buffer for the string
  * @return      The number of bytes placed to the read buffer
  */
-static size_t exif_get_text(camogm_state *state, struct ifd_entry *ifd, unsigned char *buff)
+static size_t exif_get_text(camogm_state *state, struct ifd_entry *ifd, char *buff)
 {
 	size_t j = 0;
 	size_t sz = ifd->len * exif_data_fmt[ifd->format];
 	uint64_t curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + ifd->offset;
-	unsigned char read_buff[MAX_EXIF_SIZE] = {0};
+	char read_buff[MAX_EXIF_SIZE] = {0};
 
 	lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
 	read(state->rawdev.rawdev_fd, read_buff, sz);
@@ -379,7 +380,7 @@ static int make_fname(camogm_state *state, char *name)
 
 		// assemble file name from collected Exif fields
 		if (ifd_page_num.len != 0) {
-			sz = sprintf(name, "%02u_", ifd_page_num.offset);
+			sz = sprintf(name, "%02lu_", ifd_page_num.offset);
 		}
 		if (ifd_date_time.len != 0) {
 			sz += exif_get_text(state, &ifd_date_time, name + sz);
@@ -402,19 +403,53 @@ static int make_fname(camogm_state *state, char *name)
 	return 0;
 }
 
+void dump_vfs(struct statvfs *vfs)
+{
+	fprintf(debug_file, "vfs.f_bsize = %lu\n", vfs->f_bsize);
+	fprintf(debug_file, "vfs.f_frsize = %lu\n", vfs->f_frsize);
+	fprintf(debug_file, "vfs.f_blocks = %lu\n", vfs->f_blocks);
+	fprintf(debug_file, "vfs.f_bfree = %lu\n", vfs->f_bfree);
+	fprintf(debug_file, "vfs.f_bavail = %lu\n", vfs->f_bavail);
+	fprintf(debug_file, "vfs.f_files = %lu\n", vfs->f_files);
+	fprintf(debug_file, "vfs.f_ffree= %lu\n", vfs->f_ffree);
+	fprintf(debug_file, "vfs.f_favail = %lu\n", vfs->f_favail);
+	fprintf(debug_file, "vfs.f_fsid = %lu\n", vfs->f_fsid);
+	fprintf(debug_file, "vfs.f_flag = %lu\n", vfs->f_flag);
+	fprintf(debug_file, "vfs.f_namemax = %lu\n", vfs->f_namemax);
+}
 /**
- * @brief Create new file name string and open a file
+ * @brief Create new file name, check free space on disk and open a file
  * @param[in]   f_op   pointer to a structure holding information about currently opened file
- * @return      \e FILE_OK if file was successfully opened and \e FILE_OPEN_ERR otherwise
+ * @return      \e FILE_OK if file was successfully opened and negative error code otherwise
  */
 static int start_new_file(struct file_opts *f_op)
 {
 	int ret;
 	int err;
+	struct statvfs vfs;
+	uint64_t free_size = 0;
 	char file_name[ELPHEL_PATH_MAX] = {0};
 
+	memset(&vfs, 0, sizeof(struct statvfs));
+	ret = statvfs(f_op->state->path_prefix, &vfs);
+	if (ret != 0) {
+		D0(fprintf(debug_file, "Unable to get free size on disk, statvfs() returned %d\n", ret));
+		return -CAMOGM_FRAME_FILE_ERR;
+	}
+	free_size = (uint64_t)vfs.f_bsize * (uint64_t)vfs.f_bfree;
+	// statvfs can return irrelevant values in some fields for unsupported file systems,
+	// thus free_size is checked to be equal to non-zero value
+	if (free_size > 0 && free_size < FREE_SIZE_LIMIT) {
+		fprintf(debug_file, "free_size = %llu; vfs.f_bsize = %lu; vfs.f_bfree = %lu; vfs.f_bsize * vfs.f_bfree = %llu\n",
+				free_size, vfs.f_bsize, vfs.f_bfree, vfs.f_bsize * vfs.f_bfree);
+		dump_vfs(&vfs);
+		return -CAMOGM_NO_SPACE;
+	}
+
 	make_fname(f_op->state, file_name);
-	if ((f_op->fh = fopen(file_name, "w")) == NULL) {
+	sprintf(f_op->state->path, "%s%s", f_op->state->path_prefix, file_name);
+
+	if ((f_op->fh = fopen(f_op->state->path, "w")) == NULL) {
 		err = errno;
 		D0(fprintf(debug_file, "Error opening %s for writing\n", file_name));
 		D0(fprintf(debug_file, "%s\n", strerror(err)));
@@ -502,13 +537,15 @@ static int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned ch
 		}
 		break;
 	case WRITE_START:
-		if (start_new_file(f_op) == FILE_OK) {
+		if ((ret = start_new_file(f_op)) == FILE_OK) {
 			len = fwrite(from, sz, 1, f_op->fh);
 			if (len != 1) {
 				perror(__func__);
 				ret = FILE_WR_ERR;
 			}
 		} else {
+			if (ret == -CAMOGM_NO_SPACE)
+				D0(fprintf(debug_file, "No free space left on the disk\n"));
 			f_op->fh = NULL;
 			ret = FILE_OPEN_ERR;
 		}
@@ -700,7 +737,6 @@ int camogm_read(camogm_state *state)
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					} else {
 						fprintf(stderr, "process MATCH_PARTIAL: match not found\n");
-//						file_op = write_buffer(&f_opts, save_from, save_to);
 						save_from = next_chunk.iov_base;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					}

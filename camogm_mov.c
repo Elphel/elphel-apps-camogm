@@ -43,6 +43,10 @@
 #include <fcntl.h>
 #include <sys/uio.h>
 #include <errno.h>
+#include <unistd.h>
+#include <string.h>
+#include <time.h>
+#include <sys/types.h>
 
 #include "camogm_mov.h"
 

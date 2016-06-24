@@ -36,6 +36,7 @@
 #include <fcntl.h>
 #include <sys/uio.h>
 #include <errno.h>
+#include <string.h>
 
 #include "camogm_ogm.h"
 

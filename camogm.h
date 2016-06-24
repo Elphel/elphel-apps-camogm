@@ -33,6 +33,7 @@
 #define CAMOGM_FRAME_MALLOC       7        ///< can not allocate memory
 #define CAMOGM_TOO_EARLY          8        ///< too early to start, waiting for particular timestamp
 #define CAMOGM_FRAME_OTHER        9        ///< other errors
+#define CAMOGM_NO_SPACE           10       ///< no free space left on current file system
 
 #define CAMOGM_FORMAT_NONE        0        ///< no video output
 #define CAMOGM_FORMAT_OGM         1        ///< output as Ogg Media file

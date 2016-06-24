@@ -40,6 +40,8 @@
 #include <fcntl.h>
 #include <sys/uio.h>
 #include <errno.h>
+#include <string.h>
+#include <unistd.h>
 #include <asm/byteorder.h>
 
 #include "camogm_kml.h"
