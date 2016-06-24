@@ -403,20 +403,6 @@ static int make_fname(camogm_state *state, char *name)
 	return 0;
 }
 
-void dump_vfs(struct statvfs *vfs)
-{
-	fprintf(debug_file, "vfs.f_bsize = %lu\n", vfs->f_bsize);
-	fprintf(debug_file, "vfs.f_frsize = %lu\n", vfs->f_frsize);
-	fprintf(debug_file, "vfs.f_blocks = %lu\n", vfs->f_blocks);
-	fprintf(debug_file, "vfs.f_bfree = %lu\n", vfs->f_bfree);
-	fprintf(debug_file, "vfs.f_bavail = %lu\n", vfs->f_bavail);
-	fprintf(debug_file, "vfs.f_files = %lu\n", vfs->f_files);
-	fprintf(debug_file, "vfs.f_ffree= %lu\n", vfs->f_ffree);
-	fprintf(debug_file, "vfs.f_favail = %lu\n", vfs->f_favail);
-	fprintf(debug_file, "vfs.f_fsid = %lu\n", vfs->f_fsid);
-	fprintf(debug_file, "vfs.f_flag = %lu\n", vfs->f_flag);
-	fprintf(debug_file, "vfs.f_namemax = %lu\n", vfs->f_namemax);
-}
 /**
  * @brief Create new file name, check free space on disk and open a file
  * @param[in]   f_op   pointer to a structure holding information about currently opened file
@@ -440,9 +426,6 @@ static int start_new_file(struct file_opts *f_op)
 	// statvfs can return irrelevant values in some fields for unsupported file systems,
 	// thus free_size is checked to be equal to non-zero value
 	if (free_size > 0 && free_size < FREE_SIZE_LIMIT) {
-		fprintf(debug_file, "free_size = %llu; vfs.f_bsize = %lu; vfs.f_bfree = %lu; vfs.f_bsize * vfs.f_bfree = %llu\n",
-				free_size, vfs.f_bsize, vfs.f_bfree, vfs.f_bsize * vfs.f_bfree);
-		dump_vfs(&vfs);
 		return -CAMOGM_NO_SPACE;
 	}
 
@@ -624,7 +607,7 @@ int camogm_read(camogm_state *state)
 		err = errno;
 		if ((rd > 0) && (dev_curr_pos + rd > state->rawdev.end_pos)) {
 			// read pointer jumped over the raw storage buffer end, truncate excessive data
-			D3(fprintf(stderr, "End of raw storage buffer is reached, will start from the beginning\n"));
+			D3(fprintf(debug_file, "End of raw storage buffer is reached, will start from the beginning\n"));
 			rd = state->rawdev.end_pos - dev_curr_pos;
 			zero_cross = 1;
 			lseek64(state->rawdev.rawdev_fd, state->rawdev.start_pos, SEEK_SET);
@@ -635,10 +618,10 @@ int camogm_read(camogm_state *state)
 		} else if (rd < 0) {
 			// read error or read pointer exceeded raw storage capacity, close files and terminate
 			process = 0;
-			D0(fprintf(stderr, "Raw device read was unsuccessful: %s\n", strerror(err)));
+			D0(fprintf(debug_file, "Raw device read was unsuccessful: %s\n", strerror(err)));
 		} else if (rd == 0) {
 			// end of device file reached
-			D3(fprintf(stderr, "End of raw storage device file is reached, will start from the beginning\n"));
+			D3(fprintf(debug_file, "End of raw storage device file is reached, will start from the beginning\n"));
 			zero_cross = 1;
 			lseek64(state->rawdev.rawdev_fd, state->rawdev.start_pos, SEEK_SET);
 			dev_curr_pos = state->rawdev.start_pos;
@@ -650,13 +633,8 @@ int camogm_read(camogm_state *state)
 			file_pos_saved = 0;
 			do {
 				// process data in read buffer
-				fprintf(stderr, "Searching start marker from %p to %p\n", save_from, save_to);
 				pos_start = find_marker(save_from, save_to - save_from, elphel_st.iov_base, elphel_st.iov_len);
-				fprintf(stderr, "\tmarker position = %d\n", pos_start);
-
-				fprintf(stderr, "Searching stop marker from %p to %p\n", save_from, save_to);
 				pos_stop = find_marker(save_from, save_to - save_from, elphel_en.iov_base, elphel_en.iov_len);
-				fprintf(stderr, "\tmarker position = %d\n", pos_stop);
 
 				if (pos_start == MATCH_NOT_FOUND && pos_stop == MATCH_NOT_FOUND &&
 						(f_opts.file_state == WRITE_RUNNING || f_opts.file_state == WRITE_START)) {
@@ -664,19 +642,19 @@ int camogm_read(camogm_state *state)
 					f_opts.file_state = WRITE_RUNNING;
 					file_op = write_buffer(&f_opts, save_from, save_to);
 					buff_processed = 1;
-					fprintf(stderr, "State 'writing'\n");
+					D6(fprintf(debug_file, "State 'writing'\n"));
 				} else if (pos_start >= 0 /*&& pos_stop == MATCH_NOT_FOUND */ &&
 						f_opts.file_state == WRITE_STOP) {
 					// not writing, start marker found - start writing
 					f_opts.file_state = WRITE_START;
 					if (file_pos_saved == 0)
 						state->rawdev.file_start = dev_curr_pos + pos_start;
-					fprintf(stderr, "File start position: %llu\n", state->rawdev.file_start);
+					D6(fprintf(debug_file, "New file found. File start position: %llu\n", state->rawdev.file_start));
 					save_from = save_from + pos_start + elphel_st.iov_len;
 					file_op = write_buffer(&f_opts, save_from - include_st_marker, save_to);
 					buff_processed = 1;
 					f_opts.file_state = WRITE_RUNNING;
-					fprintf(stderr, "State 'starting file', file_op = %d\n", file_op);
+					D6(fprintf(debug_file, "State 'starting file', file_op = %d\n", file_op));
 				} else if (pos_start == MATCH_NOT_FOUND && pos_stop >= 0 &&
 						(f_opts.file_state == WRITE_RUNNING || f_opts.file_state == WRITE_START)) {
 					// writing in progress, end marker found - stop writing
@@ -686,7 +664,7 @@ int camogm_read(camogm_state *state)
 					buff_processed = 1;
 					if (zero_cross)
 						process = 0;
-					fprintf(stderr, "State 'finishing file'\n");
+					D6(fprintf(debug_file, "State 'finishing file'\n"));
 				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop &&
 						f_opts.file_state == WRITE_RUNNING) {
 					// writing in progress, start marker following stop marker found - this indicates a new file
@@ -701,7 +679,7 @@ int camogm_read(camogm_state *state)
 						buff_processed = 1;
 						process = 0;
 					}
-					fprintf(stderr, "State 'starting new file'\n");
+					D6(fprintf(debug_file, "State 'starting new file'\n"));
 				} else if (pos_start == MATCH_PARTIAL &&
 						f_opts.file_state == WRITE_STOP) {
 					// partial start marker found in the end of read buffer - get next chunk of data and try to find marker there
@@ -715,16 +693,13 @@ int camogm_read(camogm_state *state)
 							.iov_len = save_to - save_from
 					};
 					ssize_t next_rd = read(state->rawdev.rawdev_fd, next_buff, sizeof(next_buff));
-					fprintf(stderr, "process MATCH_PARTIAL pos_start: read %d\n", next_rd);
 					next_chunk.iov_len = next_rd;
 					dev_curr_pos += next_rd;
 					result = check_edge_case(&curr_chunk, &next_chunk, &elphel_st, &field_markers);
-					fprintf(stderr, "process MATCH_PARTIAL: check edge case, result = %d\n", result);
 					if (result == MATCH_FOUND  && f_opts.file_state == WRITE_STOP) {
-						fprintf(stderr, "process MATCH_PARTIAL: match found\n");
 						f_opts.file_state = WRITE_START;
 						state->rawdev.file_start = dev_curr_pos + pos_start;
-						fprintf(stderr, "File start position: %llu\n", state->rawdev.file_start);
+						D6(fprintf(debug_file, "File start position: %llu\n", state->rawdev.file_start));
 						if (include_markers) {
 							unsigned char *from = field_markers.first_buff.iov_base;
 							unsigned char *to = from + field_markers.first_buff.iov_len;
@@ -736,11 +711,10 @@ int camogm_read(camogm_state *state)
 						save_from = next_chunk.iov_base + field_markers.second_buff.iov_len;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					} else {
-						fprintf(stderr, "process MATCH_PARTIAL: match not found\n");
 						save_from = next_chunk.iov_base;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					}
-					fprintf(stderr, "State 'check elphel_st cross boundary'; result = %d\n", result);
+					D6(fprintf(debug_file, "State 'check elphel_st cross boundary'; result = %d\n", result));
 				} else if (pos_stop == MATCH_PARTIAL &&
 						f_opts.file_state != WRITE_STOP) {
 					// partial end marker found in the end of read buffer - get next chunk of data and try to find marker there
@@ -754,13 +728,10 @@ int camogm_read(camogm_state *state)
 							.iov_len = save_to - save_from
 					};
 					ssize_t next_rd = read(state->rawdev.rawdev_fd, next_buff, sizeof(next_buff));
-					fprintf(stderr, "process MATCH_PARTIAL pos_stop: read %ld\n", next_rd);
 					next_chunk.iov_len = next_rd;
 					dev_curr_pos += next_rd;
 					result = check_edge_case(&curr_chunk, &next_chunk, &elphel_en, &field_markers);
-					fprintf(stderr, "process MATCH_PARTIAL: check edge case, result = %d\n", result);
 					if (result == MATCH_FOUND) {
-						fprintf(stderr, "process MATCH_PARTIAL: match found\n");
 						f_opts.file_state = WRITE_STOP;
 						file_op = write_buffer(&f_opts, save_from, save_to);
 						if (include_markers) {
@@ -774,21 +745,19 @@ int camogm_read(camogm_state *state)
 						save_from = next_chunk.iov_base + field_markers.second_buff.iov_len;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					} else {
-						fprintf(stderr, "process MATCH_PARTIAL: match not found\n");
 						file_op = write_buffer(&f_opts, save_from, save_to);
 						save_from = next_chunk.iov_base;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					}
-					fprintf(stderr, "State 'check elphel_en' cross boundary:; result = %d\n", result);
+					D6(fprintf(debug_file, "State 'check elphel_en' cross boundary:; result = %d\n", result));
 				} else {
 					// no markers found and new file has not bee started yet - skip data
-					fprintf(stderr, "Undefined state: pos_start = %d, pos_stop = %d, file_state = %d\n",
-							pos_start, pos_stop, f_opts.file_state);
+					D6(fprintf(debug_file, "Undefined state: pos_start = %d, pos_stop = %d, file_state = %d\n",
+							pos_start, pos_stop, f_opts.file_state));
 					buff_processed = 1;
 					if (zero_cross)
 						process = 0;
 				}
-				fprintf(stderr, "buff_processed = %d, file_op = %d\n", buff_processed, file_op);
 			} while (buff_processed == 0 && file_op == FILE_OK);
 			if (file_op != FILE_OK) {
 				process = 0;
@@ -797,7 +766,7 @@ int camogm_read(camogm_state *state)
 		}
 	}
 
-	fprintf(stderr, "\n%d files read from %s\n", f_opts.file_cntr, state->rawdev.rawdev_path);
+	D0(fprintf(debug_file, "\n%d files read from %s\n", f_opts.file_cntr, state->rawdev.rawdev_path));
 
 	if (close(state->rawdev.rawdev_fd) != 0) {
 		perror("Unable to close raw device: ");

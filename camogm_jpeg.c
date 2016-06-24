@@ -144,8 +144,8 @@ int camogm_frame_jpeg(camogm_state *state)
 				split_cntr = state->rawdev.end_pos - (l + state->rawdev.curr_pos);
 				split_ptr = state->packetchunks[k].chunk + split_cntr;
 
-				fprintf(debug_file, "Splitting chunk #%d: total chunk size = %ld, start address = 0x%p\n",
-						i, state->packetchunks[k].bytes, state->packetchunks[k].chunk);
+				D3(fprintf(debug_file, "Splitting chunk #%d: total chunk size = %ld, start address = 0x%p\n",
+						i, state->packetchunks[k].bytes, state->packetchunks[k].chunk));
 
 				// be careful with indexes here
 				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
@@ -154,10 +154,6 @@ int camogm_frame_jpeg(camogm_state *state)
 				chunks_iovec[++i].iov_base = split_ptr + 1;
 				chunks_iovec[i].iov_len = state->packetchunks[k].bytes - split_cntr;
 				l += chunks_iovec[i].iov_len;
-
-				fprintf(debug_file, "Lump 1: size = %ld, start address = 0x%p\n", chunks_iovec[i - 1].iov_len, chunks_iovec[i - 1].iov_base);
-				fprintf(debug_file, "Lump 2: size = %ld, start address = 0x%p\n\n", chunks_iovec[i].iov_len, chunks_iovec[i].iov_base);
-
 			} else {
 				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
 				chunks_iovec[i].iov_len = state->packetchunks[k].bytes;
