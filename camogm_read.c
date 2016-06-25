@@ -17,6 +17,7 @@
 
 /** @brief This define is needed to use lseek64 and should be set before includes */
 #define _LARGEFILE64_SOURCE
+#define _XOPEN_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,7 @@
 #define TIFF_HDR_OFFSET           12
 /** @brief Separator character between seconds and microseconds in JPEG file name */
 #define SUBSEC_SEPARATOR          '.'
+#define EXIF_DATE_TIME_FORMAT     "%Y:%m:%d %H:%M:%S"
 /** @brief The size of read buffer in bytes. The data will be read from disk in blocks of this size */
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
@@ -115,6 +117,11 @@ enum file_ops {
 	WRITE_STOP
 };
 
+enum search_state {
+	SEARCH_SKIP,
+	SEARCH_FILE_START,
+	SEARCH_FILE_DATA
+};
 /**
  * @brief Exif data format table.
  *
@@ -207,6 +214,117 @@ struct crb_ptrs {
 	struct iovec        second_buff;
 };
 
+void dump_index_dir(const struct disk_idir *idir)
+{
+	struct disk_index *ind = idir->head;
+
+	while (ind != NULL) {
+		fprintf(debug_file, "port number = %d; unix time = %ld; usec time = %06u; offset = 0x%010llx; file size = %u\n",
+				ind->port, ind->rawtime, ind->usec, ind->f_offset, ind->f_size);
+		ind = ind->next;
+	}
+}
+
+int create_node(struct disk_index **index)
+{
+	fprintf(debug_file, "Creating new disk node\n");
+	if (*index != NULL)
+		return -1;
+
+	*index = malloc(sizeof(struct disk_index));
+	if (*index != NULL) {
+		memset(*index, 0, sizeof(struct disk_index));
+		fprintf(debug_file, "New disk node created\n");
+		return 0;
+	} else {
+		fprintf(debug_file, "New disk node NOT created\n");
+		return -1;
+	}
+}
+
+int add_node(struct disk_idir *idir, struct disk_index *index)
+{
+	fprintf(debug_file, "Adding new disk node\n");
+	if (idir->head == NULL && idir->tail == NULL) {
+		idir->head = index;
+		idir->tail = index;
+		idir->size = 1;
+	} else {
+		index->prev = idir->tail;
+		idir->tail->next = index;
+		idir->tail = index;
+		idir->size++;
+	}
+
+	fprintf(debug_file, "New disk node added\n");
+	return idir->size;
+}
+
+struct disk_index *find_by_offset(const struct disk_idir *idir, uint64_t offset)
+{
+	struct disk_index *index = idir->head;
+
+	while (index != NULL) {
+		if (index->f_offset == offset)
+			break;
+		index = index->next;
+	}
+
+	return index;
+}
+
+int remove_node(struct disk_idir *idir, struct disk_index *node)
+{
+	if (node == NULL)
+		return -1;
+
+	if (node == idir->head) {
+		idir->head = node->next;
+		idir->head->prev = NULL;
+	} else if (node == idir->tail) {
+		idir->tail = node->prev;
+		idir->tail->next = NULL;
+	} else {
+		struct disk_index *ind = idir->head;
+		while (ind != NULL) {
+			if (ind == node) {
+				ind->prev->next = ind->next;
+				ind->next->prev = ind->prev;
+				break;
+			}
+			ind = ind->next;
+		}
+	}
+	free(node);
+	node = NULL;
+	idir->size--;
+
+	return idir->size;
+}
+
+int delete_idir(struct disk_idir *idir)
+{
+	fprintf(debug_file, "Deleting disk index directory\n");
+	struct disk_index *curr_ind;
+	struct disk_index *next_ind;
+
+	if (idir == NULL || idir->head == NULL)
+		return -1;
+
+	curr_ind = idir->head;
+	next_ind = curr_ind->next;
+	while (curr_ind != NULL) {
+		free(curr_ind);
+		curr_ind = next_ind;
+		if (curr_ind != NULL)
+			next_ind = curr_ind->next;
+	}
+	idir->head = idir->tail = NULL;
+	idir->size = 0;
+
+	return 0;
+}
+
 /**
  * @brief Find pattern in a data buffer
  *
@@ -218,7 +336,8 @@ struct crb_ptrs {
  * @param[in]   pt_sz     size of the pattern array
  * @return      the index in data buffer where pattern matches or error code from #match_result if it was not found
  */
-static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const unsigned char * restrict pattern, ssize_t pt_sz)
+static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const unsigned char * restrict pattern, ssize_t pt_sz,
+		int add_pattern)
 {
 	int ret = MATCH_NOT_FOUND;
 	int j = 0;
@@ -233,7 +352,10 @@ static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz,
 			j++;
 		} else if (buff_ptr[i] == pattern[j] && j == pt_sz - 1) {
 			// last pattern symbol match
-			ret = i - j;
+			if (add_pattern)
+				ret = i;
+			else
+				ret = i - j;
 			j = 0;
 			break;
 		}
@@ -281,24 +403,18 @@ static void hdr_byte_order(struct tiff_hdr *hdr)
  * @param[in]   ifd     Exif image file directory record containing string offset
  * @param[out]  buff    buffer for the string
  * @return      The number of bytes placed to the read buffer
+ * @todo update description
  */
-static size_t exif_get_text(camogm_state *state, struct ifd_entry *ifd, char *buff)
+static size_t exif_get_text(camogm_state *state, struct ifd_entry *tag, char *buff)
 {
-	size_t j = 0;
-	size_t sz = ifd->len * exif_data_fmt[ifd->format];
-	uint64_t curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + ifd->offset;
-	char read_buff[MAX_EXIF_SIZE] = {0};
+	size_t bytes = 0;
+	size_t str_len = tag->len * exif_data_fmt[tag->format];
+	uint64_t curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + tag->offset;
 
 	lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
-	read(state->rawdev.rawdev_fd, read_buff, sz);
-	for (int i = 0; i < sz; i++) {
-		if (isdigit(read_buff[i]))
-			buff[j++] = read_buff[i];
-		else if (isblank(read_buff[i]))
-			buff[j++] = '_';
-	}
+	bytes = read(state->rawdev.rawdev_fd, buff, str_len);
 
-	return j;
+	return bytes;
 }
 
 /**
@@ -316,26 +432,34 @@ static size_t exif_get_text(camogm_state *state, struct ifd_entry *ifd, char *bu
  * @param[in]   state   a pointer to a structure containing current state
  * @param[out]  name    resulting file name
  * @return      0 if file name was successfully created and negative value otherwise
+ * @todo update description
  */
-static int make_fname(camogm_state *state, char *name)
+static int save_index(camogm_state *state, struct disk_idir *idir)
 {
+	int ret = 0;
 	int process = 2;
-	size_t sz = 0;
 	uint32_t data32;
 	uint16_t num_entries = 0;
 	uint64_t curr_pos;
 	uint64_t subifd_offset = 0;
 	struct tiff_hdr hdr;
 	struct ifd_entry ifd;
-	struct ifd_entry ifd_page_num;
-	struct ifd_entry ifd_date_time;
-	struct ifd_entry ifd_subsec;
+	struct ifd_entry ifd_page_num = {0};
+	struct ifd_entry ifd_date_time = {0};
+	struct ifd_entry ifd_subsec = {0};
+	struct disk_index *node = NULL;
 	unsigned char read_buff[TIFF_HDR_OFFSET] = {0};
+	char str_buff[32] = {0};
 	uint64_t save_pos = lseek64(state->rawdev.rawdev_fd, 0, SEEK_CUR);
 
-	if (name == NULL)
+	fprintf(debug_file, "Adding new disk index to index directory\n");
+	if (idir == NULL)
 		return -1;
 
+	if (create_node(&node) != 0)
+		return -1;
+
+	fprintf(debug_file, "%s: file start position 0x%llx\n", __func__, state->rawdev.file_start);
 	curr_pos = state->rawdev.file_start;
 	lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
 	if (read(state->rawdev.rawdev_fd, read_buff, sizeof(read_buff)) <= 0) {
@@ -350,6 +474,7 @@ static int make_fname(camogm_state *state, char *name)
 		lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
 		// process IFD0 and SubIFD fields
 		do {
+			fprintf(debug_file, "%s: processing IFD\n", __func__);
 			read(state->rawdev.rawdev_fd, &num_entries, sizeof(num_entries));
 			num_entries = __be16_to_cpu(num_entries);
 			for (int i = 0; i < num_entries; i++) {
@@ -378,29 +503,46 @@ static int make_fname(camogm_state *state, char *name)
 			lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
 		} while (process > 0);
 
-		// assemble file name from collected Exif fields
+		// fill disk index node with Exif data and add it to disk index directory
+		fprintf(debug_file, "%s: filling node data\n", __func__);
+		node->f_offset = state->rawdev.file_start;
 		if (ifd_page_num.len != 0) {
-			sz = sprintf(name, "%02lu_", ifd_page_num.offset);
+			fprintf(debug_file, "%s: filling node data, page_num\n", __func__);
+			node->port = (uint32_t)ifd_page_num.offset;
 		}
 		if (ifd_date_time.len != 0) {
-			sz += exif_get_text(state, &ifd_date_time, name + sz);
+			fprintf(debug_file, "%s: filling node data, date_time\n", __func__);
+			struct tm tm;
+			exif_get_text(state, &ifd_date_time, str_buff);
+			strptime(str_buff, EXIF_DATE_TIME_FORMAT, &tm);
+			node->rawtime = mktime(&tm);
 		}
 		if (ifd_subsec.len != 0) {
-			name[sz++] = SUBSEC_SEPARATOR;
-			sz += exif_get_text(state, &ifd_subsec, name + sz);
+			fprintf(debug_file, "%s: filling node data, subsec\n", __func__);
+			exif_get_text(state, &ifd_subsec, str_buff);
+			node->usec = strtoul(str_buff, NULL, 10);
 		}
-		sprintf(name + sz, ".jpeg");
-	} else {
-		// a fallback option in case exif is not found - randomly generate file name
-		int num;
-		srand(time(NULL));
-		num = rand();
-		sprintf(name, "%010d.jpeg", num);
-		D3(fprintf(debug_file, "Exif marker is not found not found, using randomly generated file name: %s\n", name));
+		fprintf(debug_file, "%s: node data filled\n", __func__);
+		if (node->rawtime != -1)
+			add_node(idir, node);
+		else
+			ret = -1;
 	}
 
 	lseek64(state->rawdev.rawdev_fd, save_pos, SEEK_SET);
-	return 0;
+	return ret;
+}
+
+int stop_index(struct disk_idir *idir, uint64_t pos_stop)
+{
+	fprintf(debug_file, "Stop index at position 0x%llx\n", pos_stop);
+	int ret = 0;
+	if (idir->tail != NULL) {
+		idir->tail->f_size = pos_stop - idir->tail->f_offset;
+	} else {
+		ret = -1;
+	}
+	return ret;
 }
 
 /**
@@ -429,7 +571,7 @@ static int start_new_file(struct file_opts *f_op)
 		return -CAMOGM_NO_SPACE;
 	}
 
-	make_fname(f_op->state, file_name);
+//	make_fname(f_op->state, file_name);
 	sprintf(f_op->state->path, "%s%s", f_op->state->path_prefix, file_name);
 
 	if ((f_op->fh = fopen(f_op->state->path, "w")) == NULL) {
@@ -560,30 +702,34 @@ static int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned ch
  * analyzed for JPEG markers and then the data from buffer is written to a file.
  * @param[in]   state   a pointer to a structure containing current state
  * @return      0 if files were extracted successfully and negative error code otherwise
+ * @todo update description, reorder decision tree
  */
-int camogm_read(camogm_state *state)
+int build_index(camogm_state *state)
 {
 	const int include_markers = INCLUDE_MARKERS;
 	int process;
 	int zero_cross;
-	int file_op;
 	int err;
 	int pos_start, pos_stop;
 	int buff_processed;
-	int file_pos_saved;
+	int search_state;
+	int idir_result;
 	ssize_t rd;
 	unsigned char buff[PHY_BLK_SZ];
 	unsigned char next_buff[PHY_BLK_SZ];
+	unsigned char *active_buff = buff;
 	unsigned char *save_from = NULL;
 	unsigned char *save_to = NULL;
-	struct file_opts f_opts;
+//	struct file_opts f_opts;
 	uint64_t dev_curr_pos = 0;
 	uint64_t include_st_marker, include_en_marker;
+	struct disk_idir index_dir = {0};
+	size_t add_stm_len, add_enm_len;
 
-	memset(&f_opts, 0, sizeof(struct file_opts));
-	f_opts.file_state = WRITE_STOP;
-	f_opts.state = state;
-
+//	memset(&f_opts, 0, sizeof(struct file_opts));
+//	f_opts.file_state = WRITE_STOP;
+//	f_opts.state = state;
+//
 	state->rawdev.rawdev_fd = open(state->rawdev.rawdev_path, O_RDONLY);
 	if (state->rawdev.rawdev_fd < 0) {
 		D0(perror(__func__));
@@ -592,16 +738,21 @@ int camogm_read(camogm_state *state)
 	}
 
 	if (include_markers) {
-		include_st_marker = elphel_st.iov_len;
-		include_en_marker = elphel_en.iov_len;
+		include_st_marker = 0;
+		add_stm_len = elphel_st.iov_len;
+		include_en_marker = 1;
+		add_enm_len = 0;
 	} else {
 		include_st_marker = 0;
-		include_en_marker = 0;
+		add_stm_len = 0;
+		include_en_marker = 1;
+		add_enm_len = elphel_en.iov_len;
 	}
 
 	process = 1;
 	zero_cross = 0;
-	file_op = FILE_OK;
+	search_state = SEARCH_SKIP;
+	idir_result = 0;
 	while (process) {
 		rd = read(state->rawdev.rawdev_fd, buff, sizeof(buff));
 		err = errno;
@@ -629,60 +780,70 @@ int camogm_read(camogm_state *state)
 		if (process) {
 			save_from = buff;
 			save_to = buff + rd;
+			active_buff = buff;
 			buff_processed = 0;
-			file_pos_saved = 0;
 			do {
 				// process data in read buffer
-				pos_start = find_marker(save_from, save_to - save_from, elphel_st.iov_base, elphel_st.iov_len);
-				pos_stop = find_marker(save_from, save_to - save_from, elphel_en.iov_base, elphel_en.iov_len);
+				pos_start = find_marker(save_from, save_to - save_from, elphel_st.iov_base, elphel_st.iov_len, include_st_marker);
+				pos_stop = find_marker(save_from, save_to - save_from, elphel_en.iov_base, elphel_en.iov_len, include_en_marker);
+				fprintf(debug_file, "pos_start = %d, pos_stop = %d\n", pos_start, pos_stop);
 
-				if (pos_start == MATCH_NOT_FOUND && pos_stop == MATCH_NOT_FOUND &&
-						(f_opts.file_state == WRITE_RUNNING || f_opts.file_state == WRITE_START)) {
-					// writing in progress, got full buffer of new data
-					f_opts.file_state = WRITE_RUNNING;
-					file_op = write_buffer(&f_opts, save_from, save_to);
+				if (pos_start == MATCH_NOT_FOUND && pos_stop == MATCH_NOT_FOUND) {
+					// normal condition, search in progress
 					buff_processed = 1;
-					D6(fprintf(debug_file, "State 'writing'\n"));
-				} else if (pos_start >= 0 /*&& pos_stop == MATCH_NOT_FOUND */ &&
-						f_opts.file_state == WRITE_STOP) {
-					// not writing, start marker found - start writing
-					f_opts.file_state = WRITE_START;
-					if (file_pos_saved == 0)
-						state->rawdev.file_start = dev_curr_pos + pos_start;
+					D6(fprintf(debug_file, "State 'skip data'\n"));
+				} else if (pos_start >= 0 && pos_stop == MATCH_NOT_FOUND && search_state == SEARCH_SKIP) {
+					// normal condition, new file found
+					search_state = SEARCH_FILE_DATA;
+					state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
+					idir_result = save_index(state, &index_dir);
+					buff_processed = 1;
 					D6(fprintf(debug_file, "New file found. File start position: %llu\n", state->rawdev.file_start));
-					save_from = save_from + pos_start + elphel_st.iov_len;
-					file_op = write_buffer(&f_opts, save_from - include_st_marker, save_to);
+					D6(fprintf(debug_file, "State 'starting file'\n"));
+				} else if (pos_start >= 0 && pos_stop == MATCH_NOT_FOUND && search_state == SEARCH_FILE_DATA) {
+					// error condition (normally should not happen), discard current index and start a new one
 					buff_processed = 1;
-					f_opts.file_state = WRITE_RUNNING;
-					D6(fprintf(debug_file, "State 'starting file', file_op = %d\n", file_op));
+					remove_node(&index_dir, index_dir.tail);
+					if (zero_cross == 0) {
+						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
+						idir_result = save_index(state, &index_dir);
+					} else {
+						process = 0;
+					}
+					D6(fprintf(debug_file, "State 'abnormal start marker, remove current disk index from directory and skip data'\n"));
 				} else if (pos_start == MATCH_NOT_FOUND && pos_stop >= 0 &&
-						(f_opts.file_state == WRITE_RUNNING || f_opts.file_state == WRITE_START)) {
-					// writing in progress, end marker found - stop writing
-					f_opts.file_state = WRITE_STOP;
-					save_to = save_from + pos_stop;
-					file_op = write_buffer(&f_opts, save_from, save_to + include_en_marker);
+						search_state == SEARCH_FILE_DATA) {
+					// normal condition, save current file size to index directory
+					uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
+					search_state = SEARCH_SKIP;
+					idir_result = stop_index(&index_dir, disk_pos);
 					buff_processed = 1;
 					if (zero_cross)
 						process = 0;
 					D6(fprintf(debug_file, "State 'finishing file'\n"));
-				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop &&
-						f_opts.file_state == WRITE_RUNNING) {
-					// writing in progress, start marker following stop marker found - this indicates a new file
-					f_opts.file_state = WRITE_STOP;
-					state->rawdev.file_start = dev_curr_pos + pos_start;
-					file_pos_saved = 1;
-					save_to = save_from + pos_stop;
-					file_op = write_buffer(&f_opts, save_from, save_to + include_en_marker);
-					save_from = save_from + pos_start;
-					save_to = buff + rd;
-					if (zero_cross) {
+				} else if (pos_start == MATCH_NOT_FOUND && pos_stop >= 0 && search_state == SEARCH_SKIP) {
+					// error condition (normally should not happen), drop current read buffer and do nothing
+					buff_processed = 1;
+					D6(fprintf(debug_file, "State 'abnormal stop marker, skip data'\n"));
+				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop && search_state == SEARCH_FILE_DATA) {
+					// normal condition, start marker following stop marker found - this indicates a new file
+					uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
+					fprintf(debug_file, "dev_curr_pos = 0x%llx, save_from = 0x%p, active_buff = 0x%p\n", dev_curr_pos, save_from, active_buff);
+					idir_result = stop_index(&index_dir, disk_pos);
+					dump_index_dir(&index_dir);
+					if (zero_cross == 0) {
+						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
+						idir_result = save_index(state, &index_dir);
+						save_from = save_from + pos_start + add_stm_len;
+						// @todo: replace with pointer to current buffer
+						save_to = buff + rd;
+					} else {
 						buff_processed = 1;
 						process = 0;
 					}
-					D6(fprintf(debug_file, "State 'starting new file'\n"));
-				} else if (pos_start == MATCH_PARTIAL &&
-						f_opts.file_state == WRITE_STOP) {
-					// partial start marker found in the end of read buffer - get next chunk of data and try to find marker there
+					D6(fprintf(debug_file, "State 'stop current file and start new file'\n"));
+				} else if (pos_start == MATCH_PARTIAL && search_state == SEARCH_SKIP) {
+					// partial start marker found in the end of read buffer, get next chunk of data and try to find marker there
 					enum match_result result;
 					struct crb_ptrs field_markers;
 					struct iovec next_chunk = {
@@ -694,29 +855,30 @@ int camogm_read(camogm_state *state)
 					};
 					ssize_t next_rd = read(state->rawdev.rawdev_fd, next_buff, sizeof(next_buff));
 					next_chunk.iov_len = next_rd;
-					dev_curr_pos += next_rd;
 					result = check_edge_case(&curr_chunk, &next_chunk, &elphel_st, &field_markers);
-					if (result == MATCH_FOUND  && f_opts.file_state == WRITE_STOP) {
-						f_opts.file_state = WRITE_START;
-						state->rawdev.file_start = dev_curr_pos + pos_start;
+					if (result == MATCH_FOUND) {
+						search_state = SEARCH_FILE_DATA;
+						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
+						idir_result = save_index(state, &index_dir);
 						D6(fprintf(debug_file, "File start position: %llu\n", state->rawdev.file_start));
-						if (include_markers) {
-							unsigned char *from = field_markers.first_buff.iov_base;
-							unsigned char *to = from + field_markers.first_buff.iov_len;
-							file_op = write_buffer(&f_opts, from, to);
-							from = field_markers.second_buff.iov_base;
-							to = from + field_markers.second_buff.iov_len;
-							file_op = write_buffer(&f_opts, from, to);
-						}
+//						if (include_markers) {
+//							unsigned char *from = field_markers.first_buff.iov_base;
+//							unsigned char *to = from + field_markers.first_buff.iov_len;
+//							file_op = write_buffer(&f_opts, from, to);
+//							from = field_markers.second_buff.iov_base;
+//							to = from + field_markers.second_buff.iov_len;
+//							file_op = write_buffer(&f_opts, from, to);
+//						}
 						save_from = next_chunk.iov_base + field_markers.second_buff.iov_len;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					} else {
 						save_from = next_chunk.iov_base;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					}
+					dev_curr_pos += next_rd;
+					active_buff = next_buff;
 					D6(fprintf(debug_file, "State 'check elphel_st cross boundary'; result = %d\n", result));
-				} else if (pos_stop == MATCH_PARTIAL &&
-						f_opts.file_state != WRITE_STOP) {
+				} else if (pos_stop == MATCH_PARTIAL && search_state == SEARCH_FILE_DATA) {
 					// partial end marker found in the end of read buffer - get next chunk of data and try to find marker there
 					enum match_result result;
 					struct crb_ptrs field_markers;
@@ -729,53 +891,54 @@ int camogm_read(camogm_state *state)
 					};
 					ssize_t next_rd = read(state->rawdev.rawdev_fd, next_buff, sizeof(next_buff));
 					next_chunk.iov_len = next_rd;
-					dev_curr_pos += next_rd;
 					result = check_edge_case(&curr_chunk, &next_chunk, &elphel_en, &field_markers);
 					if (result == MATCH_FOUND) {
-						f_opts.file_state = WRITE_STOP;
-						file_op = write_buffer(&f_opts, save_from, save_to);
-						if (include_markers) {
-							unsigned char *from = field_markers.first_buff.iov_base;
-							unsigned char *to = from + field_markers.first_buff.iov_len;
-							file_op = write_buffer(&f_opts, from, to);
-							from = field_markers.second_buff.iov_base;
-							to = from + field_markers.second_buff.iov_len;
-							file_op = write_buffer(&f_opts, from, to);
-						}
+						search_state = SEARCH_SKIP;
+						uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
+						idir_result = stop_index(&index_dir, disk_pos);
+//						if (include_markers) {
+//							unsigned char *from = field_markers.first_buff.iov_base;
+//							unsigned char *to = from + field_markers.first_buff.iov_len;
+//							file_op = write_buffer(&f_opts, from, to);
+//							from = field_markers.second_buff.iov_base;
+//							to = from + field_markers.second_buff.iov_len;
+//							file_op = write_buffer(&f_opts, from, to);
+//						}
 						save_from = next_chunk.iov_base + field_markers.second_buff.iov_len;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					} else {
-						file_op = write_buffer(&f_opts, save_from, save_to);
+//						file_op = write_buffer(&f_opts, save_from, save_to);
 						save_from = next_chunk.iov_base;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					}
+					dev_curr_pos += next_rd;
+					active_buff = next_buff;
 					D6(fprintf(debug_file, "State 'check elphel_en' cross boundary:; result = %d\n", result));
 				} else {
 					// no markers found and new file has not bee started yet - skip data
-					D6(fprintf(debug_file, "Undefined state: pos_start = %d, pos_stop = %d, file_state = %d\n",
-							pos_start, pos_stop, f_opts.file_state));
+					D6(fprintf(debug_file, "Undefined state: pos_start = %d, pos_stop = %d, search_state = %d\n",
+							pos_start, pos_stop, search_state));
 					buff_processed = 1;
 					if (zero_cross)
 						process = 0;
 				}
-			} while (buff_processed == 0 && file_op == FILE_OK);
-			if (file_op != FILE_OK) {
+			} while (buff_processed == 0 && idir_result == 0);
+			if (idir_result != 0) {
 				process = 0;
 			}
 			dev_curr_pos += rd;
 		}
 	}
 
-	D0(fprintf(debug_file, "\n%d files read from %s\n", f_opts.file_cntr, state->rawdev.rawdev_path));
+	D0(fprintf(debug_file, "\n%d files read from %s\n", index_dir.size, state->rawdev.rawdev_path));
 
 	if (close(state->rawdev.rawdev_fd) != 0) {
 		perror("Unable to close raw device: ");
 		return -CAMOGM_FRAME_FILE_ERR;
 	}
-	if (f_opts.fh != NULL && fclose(f_opts.fh) != 0) {
-		perror("Unable to close data file: ");
-		return -CAMOGM_FRAME_FILE_ERR;
-	}
+
+	dump_index_dir(&index_dir);
+	delete_idir(&index_dir);
 
 	return 0;
 }

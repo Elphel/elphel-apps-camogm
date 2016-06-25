@@ -19,6 +19,23 @@
 
 #include "camogm.h"
 
-int camogm_read(camogm_state *state);
+struct disk_index {
+	struct disk_index *next;
+	struct disk_index *prev;
+	time_t rawtime;
+	useconds_t usec;
+	uint32_t port;
+	size_t f_size;
+	uint64_t f_offset;
+};
+
+struct disk_idir {
+	struct disk_index *head;
+	struct disk_index *tail;
+	size_t size;
+};
+
+//int camogm_read(camogm_state *state);
+int build_index(camogm_state *state);
 
 #endif /* _CAMOGM_READ_H */

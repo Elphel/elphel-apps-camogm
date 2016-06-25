@@ -800,6 +800,9 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 		} else {
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
+			/* debug code follows */
+			state->rawdev.end_pos = 10485760; // 10 Mib
+			/* end of debug code */
 		}
 	}
 }
@@ -1300,7 +1303,8 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 		return 28;
 	} else if (strcmp(cmd, "rawdev_read") == 0) {
 		if (state->rawdev_op)
-			camogm_read(state);
+//			camogm_read(state);
+			build_index(state);
 		return 29;
 	}
 
