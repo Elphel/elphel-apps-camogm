@@ -227,24 +227,20 @@ void dump_index_dir(const struct disk_idir *idir)
 
 int create_node(struct disk_index **index)
 {
-	fprintf(debug_file, "Creating new disk node\n");
 	if (*index != NULL)
 		return -1;
 
 	*index = malloc(sizeof(struct disk_index));
 	if (*index != NULL) {
 		memset(*index, 0, sizeof(struct disk_index));
-		fprintf(debug_file, "New disk node created\n");
 		return 0;
 	} else {
-		fprintf(debug_file, "New disk node NOT created\n");
 		return -1;
 	}
 }
 
 int add_node(struct disk_idir *idir, struct disk_index *index)
 {
-	fprintf(debug_file, "Adding new disk node\n");
 	if (idir->head == NULL && idir->tail == NULL) {
 		idir->head = index;
 		idir->tail = index;
@@ -256,7 +252,6 @@ int add_node(struct disk_idir *idir, struct disk_index *index)
 		idir->size++;
 	}
 
-	fprintf(debug_file, "New disk node added\n");
 	return idir->size;
 }
 
@@ -304,7 +299,6 @@ int remove_node(struct disk_idir *idir, struct disk_index *node)
 
 int delete_idir(struct disk_idir *idir)
 {
-	fprintf(debug_file, "Deleting disk index directory\n");
 	struct disk_index *curr_ind;
 	struct disk_index *next_ind;
 
@@ -452,14 +446,12 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 	char str_buff[32] = {0};
 	uint64_t save_pos = lseek64(state->rawdev.rawdev_fd, 0, SEEK_CUR);
 
-	fprintf(debug_file, "Adding new disk index to index directory\n");
 	if (idir == NULL)
 		return -1;
 
 	if (create_node(&node) != 0)
 		return -1;
 
-	fprintf(debug_file, "%s: file start position 0x%llx\n", __func__, state->rawdev.file_start);
 	curr_pos = state->rawdev.file_start;
 	lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
 	if (read(state->rawdev.rawdev_fd, read_buff, sizeof(read_buff)) <= 0) {
@@ -474,7 +466,6 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 		lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
 		// process IFD0 and SubIFD fields
 		do {
-			fprintf(debug_file, "%s: processing IFD\n", __func__);
 			read(state->rawdev.rawdev_fd, &num_entries, sizeof(num_entries));
 			num_entries = __be16_to_cpu(num_entries);
 			for (int i = 0; i < num_entries; i++) {
@@ -504,25 +495,20 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 		} while (process > 0);
 
 		// fill disk index node with Exif data and add it to disk index directory
-		fprintf(debug_file, "%s: filling node data\n", __func__);
 		node->f_offset = state->rawdev.file_start;
 		if (ifd_page_num.len != 0) {
-			fprintf(debug_file, "%s: filling node data, page_num\n", __func__);
 			node->port = (uint32_t)ifd_page_num.offset;
 		}
 		if (ifd_date_time.len != 0) {
-			fprintf(debug_file, "%s: filling node data, date_time\n", __func__);
 			struct tm tm;
 			exif_get_text(state, &ifd_date_time, str_buff);
 			strptime(str_buff, EXIF_DATE_TIME_FORMAT, &tm);
 			node->rawtime = mktime(&tm);
 		}
 		if (ifd_subsec.len != 0) {
-			fprintf(debug_file, "%s: filling node data, subsec\n", __func__);
 			exif_get_text(state, &ifd_subsec, str_buff);
 			node->usec = strtoul(str_buff, NULL, 10);
 		}
-		fprintf(debug_file, "%s: node data filled\n", __func__);
 		if (node->rawtime != -1)
 			add_node(idir, node);
 		else
@@ -535,7 +521,6 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 
 int stop_index(struct disk_idir *idir, uint64_t pos_stop)
 {
-	fprintf(debug_file, "Stop index at position 0x%llx\n", pos_stop);
 	int ret = 0;
 	if (idir->tail != NULL) {
 		idir->tail->f_size = pos_stop - idir->tail->f_offset;
@@ -786,7 +771,6 @@ int build_index(camogm_state *state)
 				// process data in read buffer
 				pos_start = find_marker(save_from, save_to - save_from, elphel_st.iov_base, elphel_st.iov_len, include_st_marker);
 				pos_stop = find_marker(save_from, save_to - save_from, elphel_en.iov_base, elphel_en.iov_len, include_en_marker);
-				fprintf(debug_file, "pos_start = %d, pos_stop = %d\n", pos_start, pos_stop);
 
 				if (pos_start == MATCH_NOT_FOUND && pos_stop == MATCH_NOT_FOUND) {
 					// normal condition, search in progress
@@ -828,7 +812,6 @@ int build_index(camogm_state *state)
 				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop && search_state == SEARCH_FILE_DATA) {
 					// normal condition, start marker following stop marker found - this indicates a new file
 					uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
-					fprintf(debug_file, "dev_curr_pos = 0x%llx, save_from = 0x%p, active_buff = 0x%p\n", dev_curr_pos, save_from, active_buff);
 					idir_result = stop_index(&index_dir, disk_pos);
 					dump_index_dir(&index_dir);
 					if (zero_cross == 0) {
@@ -861,14 +844,6 @@ int build_index(camogm_state *state)
 						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
 						idir_result = save_index(state, &index_dir);
 						D6(fprintf(debug_file, "File start position: %llu\n", state->rawdev.file_start));
-//						if (include_markers) {
-//							unsigned char *from = field_markers.first_buff.iov_base;
-//							unsigned char *to = from + field_markers.first_buff.iov_len;
-//							file_op = write_buffer(&f_opts, from, to);
-//							from = field_markers.second_buff.iov_base;
-//							to = from + field_markers.second_buff.iov_len;
-//							file_op = write_buffer(&f_opts, from, to);
-//						}
 						save_from = next_chunk.iov_base + field_markers.second_buff.iov_len;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					} else {
@@ -896,18 +871,9 @@ int build_index(camogm_state *state)
 						search_state = SEARCH_SKIP;
 						uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
 						idir_result = stop_index(&index_dir, disk_pos);
-//						if (include_markers) {
-//							unsigned char *from = field_markers.first_buff.iov_base;
-//							unsigned char *to = from + field_markers.first_buff.iov_len;
-//							file_op = write_buffer(&f_opts, from, to);
-//							from = field_markers.second_buff.iov_base;
-//							to = from + field_markers.second_buff.iov_len;
-//							file_op = write_buffer(&f_opts, from, to);
-//						}
 						save_from = next_chunk.iov_base + field_markers.second_buff.iov_len;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					} else {
-//						file_op = write_buffer(&f_opts, save_from, save_to);
 						save_from = next_chunk.iov_base;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					}
