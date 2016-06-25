@@ -213,6 +213,8 @@ void camogm_init(camogm_state *state, char *pipe_name)
 	state->exif = DEFAULT_EXIF;
 	state->frame_lengths = NULL;
 
+	state->prog_state = STATE_STOPPED;
+
 	// kml stuff
 	camogm_kml_set_horHalfFov(state, 20.0);
 	camogm_kml_set_vertHalfFov(state, 15.0);
@@ -306,9 +308,8 @@ int camogm_start(camogm_state *state)
 	}
 	state->max_frames =       state->set_max_frames;
 	state->frames_per_chunk = state->set_frames_per_chunk;
-	state->starting = 1; //!may be already set
+	state->prog_state = STATE_STARTING;
 	FOR_EACH_PORT(int, chn) {
-		printf("Checking channel %d\n", chn);
 		//! Check/set circbuf read pointer
 		D3(fprintf(debug_file, "1: state->cirbuf_rp=0x%x\n", state->cirbuf_rp[chn]));
 		if ((state->cirbuf_rp[chn] < 0) || (lseek(state->fd_circ[chn], state->cirbuf_rp[chn], SEEK_SET) < 0) || (lseek(state->fd_circ[chn], LSEEK_CIRC_VALID, SEEK_END) < 0 )) {
@@ -448,8 +449,7 @@ int camogm_start(camogm_state *state)
 	}
 	if (state->kml_enable) rslt = camogm_start_kml(state);  // will turn on state->kml_used if it can
 	if (rslt) return rslt;
-	state->running = 1;
-	state->starting = 0;
+	state->prog_state = STATE_RUNNING;
 	D1(fprintf(debug_file, "Started OK\n"));
 	return 0;
 }
@@ -648,11 +648,11 @@ int camogm_stop(camogm_state *state)
 {
 	int rslt = 0;
 
-	if (!state->running) {
-		if (!state->starting) {
+	if (state->prog_state != STATE_RUNNING) {
+		if (state->prog_state != STATE_STARTING) {
 			D2(fprintf(debug_file, "Recording was not running, nothing to stop\n"));
 		} else {
-			state->starting = 0;
+			state->prog_state = STATE_STOPPED;
 			D1(fprintf(debug_file, "Dropping attempt to start\n"));
 		}
 		return 0;
@@ -671,9 +671,7 @@ int camogm_stop(camogm_state *state)
 	state->vf = NULL;
 	if (rslt) return rslt;
 	state->last = 1;
-//!state->running=0 should be output after file is finished and closed
-	state->running = 0;
-	state->starting = 0;
+	state->prog_state = STATE_STOPPED;
 	return 0;
 }
 
@@ -811,7 +809,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 void  camogm_set_timescale(camogm_state *state, double d)   //! set timescale, default=1,000,000
 {
 	state->set_timescale =  d;
-	if ((state->running == 0) && (state->starting == 0)) {
+	if (state->prog_state == STATE_STOPPED) {
 		state->timescale = state->set_timescale;
 	}
 }
@@ -820,7 +818,7 @@ void  camogm_set_timescale(camogm_state *state, double d)   //! set timescale, d
 void  camogm_set_frames_skip(camogm_state *state, int d)   //! set frames to skip (for time lapse)
 {
 	state->set_frames_skip =  d;
-	if ((state->running == 0) && (state->starting == 0)) {
+	if (state->prog_state == STATE_STOPPED) {
 		state->frames_skip =      state->set_frames_skip;
 		state->frames_skip_left[state->port_num] = 0;
 	}
@@ -833,7 +831,7 @@ void  camogm_set_format(camogm_state *state, int d)
 	int rslt = 0;
 
 	state->set_format =  d;
-	if ((state->running == 0) && (state->starting == 0)) {
+	if (state->prog_state == STATE_STOPPED) {
 		state->format =  state->set_format;
 		switch (state->format) {
 		case CAMOGM_FORMAT_NONE: rslt = 0; break;
@@ -852,14 +850,16 @@ void  camogm_set_format(camogm_state *state, int d)
 void  camogm_set_max_frames(camogm_state *state, int d)
 {
 	state->set_max_frames =  d;
-	if ((state->running == 0) && (state->starting == 0)) state->max_frames =  d;
+	if (state->prog_state == STATE_STOPPED)
+		state->max_frames = d;
 }
 
 /** @brief Set the number of frames @e d recorded per chunk */
 void  camogm_set_frames_per_chunk(camogm_state *state, int d)
 {
 	state->set_frames_per_chunk =  d;
-	if ((state->running == 0) && (state->starting == 0)) state->frames_per_chunk =  d;
+	if (state->prog_state == STATE_STOPPED)
+		state->frames_per_chunk = d;
 }
 
 /** @brief Set the time stamp @e d when recording should be started */
@@ -936,7 +936,20 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	}
 	if (state->vf) _len = ftell(state->vf);                                 //! for ogm
 	else if ((state->ivf) >= 0) _len = lseek(state->ivf, 0, SEEK_CUR);      //!for mov
-	_state =         state->running ? "running" : (state->starting ? "starting" : "stopped");
+	switch (state->prog_state) {
+	case STATE_STOPPED:
+		_state = "stopped";
+		break;
+	case STATE_RUNNING:
+		_state = "running";
+		break;
+	case STATE_STARTING:
+		_state = "starting";
+		break;
+	case STATE_READING:
+		_state = "reading";
+		break;
+	}
 	_output_format = state->format ? ((state->format == CAMOGM_FORMAT_OGM) ? "ogm" :
 					  ((state->format == CAMOGM_FORMAT_JPEG) ? "jpeg" :
 					   ((state->format == CAMOGM_FORMAT_MOV) ? "mov" :
@@ -1092,7 +1105,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 }
 
 /**
- * @brief Read from a single command from pipe
+ * @brief Read a single command from pipe
  * @param[in]   npipe   pointer to command pipe
  * @return Pointer to null terminated string if a command is available or NULL otherwise
  */
@@ -1384,7 +1397,7 @@ int listener_loop(camogm_state *state)
 		cmd = parse_cmd(state, cmd_file);
 		if (cmd) {
 			if (cmd < 0) D0(fprintf(debug_file, "Unrecognized command\n"));
-		} else if (state->running) { // no commands in queue, started
+		} else if (state->prog_state == STATE_RUNNING) { // no commands in queue, started
 			switch ((rslt = -sendImageFrame(state))) {
 			case 0:
 				break;                      // frame sent OK, nothing to do (TODO: check file length/duration)
@@ -1425,7 +1438,7 @@ int listener_loop(camogm_state *state)
 			} // switch sendImageFrame()
 
 			if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED)) state->last_error_code = rslt;
-		} else if (state->starting) { // no commands in queue,starting (but not started yet)
+		} else if (state->prog_state == STATE_STARTING) { // no commands in queue,starting (but not started yet)
 
 			// retry starting
 			switch ((rslt = -camogm_start(state))) {

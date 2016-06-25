@@ -60,6 +60,16 @@
 #define ELPHEL_PATH_MAX           300
 
 /**
+ * @enum state_flags
+ * @brief Program state flags
+ */
+enum state_flags {
+	STATE_STOPPED,
+	STATE_STARTING,
+	STATE_RUNNING,
+	STATE_READING
+};
+/**
  * @struct rawdev_buffer
  * @brief Holds pointers related to raw device buffer operation
  * @var rawdev_buffer::rawdev_fd
@@ -114,8 +124,7 @@ typedef struct {
 	int frame_period[SENSOR_PORTS];                         ///< in microseconds (1/10 of what is needed for the Ogm header)
 	int width;                                              ///< image width
 	int height;                                             ///< image height
-	int starting;                                           ///< the program is starting
-	int running;                                            ///< the program is running
+	int prog_state;                                         ///< program state flag, can be one of #state_flags
 	int last_error_code;
 	ogg_stream_state os;
 	ogg_page og;
