@@ -1315,9 +1315,11 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 		}
 		return 28;
 	} else if (strcmp(cmd, "rawdev_read") == 0) {
-		if (state->rawdev_op)
-//			camogm_read(state);
-			build_index(state);
+		if (state->rawdev_op && state->prog_state == STATE_STOPPED) {
+			state->prog_state = STATE_READING;
+		} else {
+			D0(fprintf(debug_file, "Unable to switch state to 'reading' from current state. Check settings.\n"));
+		}
 		return 29;
 	}
 
@@ -1468,6 +1470,9 @@ int listener_loop(camogm_state *state)
 			} // switch camogm_start()
 			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) ) state->last_error_code = rslt;
 
+		} else if (state->prog_state == STATE_READING) {
+			build_index(state);
+			state->prog_state = STATE_STOPPED;
 		} else {                            // not running, not starting
 			usleep(COMMAND_LOOP_DELAY);     // make it longer but interruptible by signals?
 		}
