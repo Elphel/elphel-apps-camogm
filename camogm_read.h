@@ -35,7 +35,6 @@ struct disk_idir {
 	size_t size;
 };
 
-//int camogm_read(camogm_state *state);
-int build_index(camogm_state *state);
+void *build_index(void *arg);
 
 #endif /* _CAMOGM_READ_H */

@@ -19,6 +19,8 @@
 #ifndef _CAMOGM_H
 #define _CAMOGM_H
 
+#include <pthread.h>
+#include <stdbool.h>
 #include <exifa.h>
 #include <c313a.h>
 #include <ogg/ogg.h>
@@ -41,13 +43,13 @@
 #define CAMOGM_FORMAT_MOV         3        ///< output as Apple Quicktime
 
 #define D(x) { if (debug_file && debug_level) { x; fflush(debug_file); } }
-#define D0(x) { if (debug_file) { x; fflush(debug_file); } }
-#define D1(x) { if (debug_file && (debug_level > 0)) { x; fflush(debug_file); } }
-#define D2(x) { if (debug_file && (debug_level > 1)) { x; fflush(debug_file); } }
-#define D3(x) { if (debug_file && (debug_level > 2)) { x; fflush(debug_file); } }
-#define D4(x) { if (debug_file && (debug_level > 3)) { x; fflush(debug_file); } }
-#define D5(x) { if (debug_file && (debug_level > 4)) { x; fflush(debug_file); } }
-#define D6(x) { if (debug_file && (debug_level > 5)) { x; fflush(debug_file); } }
+#define D0(x) { if (debug_file) { pthread_mutex_lock(&print_mutex); x; fflush(debug_file); pthread_mutex_unlock(&print_mutex); } }
+#define D1(x) { if (debug_file && (debug_level > 0)) { pthread_mutex_lock(&print_mutex); x; fflush(debug_file); pthread_mutex_unlock(&print_mutex); } }
+#define D2(x) { if (debug_file && (debug_level > 1)) { pthread_mutex_lock(&print_mutex); x; fflush(debug_file); pthread_mutex_unlock(&print_mutex); } }
+#define D3(x) { if (debug_file && (debug_level > 2)) { pthread_mutex_lock(&print_mutex); x; fflush(debug_file); pthread_mutex_unlock(&print_mutex); } }
+#define D4(x) { if (debug_file && (debug_level > 3)) { pthread_mutex_lock(&print_mutex); x; fflush(debug_file); pthread_mutex_unlock(&print_mutex); } }
+#define D5(x) { if (debug_file && (debug_level > 4)) { pthread_mutex_lock(&print_mutex); x; fflush(debug_file); pthread_mutex_unlock(&print_mutex); } }
+#define D6(x) { if (debug_file && (debug_level > 5)) { pthread_mutex_lock(&print_mutex); x; fflush(debug_file); pthread_mutex_unlock(&print_mutex); } }
 
 //#define DD(x)
 #define DD(x)  { if (debug_file) { fprintf(debug_file, "%s:%d:", __FILE__, __LINE__); x; fflush(debug_file); } }
@@ -67,8 +69,10 @@ enum state_flags {
 	STATE_STOPPED,
 	STATE_STARTING,
 	STATE_RUNNING,
-	STATE_READING
+	STATE_READING,
+	STATE_CANCEL
 };
+
 /**
  * @struct rawdev_buffer
  * @brief Holds pointers related to raw device buffer operation
@@ -94,8 +98,12 @@ typedef struct {
 	uint32_t overrun;
 	uint64_t start_pos;
 	uint64_t end_pos;
-	uint64_t curr_pos;
+	uint64_t curr_pos_w;
+	volatile uint64_t curr_pos_r;
 	uint64_t file_start;
+	pthread_t tid;
+	int thread_state;
+	volatile bool thread_finished;
 } rawdev_buffer;
 
 /**
@@ -190,6 +198,7 @@ typedef struct {
 
 extern int debug_level;
 extern FILE* debug_file;
+extern pthread_mutex_t print_mutex;
 
 void put_uint16(void *buf, u_int16_t val);
 void put_uint32(void *buf, u_int32_t val);

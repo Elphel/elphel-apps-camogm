@@ -87,6 +87,8 @@ camogm_state sstate;
 /** @brief Memory mapped circular buffer arrays */
 unsigned long * ccam_dma_buf[SENSOR_PORTS];
 
+pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 /**
  * @enum path_type
  * @brief Define the path type passed to a function
@@ -226,7 +228,8 @@ void camogm_init(camogm_state *state, char *pipe_name)
 	state->pipe_name = pipe_name;
 	state->rawdev.start_pos = RAWDEV_START_OFFSET;
 	state->rawdev.end_pos = state->rawdev.start_pos;
-	state->rawdev.curr_pos = state->rawdev.start_pos;
+	state->rawdev.curr_pos_w = state->rawdev.start_pos;
+	state->rawdev.curr_pos_r = state->rawdev.start_pos;
 	state->active_chn = ALL_CHN_ACTIVE;
 }
 
@@ -799,7 +802,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
 			/* debug code follows */
-			state->rawdev.end_pos = 10485760; // 10 Mib
+//			state->rawdev.end_pos = 10485760; // 10 Mib
 			/* end of debug code */
 		}
 	}
@@ -874,6 +877,7 @@ void  camogm_set_start_after_timestamp(camogm_state *state, double d)
  * @param[in]   fn      a pointer to a file name which will be used for output. Can be NULL or 'stdout' for
  * output to stdout, 'stderr' for output to stderr and a file name for output to a file
  * @param[in]   xml     flag indicating that the output should be in xml format
+ * @note access to state->rawdev.curr_pos_r is not locked in reading thread
  * @return      None
  */
 void  camogm_status(camogm_state *state, char * fn, int xml)
@@ -888,6 +892,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	int _frames_skip = 0;
 	int _sec_skip = 0;
 	char *_kml_enable, *_kml_used, *_kml_height_mode;
+	unsigned int _percent_done;
 
 	_kml_enable =      state->kml_enable ? "yes" : "no";
 	_kml_used =        state->kml_used ? "yes" : "no";
@@ -956,6 +961,10 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 					       "other"))) : "none";
 	_using_exif =    state->exif ? "yes" : "no";
 	_using_global_pointer = state->save_gp ? "yes" : "no";
+	if (state->rawdev.curr_pos_r != 0 && state->rawdev.curr_pos_r > state->rawdev.start_pos)
+		_percent_done = 100 * state->rawdev.curr_pos_r / (state->rawdev.end_pos - state->rawdev.start_pos);
+	else
+		_percent_done = 0;
 
 	if (xml) {
 		fprintf(f, "<?xml version=\"1.0\"?>\n" \
@@ -995,7 +1004,9 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <greedy>\"%s\"</greedy>\n" \
 			"  <ignore_fps>\"%s\"</ignore_fps>\n" \
 			"  <raw_device_path>\"%s\"</raw_device_path>\n" \
-			"  <raw_device_overruns>%d</raw_device_overruns>\n",
+			"  <raw_device_overruns>%d</raw_device_overruns>\n" \
+			"  <raw_device_pos_write>0x%llx</raw_dev_pos_write>\n" \
+			"  <raw_device_pos_read>0x%llx (%d\% done)</raw_device_pos_read>\n",
 			_state,  state->path, state->frameno, state->start_after_timestamp, _dur, _udur, _len, \
 			_frames_skip, _sec_skip, \
 			state->width, state->height, _output_format, _using_exif, \
@@ -1005,7 +1016,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			_kml_enable, _kml_used, state->kml_path, state->kml_horHalfFov, state->kml_vertHalfFov, state->kml_near, \
 			_kml_height_mode, state->kml_height, state->kml_period, state->kml_last_ts, state->kml_last_uts, \
 			state->greedy ? "yes" : "no", state->ignore_fps ? "yes" : "no", state->rawdev.rawdev_path,
-			state->rawdev.overrun);
+			state->rawdev.overrun, state->rawdev.curr_pos_w, state->rawdev.curr_pos_r, _percent_done);
 
 		FOR_EACH_PORT(int, chn) {
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";
@@ -1054,6 +1065,9 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "path prefix        \t%s\n",        state->path_prefix);
 		fprintf(f, "raw device path    \t%s\n",        state->rawdev.rawdev_path);
 		fprintf(f, "raw device overruns\t%d\n",        state->rawdev.overrun);
+		fprintf(f, "raw write position \t0x%llx\n",    state->rawdev.curr_pos_w);
+		fprintf(f, "raw read position  \t0x%llx\n",    state->rawdev.curr_pos_r);
+		fprintf(f, "   percent done    \t%d\%\n",      _percent_done);
 		fprintf(f, "max file duration  \t%d sec\n",    state->segment_duration);
 		fprintf(f, "max file length    \t%d B\n",      state->segment_length);
 		fprintf(f, "max frames         \t%d\n",        state->max_frames);
@@ -1321,6 +1335,13 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 			D0(fprintf(debug_file, "Unable to switch state to 'reading' from current state. Check settings.\n"));
 		}
 		return 29;
+	} else if (strcmp(cmd, "rawdev_stop") == 0) {
+		if (state->prog_state == STATE_READING) {
+			state->rawdev.thread_state = STATE_CANCEL;
+		} else {
+			D0(fprintf(debug_file, "Reading thread is not running, nothing to stop\n"));
+		}
+		return 30;
 	}
 
 	return -1;
@@ -1356,6 +1377,7 @@ void clean_up(camogm_state *state)
  */
 int listener_loop(camogm_state *state)
 {
+	void *tret;
 	FILE *cmd_file;
 	int rslt, ret, cmd, f_ok;
 	int fp0, fp1;
@@ -1469,10 +1491,34 @@ int listener_loop(camogm_state *state)
 				exit(-1);
 			} // switch camogm_start()
 			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) ) state->last_error_code = rslt;
-
 		} else if (state->prog_state == STATE_READING) {
-			build_index(state);
-			state->prog_state = STATE_STOPPED;
+			if (state->rawdev.thread_state == STATE_RUNNING) {
+				if (state->rawdev.thread_finished == true) {
+					state->rawdev.thread_state = STATE_STOPPED;
+					state->rawdev.thread_finished = false;
+					state->prog_state = STATE_STOPPED;
+					pthread_join(state->rawdev.tid, &tret);
+					if ((int)tret != 0 && (int)tret != PTHREAD_CANCELED) {
+						D0(fprintf(debug_file, "Reading thread returned error %d\n", (int)tret));
+					} else {
+						D3(fprintf(debug_file, "Reading thread stopped\n"));
+					}
+				} else {
+					usleep(COMMAND_LOOP_DELAY);
+				}
+			} else if (state->rawdev.thread_state == STATE_STOPPED) {
+				state->rawdev.thread_state = STATE_RUNNING;
+				state->rawdev.thread_finished = false;
+				if (pthread_create(&state->rawdev.tid, NULL, build_index, state) != 0) {
+					state->prog_state = STATE_STOPPED;
+					state->rawdev.thread_state = STATE_STOPPED;
+					D0(fprintf(debug_file, "%s:line %d: Can not start new thread, disk index is not built\n", __FILE__, __LINE__));
+				}
+			} else if (state->rawdev.thread_state == STATE_CANCEL) {
+				// cancel reading thread and return to running state waiting for the thread to terminate
+				state->rawdev.thread_state = STATE_RUNNING;
+				pthread_cancel(state->rawdev.tid);
+			}
 		} else {                            // not running, not starting
 			usleep(COMMAND_LOOP_DELAY);     // make it longer but interruptible by signals?
 		}

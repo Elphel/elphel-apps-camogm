@@ -76,8 +76,8 @@ int camogm_start_jpeg(camogm_state *state)
 				return -CAMOGM_FRAME_FILE_ERR;
 			}
 			D3(fprintf(debug_file, "Open raw device %s; start_pos = %llu, end_pos = %llu, curr_pos = %llu\n", state->rawdev.rawdev_path,
-					state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos));
-			lseek64(state->rawdev.rawdev_fd, state->rawdev.curr_pos, SEEK_SET);
+					state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w));
+			lseek64(state->rawdev.rawdev_fd, state->rawdev.curr_pos_w, SEEK_SET);
 		}
 	}
 
@@ -123,11 +123,11 @@ int camogm_frame_jpeg(camogm_state *state)
 		close(state->ivf);
 	} else {
 		D0(fprintf(debug_file, "\n%s: current pointers start_pos = %llu, end_pos = %llu, curr_pos = %llu, data in buffer %d\n", __func__,
-				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos, l));
+				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w, l));
 		split_index = -1;
 		for (int i = 0, total_len = 0; i < state->chunk_index - 1; i++) {
 			total_len += state->packetchunks[i + 1].bytes;
-			if (total_len + state->rawdev.curr_pos > state->rawdev.end_pos) {
+			if (total_len + state->rawdev.curr_pos_w > state->rawdev.end_pos) {
 				split_index = i;
 				chunks_used++;
 				D0(fprintf(debug_file, "\n>>> raw storage roll over detected\n"));
@@ -141,7 +141,7 @@ int camogm_frame_jpeg(camogm_state *state)
 			if (i == split_index) {
 				// one of the chunks rolls over the end of the raw storage, split it into two segments and
 				// use additional chunk in chunks_iovec for this additional segment
-				split_cntr = state->rawdev.end_pos - (l + state->rawdev.curr_pos);
+				split_cntr = state->rawdev.end_pos - (l + state->rawdev.curr_pos_w);
 				split_ptr = state->packetchunks[k].chunk + split_cntr;
 
 				D3(fprintf(debug_file, "Splitting chunk #%d: total chunk size = %ld, start address = 0x%p\n",
@@ -191,10 +191,10 @@ int camogm_frame_jpeg(camogm_state *state)
 			D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
-		state->rawdev.curr_pos += l;
-		if (state->rawdev.curr_pos > state->rawdev.end_pos)
-			state->rawdev.curr_pos = state->rawdev.curr_pos - state->rawdev.end_pos + state->rawdev.start_pos;
-		D0(fprintf(debug_file, "%d bytes written, curr_pos = %llu\n", l, state->rawdev.curr_pos));
+		state->rawdev.curr_pos_w += l;
+		if (state->rawdev.curr_pos_w > state->rawdev.end_pos)
+			state->rawdev.curr_pos_w = state->rawdev.curr_pos_w - state->rawdev.end_pos + state->rawdev.start_pos;
+		D0(fprintf(debug_file, "%d bytes written, curr_pos = %llu\n", l, state->rawdev.curr_pos_w));
 	}
 
 	return 0;

@@ -27,7 +27,7 @@ CFLAGS   += -Wall -I$(ELPHEL_KERNEL_DIR)/include/elphel
 all: $(PROGS)
 
 $(PROGS): $(OBJS)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -logg  -o $@
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -logg -pthread -o $@
 install: $(PROGS)
 	$(INSTALL) -d $(INSTDIR)
 	$(INSTALL) -m $(INSTMODE) -o $(INSTOWNER) -g $(INSTGROUP) $(PROGS) $(INSTDIR)

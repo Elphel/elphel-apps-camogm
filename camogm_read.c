@@ -214,6 +214,11 @@ struct crb_ptrs {
 	struct iovec        second_buff;
 };
 
+struct exit_state {
+	camogm_state *state;
+	int ret_val;
+};
+
 void dump_index_dir(const struct disk_idir *idir)
 {
 	struct disk_index *ind = idir->head;
@@ -680,6 +685,18 @@ static int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned ch
 	return ret;
 }
 
+static inline void *exit_thread(void *arg)
+{
+	struct exit_state *s = (struct exit_state *)arg;
+
+	if (s->state->rawdev.rawdev_fd > 0) {
+		close(s->state->rawdev.rawdev_fd);
+		s->state->rawdev.rawdev_fd = -1;
+	}
+	s->state->rawdev.thread_finished = true;
+	return (void *) s->ret_val;
+}
+
 /**
  * @brief Extract JPEG files from raw device buffer
  *
@@ -687,9 +704,11 @@ static int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned ch
  * analyzed for JPEG markers and then the data from buffer is written to a file.
  * @param[in]   state   a pointer to a structure containing current state
  * @return      0 if files were extracted successfully and negative error code otherwise
+ * @warning The main processing loop of the function is enclosed in @e pthread_cleanup_push and @e pthread_cleanup_pop
+ * calls. The effect of use of normal @b return or @b break to prematurely leave this loop is undefined.
  * @todo update description, reorder decision tree
  */
-int build_index(camogm_state *state)
+void *build_index(void *arg)
 {
 	const int include_markers = INCLUDE_MARKERS;
 	int process;
@@ -705,21 +724,22 @@ int build_index(camogm_state *state)
 	unsigned char *active_buff = buff;
 	unsigned char *save_from = NULL;
 	unsigned char *save_to = NULL;
-//	struct file_opts f_opts;
 	uint64_t dev_curr_pos = 0;
 	uint64_t include_st_marker, include_en_marker;
 	struct disk_idir index_dir = {0};
 	size_t add_stm_len, add_enm_len;
+	camogm_state *state = arg;
+	struct exit_state exit_state = {
+			.state = state,
+			.ret_val = 0
+	};
 
-//	memset(&f_opts, 0, sizeof(struct file_opts));
-//	f_opts.file_state = WRITE_STOP;
-//	f_opts.state = state;
-//
 	state->rawdev.rawdev_fd = open(state->rawdev.rawdev_path, O_RDONLY);
 	if (state->rawdev.rawdev_fd < 0) {
 		D0(perror(__func__));
 		D0(fprintf(debug_file, "Error opening raw device %s\n", state->rawdev.rawdev_path));
-		return -CAMOGM_FRAME_FILE_ERR;
+		exit_state.ret_val = -CAMOGM_FRAME_FILE_ERR;
+		exit_thread(&exit_state);
 	}
 
 	if (include_markers) {
@@ -738,6 +758,7 @@ int build_index(camogm_state *state)
 	zero_cross = 0;
 	search_state = SEARCH_SKIP;
 	idir_result = 0;
+	pthread_cleanup_push(exit_thread, &exit_state);
 	while (process) {
 		rd = read(state->rawdev.rawdev_fd, buff, sizeof(buff));
 		err = errno;
@@ -813,7 +834,6 @@ int build_index(camogm_state *state)
 					// normal condition, start marker following stop marker found - this indicates a new file
 					uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
 					idir_result = stop_index(&index_dir, disk_pos);
-					dump_index_dir(&index_dir);
 					if (zero_cross == 0) {
 						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
 						idir_result = save_index(state, &index_dir);
@@ -893,18 +913,23 @@ int build_index(camogm_state *state)
 				process = 0;
 			}
 			dev_curr_pos += rd;
+			state->rawdev.curr_pos_r = dev_curr_pos;
 		}
 	}
+	pthread_cleanup_pop(0);
 
 	D0(fprintf(debug_file, "\n%d files read from %s\n", index_dir.size, state->rawdev.rawdev_path));
 
 	if (close(state->rawdev.rawdev_fd) != 0) {
 		perror("Unable to close raw device: ");
-		return -CAMOGM_FRAME_FILE_ERR;
+		exit_state.ret_val = -CAMOGM_FRAME_FILE_ERR;
+		exit_thread(&exit_state);
 	}
+	state->rawdev.rawdev_fd = -1;
 
 	dump_index_dir(&index_dir);
 	delete_idir(&index_dir);
 
-	return 0;
+	exit_state.ret_val = 0;
+	exit_thread(&exit_state);
 }
