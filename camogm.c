@@ -231,6 +231,7 @@ void camogm_init(camogm_state *state, char *pipe_name)
 	state->rawdev.curr_pos_w = state->rawdev.start_pos;
 	state->rawdev.curr_pos_r = state->rawdev.start_pos;
 	state->active_chn = ALL_CHN_ACTIVE;
+	state->rawdev.mmap_size = MMAP_CHUNK_SIZE;
 }
 
 /**
@@ -802,7 +803,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
 			/* debug code follows */
-//			state->rawdev.end_pos = 10485760; // 10 Mib
+			state->rawdev.end_pos = 10485760; // 10 Mib
 			/* end of debug code */
 		}
 	}
@@ -954,6 +955,8 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	case STATE_READING:
 		_state = "reading";
 		break;
+	default:
+		_state = "stopped";
 	}
 	_output_format = state->format ? ((state->format == CAMOGM_FORMAT_OGM) ? "ogm" :
 					  ((state->format == CAMOGM_FORMAT_JPEG) ? "jpeg" :
@@ -1006,7 +1009,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <raw_device_path>\"%s\"</raw_device_path>\n" \
 			"  <raw_device_overruns>%d</raw_device_overruns>\n" \
 			"  <raw_device_pos_write>0x%llx</raw_dev_pos_write>\n" \
-			"  <raw_device_pos_read>0x%llx (%d\% done)</raw_device_pos_read>\n",
+			"  <raw_device_pos_read>0x%llx (%d%% done)</raw_device_pos_read>\n",
 			_state,  state->path, state->frameno, state->start_after_timestamp, _dur, _udur, _len, \
 			_frames_skip, _sec_skip, \
 			state->width, state->height, _output_format, _using_exif, \
@@ -1067,7 +1070,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "raw device overruns\t%d\n",        state->rawdev.overrun);
 		fprintf(f, "raw write position \t0x%llx\n",    state->rawdev.curr_pos_w);
 		fprintf(f, "raw read position  \t0x%llx\n",    state->rawdev.curr_pos_r);
-		fprintf(f, "   percent done    \t%d\%\n",      _percent_done);
+		fprintf(f, "   percent done    \t%d%%\n",      _percent_done);
 		fprintf(f, "max file duration  \t%d sec\n",    state->segment_duration);
 		fprintf(f, "max file length    \t%d B\n",      state->segment_length);
 		fprintf(f, "max frames         \t%d\n",        state->max_frames);
@@ -1498,7 +1501,7 @@ int listener_loop(camogm_state *state)
 					state->rawdev.thread_finished = false;
 					state->prog_state = STATE_STOPPED;
 					pthread_join(state->rawdev.tid, &tret);
-					if ((int)tret != 0 && (int)tret != PTHREAD_CANCELED) {
+					if ((int)tret != 0 && (int)tret != (int)PTHREAD_CANCELED) {
 						D0(fprintf(debug_file, "Reading thread returned error %d\n", (int)tret));
 					} else {
 						D3(fprintf(debug_file, "Reading thread stopped\n"));
@@ -1509,7 +1512,8 @@ int listener_loop(camogm_state *state)
 			} else if (state->rawdev.thread_state == STATE_STOPPED) {
 				state->rawdev.thread_state = STATE_RUNNING;
 				state->rawdev.thread_finished = false;
-				if (pthread_create(&state->rawdev.tid, NULL, build_index, state) != 0) {
+//				if (pthread_create(&state->rawdev.tid, NULL, build_index, state) != 0) {
+				if (pthread_create(&state->rawdev.tid, NULL, reader, state) != 0) {
 					state->prog_state = STATE_STOPPED;
 					state->rawdev.thread_state = STATE_STOPPED;
 					D0(fprintf(debug_file, "%s:line %d: Can not start new thread, disk index is not built\n", __FILE__, __LINE__));

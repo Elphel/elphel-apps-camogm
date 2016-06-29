@@ -23,7 +23,7 @@ struct disk_index {
 	struct disk_index *next;
 	struct disk_index *prev;
 	time_t rawtime;
-	useconds_t usec;
+	unsigned int usec;
 	uint32_t port;
 	size_t f_size;
 	uint64_t f_offset;
@@ -36,5 +36,6 @@ struct disk_idir {
 };
 
 void *build_index(void *arg);
+void *reader(void *arg);
 
 #endif /* _CAMOGM_READ_H */

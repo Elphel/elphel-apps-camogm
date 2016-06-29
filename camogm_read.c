@@ -33,6 +33,9 @@
 #include <ctype.h>
 #include <asm/byteorder.h>
 #include <sys/statvfs.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include "camogm_read.h"
 
@@ -41,6 +44,9 @@
 /** @brief Separator character between seconds and microseconds in JPEG file name */
 #define SUBSEC_SEPARATOR          '.'
 #define EXIF_DATE_TIME_FORMAT     "%Y:%m:%d %H:%M:%S"
+#define CMD_DELIMITER             "/?"
+#define CMD_BUFF_LEN              1024
+#define COMMAND_LOOP_DELAY        500000
 /** @brief The size of read buffer in bytes. The data will be read from disk in blocks of this size */
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
@@ -59,6 +65,26 @@ static const struct iovec elphel_en = {
 		.iov_base = elphelen,
 		.iov_len = sizeof(elphelen)
 };
+
+#define COMMAND_TABLE \
+	X(CMD_BUILD_INDEX, "build_index") \
+	X(CMD_GET_INDEX, "get_index") \
+	X(CMD_READ_DISK, "read_disk") \
+	X(CMD_READ_FILE, "read_file") \
+	X(CMD_READ_ALL_FILES, "read_all_files") \
+	X(CMD_STATUS, "status")
+
+#define X(a, b) a,
+enum socket_commands {
+	COMMAND_TABLE
+};
+#undef X
+
+#define X(a, b) b,
+static const char *cmd_list[] = {
+	COMMAND_TABLE
+};
+#undef X
 
 /**
  * @enum file_result
@@ -122,6 +148,16 @@ enum search_state {
 	SEARCH_FILE_START,
 	SEARCH_FILE_DATA
 };
+
+//enum sock_commands {
+//	CMD_BUILD_INDEX,
+//	CMD_GET_INDEX,
+//	CMD_READ_DISK,
+//	CMD_READ_FILE,
+//	CMD_READ_ALL_FILES,
+//	CMD_STATUS
+//};
+
 /**
  * @brief Exif data format table.
  *
@@ -218,6 +254,8 @@ struct exit_state {
 	camogm_state *state;
 	int ret_val;
 };
+
+static inline void exit_thread(void *arg);
 
 void dump_index_dir(const struct disk_idir *idir)
 {
@@ -540,39 +578,39 @@ int stop_index(struct disk_idir *idir, uint64_t pos_stop)
  * @param[in]   f_op   pointer to a structure holding information about currently opened file
  * @return      \e FILE_OK if file was successfully opened and negative error code otherwise
  */
-static int start_new_file(struct file_opts *f_op)
-{
-	int ret;
-	int err;
-	struct statvfs vfs;
-	uint64_t free_size = 0;
-	char file_name[ELPHEL_PATH_MAX] = {0};
-
-	memset(&vfs, 0, sizeof(struct statvfs));
-	ret = statvfs(f_op->state->path_prefix, &vfs);
-	if (ret != 0) {
-		D0(fprintf(debug_file, "Unable to get free size on disk, statvfs() returned %d\n", ret));
-		return -CAMOGM_FRAME_FILE_ERR;
-	}
-	free_size = (uint64_t)vfs.f_bsize * (uint64_t)vfs.f_bfree;
-	// statvfs can return irrelevant values in some fields for unsupported file systems,
-	// thus free_size is checked to be equal to non-zero value
-	if (free_size > 0 && free_size < FREE_SIZE_LIMIT) {
-		return -CAMOGM_NO_SPACE;
-	}
-
-//	make_fname(f_op->state, file_name);
-	sprintf(f_op->state->path, "%s%s", f_op->state->path_prefix, file_name);
-
-	if ((f_op->fh = fopen(f_op->state->path, "w")) == NULL) {
-		err = errno;
-		D0(fprintf(debug_file, "Error opening %s for writing\n", file_name));
-		D0(fprintf(debug_file, "%s\n", strerror(err)));
-		return -CAMOGM_FRAME_FILE_ERR;
-	}
-
-	return FILE_OK;
-}
+//static int start_new_file(struct file_opts *f_op)
+//{
+//	int ret;
+//	int err;
+//	struct statvfs vfs;
+//	uint64_t free_size = 0;
+//	char file_name[ELPHEL_PATH_MAX] = {0};
+//
+//	memset(&vfs, 0, sizeof(struct statvfs));
+//	ret = statvfs(f_op->state->path_prefix, &vfs);
+//	if (ret != 0) {
+//		D0(fprintf(debug_file, "Unable to get free size on disk, statvfs() returned %d\n", ret));
+//		return -CAMOGM_FRAME_FILE_ERR;
+//	}
+//	free_size = (uint64_t)vfs.f_bsize * (uint64_t)vfs.f_bfree;
+//	// statvfs can return irrelevant values in some fields for unsupported file systems,
+//	// thus free_size is checked to be equal to non-zero value
+//	if (free_size > 0 && free_size < FREE_SIZE_LIMIT) {
+//		return -CAMOGM_NO_SPACE;
+//	}
+//
+////	make_fname(f_op->state, file_name);
+//	sprintf(f_op->state->path, "%s%s", f_op->state->path_prefix, file_name);
+//
+//	if ((f_op->fh = fopen(f_op->state->path, "w")) == NULL) {
+//		err = errno;
+//		D0(fprintf(debug_file, "Error opening %s for writing\n", file_name));
+//		D0(fprintf(debug_file, "%s\n", strerror(err)));
+//		return -CAMOGM_FRAME_FILE_ERR;
+//	}
+//
+//	return FILE_OK;
+//}
 
 /**
  * @brief Detect cases when file marker crosses read buffer boundary
@@ -636,56 +674,221 @@ static int check_edge_case(const struct iovec *from, const struct iovec *to, con
  * @param[in]   to     end pointer to data buffer
  * @return      a constant of #file_result type
  */
-static int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned char *to)
-{
-	int ret = FILE_OK;
-	int len;
-	unsigned int sz;
+//static int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned char *to)
+//{
+//	int ret = FILE_OK;
+//	int len;
+//	unsigned int sz;
+//
+//	sz = to - from;
+//	switch (f_op->file_state) {
+//	case WRITE_RUNNING:
+//		len = fwrite(from, sz, 1, f_op->fh);
+//		if (len != 1) {
+//			perror(__func__);
+//			ret = FILE_WR_ERR;
+//		}
+//		break;
+//	case WRITE_START:
+//		if ((ret = start_new_file(f_op)) == FILE_OK) {
+//			len = fwrite(from, sz, 1, f_op->fh);
+//			if (len != 1) {
+//				perror(__func__);
+//				ret = FILE_WR_ERR;
+//			}
+//		} else {
+//			if (ret == -CAMOGM_NO_SPACE)
+//				D0(fprintf(debug_file, "No free space left on the disk\n"));
+//			f_op->fh = NULL;
+//			ret = FILE_OPEN_ERR;
+//		}
+//		break;
+//	case WRITE_STOP:
+//		len = fwrite(from, sz, 1, f_op->fh);
+//		if (len != 1) {
+//			perror(__func__);
+//			ret = FILE_WR_ERR;
+//		}
+//		if (fclose(f_op->fh) != 0) {
+//			perror(__func__);
+//			ret = FILE_CLOSE_ERR;
+//		} else {
+//			f_op->fh = NULL;
+//			f_op->file_cntr++;
+//		}
+//		break;
+//	default:
+//		ret = FILE_OPT_ERR;
+//	}
+//	return ret;
+//}
 
-	sz = to - from;
-	switch (f_op->file_state) {
-	case WRITE_RUNNING:
-		len = fwrite(from, sz, 1, f_op->fh);
-		if (len != 1) {
-			perror(__func__);
-			ret = FILE_WR_ERR;
-		}
-		break;
-	case WRITE_START:
-		if ((ret = start_new_file(f_op)) == FILE_OK) {
-			len = fwrite(from, sz, 1, f_op->fh);
-			if (len != 1) {
-				perror(__func__);
-				ret = FILE_WR_ERR;
-			}
-		} else {
-			if (ret == -CAMOGM_NO_SPACE)
-				D0(fprintf(debug_file, "No free space left on the disk\n"));
-			f_op->fh = NULL;
-			ret = FILE_OPEN_ERR;
-		}
-		break;
-	case WRITE_STOP:
-		len = fwrite(from, sz, 1, f_op->fh);
-		if (len != 1) {
-			perror(__func__);
-			ret = FILE_WR_ERR;
-		}
-		if (fclose(f_op->fh) != 0) {
-			perror(__func__);
-			ret = FILE_CLOSE_ERR;
-		} else {
-			f_op->fh = NULL;
-			f_op->file_cntr++;
-		}
-		break;
-	default:
-		ret = FILE_OPT_ERR;
+void send_buffer(int sockfd, unsigned char *buff, size_t sz)
+{
+	size_t bytes_left = sz;
+	size_t bytes_written = 0;
+	size_t offset = 0;
+
+	while (bytes_left > 0) {
+		bytes_written = write(sockfd, &buff[offset], bytes_left);
+		bytes_left -= bytes_written;
+		offset += bytes_written;
 	}
+}
+
+int mmap_disk(rawdev_buffer *rawdev)
+{
+	int ret = 0;
+
+	rawdev->rawdev_fd = open(rawdev->rawdev_path, O_RDONLY);
+	if (rawdev->rawdev_fd < 0) {
+		return -1;
+	}
+	rawdev->disk_mmap = mmap(0, rawdev->mmap_size, PROT_READ, MAP_SHARED, rawdev->rawdev_fd, rawdev->start_pos);
+	if (rawdev->disk_mmap == MAP_FAILED) {
+		close(rawdev->rawdev_fd);
+		return -1;
+	}
+
 	return ret;
 }
 
-static inline void *exit_thread(void *arg)
+int unmmap_disk(rawdev_buffer *rawdev)
+{
+	int ret = 0;
+
+	if (munmap(rawdev->disk_mmap, rawdev->mmap_size) != 0)
+		return -1;
+	if (close(rawdev->rawdev_fd) != 0)
+		return -1;
+
+	return ret;
+}
+
+#define PORT_NUMBER 3456
+void prep_socket(int *socket_fd)
+{
+	int opt = 1;
+	struct sockaddr_in sock;
+
+	memset((char *)&sock, 0, sizeof(struct sockaddr_in));
+	sock.sin_family = AF_INET;
+	sock.sin_port = htons(PORT_NUMBER);
+	*socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+	setsockopt(*socket_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt));
+	bind(*socket_fd, (struct sockaddr *) &sock, sizeof(struct sockaddr_in));
+	listen(*socket_fd, 10);
+}
+
+/**
+ *
+ * @param cmd
+ * cmd pointer is updated to point to current command
+ * @return -1 command not recognized, -2 end of buffer
+ */
+int parse_command(char **cmd)
+{
+	size_t cmd_len;
+	int cmd_indx = -1;
+	char *char_ptr;
+
+	D6(fprintf(debug_file, "Parsing command line: %s\n", *cmd));
+	char_ptr = strpbrk(*cmd, CMD_DELIMITER);
+	if (char_ptr != NULL) {
+		char_ptr[0] = '\0';
+		char_ptr++;
+		for (int i = 0; i < sizeof(cmd_list) / sizeof(cmd_list[0]); i++) {
+			cmd_len = strlen(cmd_list[i]);
+			if (strncmp(char_ptr, cmd_list[i], cmd_len) == 0) {
+				cmd_indx = i;
+				break;
+			}
+		}
+		*cmd = char_ptr;
+	} else {
+		cmd_indx = -2;
+	}
+
+	return cmd_indx;
+}
+
+/**
+ * @brief Break HTTP GET string after the command part as we do not need that part. The function
+ * finds the first space character after the command part starts and replaces it with null.
+ * @param[in,out]   cmd   pointer to HTTP GET string
+ */
+void trim_command(char *cmd, ssize_t cmd_len)
+{
+	char *ptr_start, *ptr_end;
+
+	if (cmd_len >= 0 && cmd_len < CMD_BUFF_LEN)
+		cmd[cmd_len] = '\0';
+	ptr_start = strpbrk(cmd, CMD_DELIMITER);
+	if (ptr_start) {
+		ptr_end = strchr(ptr_start, ' ');
+		if (ptr_end)
+			ptr_end[0] = '\0';
+	}
+}
+
+/**
+ *
+ * @param arg
+ * @todo print unrecognized command
+ */
+void *reader(void *arg)
+{
+	int sockfd, fd;
+	int cmd;
+	char cmd_buff[CMD_BUFF_LEN] = {0};
+	char *cmd_ptr;
+	ssize_t cmd_len;
+	camogm_state *state = (camogm_state *)arg;
+	rawdev_buffer *rawdev = &state->rawdev;
+	unsigned char *disk_buff = NULL;
+	struct exit_state exit_state = {
+			.state = state,
+			.ret_val = 0
+	};
+
+	prep_socket(&sockfd);
+	while (true) {
+		fd = accept(sockfd, NULL, 0);
+		if (fd == -1)
+			continue;
+		cmd_len = read(fd, cmd_buff, sizeof(cmd_buff) - 1);
+		cmd_ptr = cmd_buff;
+		trim_command(cmd_ptr, cmd_len);
+		while ((cmd = parse_command(&cmd_ptr)) != -2) {
+			if (cmd >= 0)
+				D6(fprintf(debug_file, "Got command '%s'\n", cmd_list[cmd]));
+			switch (cmd) {
+			case CMD_BUILD_INDEX:
+				break;
+			case CMD_GET_INDEX:
+				break;
+			case CMD_READ_DISK:
+				break;
+			case CMD_READ_FILE:
+
+				break;
+			case CMD_READ_ALL_FILES:
+				break;
+			case CMD_STATUS:
+				break;
+			default:
+				D0(fprintf(debug_file, "Unrecognized command is skipped\n"));
+			}
+		}
+		fprintf(debug_file, "Closing connection\n");
+		close(fd);
+		usleep(COMMAND_LOOP_DELAY);
+	}
+
+	return (void *) 0;
+}
+
+static inline void exit_thread(void *arg)
 {
 	struct exit_state *s = (struct exit_state *)arg;
 
@@ -694,7 +897,6 @@ static inline void *exit_thread(void *arg)
 		s->state->rawdev.rawdev_fd = -1;
 	}
 	s->state->rawdev.thread_finished = true;
-	return (void *) s->ret_val;
 }
 
 /**
