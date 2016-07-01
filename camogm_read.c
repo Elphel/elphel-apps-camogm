@@ -48,6 +48,7 @@
 #define EXIF_DATE_TIME_FORMAT     "%Y:%m:%d %H:%M:%S"
 #define CMD_DELIMITER             "/?"
 #define CMD_BUFF_LEN              1024
+#define SMALL_BUFF_LEN            32
 #define COMMAND_LOOP_DELAY        500000
 #define PAGE_BOUNDARY_MASK        0xffffffffffffe000
 #define INDEX_FORMAT_STR          "port number = %d; unix time = %ld; usec time = %06u; offset = 0x%010llx; file size = %u\n"
@@ -879,6 +880,16 @@ void send_split_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
 	lseek64(rawdev->rawdev_fd, curr_pos, SEEK_SET);
 }
 
+void send_fnum(int sockfd, size_t num)
+{
+	char buff[SMALL_BUFF_LEN] = {0};
+	int len;
+
+	len = snprintf(buff, SMALL_BUFF_LEN - 1, "Number of files: %d\n", num);
+	buff[len] = '\0';
+	write(sockfd, buff, len);
+}
+
 /**
  *
  * @param arg
@@ -942,7 +953,7 @@ void *reader(void *arg)
 					int len;
 					disk_indx = index_dir.head;
 					while (disk_indx != NULL) {
-						len = snprintf(send_buff, CMD_BUFF_LEN, INDEX_FORMAT_STR,
+						len = snprintf(send_buff, CMD_BUFF_LEN - 1, INDEX_FORMAT_STR,
 								disk_indx->port, disk_indx->rawtime, disk_indx->usec, disk_indx->f_offset, disk_indx->f_size);
 						send_buff[len] = '\0';
 						write(fd, send_buff, len);
@@ -961,6 +972,7 @@ void *reader(void *arg)
 				transfer = true;
 				mm_file_start = rawdev->start_pos;
 				mm_file_size = rawdev->mmap_default_size - rawdev->start_pos;
+				send_fnum(fd, disk_chunks);
 				close(fd);
 				while (disk_chunks > 0 && transfer) {
 					fd = accept(sockfd, NULL, 0);
@@ -993,13 +1005,14 @@ void *reader(void *arg)
 				// read files from raw device buffer and send them over socket; the disk index directory
 				// should be built beforehand
 				if (index_dir.size > 0) {
+					send_fnum(fd, index_dir.size);
+					close(fd);
 					mmap_range.from = rawdev->start_pos;
 					mmap_range.to = rawdev->start_pos + rawdev->mmap_default_size;
 					disk_indx = index_dir.head;
 					cross_boundary_indx = NULL;
 					file_cntr = 0;
 					transfer = true;
-					close(fd);
 					while (file_cntr < index_dir.size && disk_indx != NULL) {
 						if (is_in_range(&mmap_range, disk_indx) && rawdev->disk_mmap != NULL) {
 							fd = accept(sockfd, NULL, 0);
