@@ -939,16 +939,15 @@ void *reader(void *arg)
 				dump_index_dir(&index_dir);
 				break;
 			case CMD_READ_DISK:
+				// mmap raw device buffer in MMAP_CHUNK_SIZE chunks and send them over socket
 				mmap_range.from = rawdev->start_pos & PAGE_BOUNDARY_MASK;
-				mmap_range.to = rawdev->start_pos + rawdev->mmap_default_size;
+				mmap_range.to = mmap_range.from + rawdev->mmap_default_size;
 				disk_chunks = (size_t)ceil((double)(rawdev->end_pos - rawdev->start_pos) / (double)rawdev->mmap_default_size);
 				transfer = true;
 				mm_file_start = rawdev->start_pos;
-				mm_file_size = rawdev->mmap_default_size;
-				fprintf(debug_file, "Retrieving %d chunks from disk\n", disk_chunks);
+				mm_file_size = rawdev->mmap_default_size - rawdev->start_pos;
 				close(fd);
 				while (disk_chunks > 0 && transfer) {
-					fprintf(debug_file, "Waiting for connection\n");
 					fd = accept(sockfd, NULL, 0);
 					if (mmap_disk(rawdev, &mmap_range) == 0) {
 						send_buffer(fd, &rawdev->disk_mmap[mm_file_start], mm_file_size);
@@ -961,19 +960,23 @@ void *reader(void *arg)
 						transfer = false;
 						D0(fprintf(debug_file, "Unable to unmap memory region\n"));
 					}
-					fprintf(debug_file, "%d disk chunks left to send\n", disk_chunks);
 					mm_file_start = 0;
+					mm_file_size = rawdev->mmap_default_size;
 					disk_chunks--;
-					mmap_range.from = mmap_range.to + 1;
+					mmap_range.from = mmap_range.to;
 					mmap_range.to = mmap_range.from + rawdev->mmap_default_size;
-					if (mmap_range.to > rawdev->end_pos)
+					if (mmap_range.to > rawdev->end_pos) {
 						mmap_range.to = rawdev->end_pos;
+						mm_file_size = mmap_range.to - mmap_range.from;
+					}
 					close(fd);
 				}
 				break;
 			case CMD_READ_FILE:
 				break;
 			case CMD_READ_ALL_FILES:
+				// read files from raw device buffer and send them over socket; the disk index directory
+				// should be built beforehand
 				if (index_dir.size > 0) {
 					mmap_range.from = rawdev->start_pos;
 					mmap_range.to = rawdev->start_pos + rawdev->mmap_default_size;
