@@ -35,7 +35,12 @@ struct disk_idir {
 	size_t size;
 };
 
-void *build_index(void *arg);
+struct range {
+	uint64_t from;
+	uint64_t to;
+};
+
+//void *build_index(void *arg);
 void *reader(void *arg);
 
 #endif /* _CAMOGM_READ_H */

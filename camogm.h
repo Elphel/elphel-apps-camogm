@@ -60,7 +60,7 @@
 #define RAWDEV_START_OFFSET       1024
 /** @brief Maximum length of file or raw device path */
 #define ELPHEL_PATH_MAX           300
-#define MMAP_CHUNK_SIZE           134217728
+#define MMAP_CHUNK_SIZE           10485760
 
 /**
  * @enum state_flags
@@ -100,8 +100,10 @@ typedef struct {
 	uint64_t start_pos;
 	uint64_t end_pos;
 	uint64_t curr_pos_w;
-	uint64_t *disk_mmap;
-	uint64_t mmap_size;
+	unsigned char *disk_mmap;
+	uint64_t mmap_default_size;
+	uint64_t mmap_current_size;
+	uint64_t mmap_offset;
 	volatile uint64_t curr_pos_r;
 	uint64_t file_start;
 	pthread_t tid;

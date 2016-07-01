@@ -231,7 +231,7 @@ void camogm_init(camogm_state *state, char *pipe_name)
 	state->rawdev.curr_pos_w = state->rawdev.start_pos;
 	state->rawdev.curr_pos_r = state->rawdev.start_pos;
 	state->active_chn = ALL_CHN_ACTIVE;
-	state->rawdev.mmap_size = MMAP_CHUNK_SIZE;
+	state->rawdev.mmap_default_size = MMAP_CHUNK_SIZE;
 }
 
 /**
@@ -803,7 +803,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
 			/* debug code follows */
-			state->rawdev.end_pos = 10485760; // 10 Mib
+			state->rawdev.end_pos = 134217728;
 			/* end of debug code */
 		}
 	}
