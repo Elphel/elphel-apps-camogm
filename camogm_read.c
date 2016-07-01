@@ -50,6 +50,7 @@
 #define CMD_BUFF_LEN              1024
 #define COMMAND_LOOP_DELAY        500000
 #define PAGE_BOUNDARY_MASK        0xffffffffffffe000
+#define INDEX_FORMAT_STR          "port number = %d; unix time = %ld; usec time = %06u; offset = 0x%010llx; file size = %u\n"
 /** @brief The size of read buffer in bytes. The data will be read from disk in blocks of this size */
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
@@ -260,7 +261,7 @@ void dump_index_dir(const struct disk_idir *idir)
 	struct disk_index *ind = idir->head;
 
 	while (ind != NULL) {
-		fprintf(debug_file, "port number = %d; unix time = %ld; usec time = %06u; offset = 0x%010llx; file size = %u\n",
+		fprintf(debug_file, INDEX_FORMAT_STR,
 				ind->port, ind->rawtime, ind->usec, ind->f_offset, ind->f_size);
 		ind = ind->next;
 	}
@@ -890,6 +891,7 @@ void *reader(void *arg)
 	int cmd;
 	char cmd_buff[CMD_BUFF_LEN] = {0};
 	char *cmd_ptr;
+	char send_buff[CMD_BUFF_LEN] = {0};
 	bool transfer;
 	ssize_t cmd_len;
 	size_t mm_file_start, mm_file_size;
@@ -927,16 +929,29 @@ void *reader(void *arg)
 				D6(fprintf(debug_file, "Got command '%s', number %d\n", cmd_list[cmd], cmd));
 			switch (cmd) {
 			case CMD_BUILD_INDEX:
+				// scan raw device buffer and create disk index directory
 				if (index_dir.size != 0) {
-					fprintf(debug_file, "%s: removing disk index directory", __func__);
 					delete_idir(&index_dir);
-					fprintf(debug_file, "... done\n");
 				}
 				build_index(state, &index_dir);
 				D3(fprintf(debug_file, "%d files read from %s\n", index_dir.size, state->rawdev.rawdev_path));
 				break;
 			case CMD_GET_INDEX:
-				dump_index_dir(&index_dir);
+				// send the content of disk index directory over socket
+				if (index_dir.size > 0) {
+					int len;
+					disk_indx = index_dir.head;
+					while (disk_indx != NULL) {
+						len = snprintf(send_buff, CMD_BUFF_LEN, INDEX_FORMAT_STR,
+								disk_indx->port, disk_indx->rawtime, disk_indx->usec, disk_indx->f_offset, disk_indx->f_size);
+						send_buff[len] = '\0';
+						write(fd, send_buff, len);
+						disk_indx = disk_indx->next;
+					}
+				} else {
+					D0(fprintf(debug_file, "Index directory does not contain any files. Try to rebuild index "
+							"directory with 'build_index' command\n"));
+				}
 				break;
 			case CMD_READ_DISK:
 				// mmap raw device buffer in MMAP_CHUNK_SIZE chunks and send them over socket
