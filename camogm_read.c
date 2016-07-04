@@ -51,7 +51,7 @@
 #define SMALL_BUFF_LEN            32
 #define COMMAND_LOOP_DELAY        500000
 #define PAGE_BOUNDARY_MASK        0xffffffffffffe000
-#define INDEX_FORMAT_STR          "port number = %d; unix time = %ld; usec time = %06u; offset = 0x%010llx; file size = %u\n"
+#define INDEX_FORMAT_STR          "port_number=%d;unix_time=%ld;usec_time=%06u;offset=0x%010llx;file_size=%u\n"
 /** @brief The size of read buffer in bytes. The data will be read from disk in blocks of this size */
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
@@ -562,11 +562,12 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 	return ret;
 }
 
+/* pos_stop points to the last byte of pattern thus the size should be incremented by 1 */
 int stop_index(struct disk_idir *idir, uint64_t pos_stop)
 {
 	int ret = 0;
 	if (idir->tail != NULL) {
-		idir->tail->f_size = pos_stop - idir->tail->f_offset;
+		idir->tail->f_size = pos_stop - idir->tail->f_offset + 1;
 	} else {
 		ret = -1;
 	}
@@ -890,6 +891,15 @@ void send_fnum(int sockfd, size_t num)
 	write(sockfd, buff, len);
 }
 
+int get_indx_args(char *cmd, struct disk_index *indx)
+{
+	char *cmd_start = strchr(cmd, ':');
+
+	if (cmd_start == NULL)
+		return -1;
+	return sscanf(++cmd_start, INDEX_FORMAT_STR, &indx->port, &indx->rawtime, &indx->usec, &indx->f_offset, &indx->f_size);
+}
+
 /**
  *
  * @param arg
@@ -1000,6 +1010,24 @@ void *reader(void *arg)
 				}
 				break;
 			case CMD_READ_FILE:
+				if (index_dir.size > 0) {
+					struct disk_index indx;
+					if (get_indx_args(cmd_ptr, &indx) > 0 &&
+							(disk_indx = find_by_offset(&index_dir, indx.f_offset)) != NULL){
+						mmap_range.from = indx.f_offset & PAGE_BOUNDARY_MASK;
+						mmap_range.to = indx.f_offset + indx.f_size;
+						mm_file_start = indx.f_offset - mmap_range.from;
+						if (mmap_disk(rawdev, &mmap_range) == 0) {
+							send_buffer(fd, &rawdev->disk_mmap[mm_file_start], indx.f_size);
+							if (munmap_disk(rawdev) != 0) {
+								D0(fprintf(debug_file, "Unable to unmap memory region\n"));
+							}
+						} else {
+							D0(fprintf(debug_file, "Unable to map disk to memory region:"
+									"disk region start = 0x%llx, disk region end = 0x%llx\n", mmap_range.from, mmap_range.to));
+						}
+					}
+				}
 				break;
 			case CMD_READ_ALL_FILES:
 				// read files from raw device buffer and send them over socket; the disk index directory
