@@ -107,8 +107,7 @@ typedef struct {
 	volatile uint64_t curr_pos_r;
 	uint64_t file_start;
 	pthread_t tid;
-	int thread_state;
-	volatile bool thread_finished;
+	volatile int thread_state;
 } rawdev_buffer;
 
 /**
@@ -137,7 +136,8 @@ typedef struct {
 	int frame_period[SENSOR_PORTS];                         ///< in microseconds (1/10 of what is needed for the Ogm header)
 	int width;                                              ///< image width
 	int height;                                             ///< image height
-	int prog_state;                                         ///< program state flag, can be one of #state_flags
+	volatile int prog_state;                                ///< program state flag, can be one of #state_flags
+	pthread_mutex_t mutex;                                  ///< mutex for @e prog_state variable; all modifications to the variable must be using this mutex
 	int last_error_code;
 	ogg_stream_state os;
 	ogg_page og;

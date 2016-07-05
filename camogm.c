@@ -215,6 +215,7 @@ void camogm_init(camogm_state *state, char *pipe_name)
 	state->exif = DEFAULT_EXIF;
 	state->frame_lengths = NULL;
 
+	// reading thread has not been started yet, mutex lock is not necessary
 	state->prog_state = STATE_STOPPED;
 
 	// kml stuff
@@ -312,7 +313,9 @@ int camogm_start(camogm_state *state)
 	}
 	state->max_frames =       state->set_max_frames;
 	state->frames_per_chunk = state->set_frames_per_chunk;
+	pthread_mutex_lock(&state->mutex);
 	state->prog_state = STATE_STARTING;
+	pthread_mutex_unlock(&state->mutex);
 	FOR_EACH_PORT(int, chn) {
 		//! Check/set circbuf read pointer
 		D3(fprintf(debug_file, "1: state->cirbuf_rp=0x%x\n", state->cirbuf_rp[chn]));
@@ -453,7 +456,9 @@ int camogm_start(camogm_state *state)
 	}
 	if (state->kml_enable) rslt = camogm_start_kml(state);  // will turn on state->kml_used if it can
 	if (rslt) return rslt;
+	pthread_mutex_lock(&state->mutex);
 	state->prog_state = STATE_RUNNING;
+	pthread_mutex_unlock(&state->mutex);
 	D1(fprintf(debug_file, "Started OK\n"));
 	return 0;
 }
@@ -656,7 +661,9 @@ int camogm_stop(camogm_state *state)
 		if (state->prog_state != STATE_STARTING) {
 			D2(fprintf(debug_file, "Recording was not running, nothing to stop\n"));
 		} else {
+			pthread_mutex_lock(&state->mutex);
 			state->prog_state = STATE_STOPPED;
+			pthread_mutex_unlock(&state->mutex);
 			D1(fprintf(debug_file, "Dropping attempt to start\n"));
 		}
 		return 0;
@@ -675,7 +682,9 @@ int camogm_stop(camogm_state *state)
 	state->vf = NULL;
 	if (rslt) return rslt;
 	state->last = 1;
+	pthread_mutex_lock(&state->mutex);
 	state->prog_state = STATE_STOPPED;
+	pthread_mutex_unlock(&state->mutex);
 	return 0;
 }
 
@@ -1331,20 +1340,14 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 			state->rawdev.rawdev_path[0] = '\0';
 		}
 		return 28;
-	} else if (strcmp(cmd, "rawdev_read") == 0) {
-		if (state->rawdev_op && state->prog_state == STATE_STOPPED) {
-			state->prog_state = STATE_READING;
-		} else {
-			D0(fprintf(debug_file, "Unable to switch state to 'reading' from current state. Check settings.\n"));
-		}
-		return 29;
-	} else if (strcmp(cmd, "rawdev_stop") == 0) {
-		if (state->prog_state == STATE_READING) {
+	} else if (strcmp(cmd, "reader_stop") == 0) {
+		if (state->prog_state == STATE_READING &&
+				state->rawdev.thread_state == STATE_RUNNING) {
 			state->rawdev.thread_state = STATE_CANCEL;
 		} else {
 			D0(fprintf(debug_file, "Reading thread is not running, nothing to stop\n"));
 		}
-		return 30;
+		return 29;
 	}
 
 	return -1;
@@ -1380,7 +1383,6 @@ void clean_up(camogm_state *state)
  */
 int listener_loop(camogm_state *state)
 {
-	void *tret;
 	FILE *cmd_file;
 	int rslt, ret, cmd, f_ok;
 	int fp0, fp1;
@@ -1495,35 +1497,9 @@ int listener_loop(camogm_state *state)
 			} // switch camogm_start()
 			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) ) state->last_error_code = rslt;
 		} else if (state->prog_state == STATE_READING) {
-			if (state->rawdev.thread_state == STATE_RUNNING) {
-				if (state->rawdev.thread_finished == true) {
-					state->rawdev.thread_state = STATE_STOPPED;
-					state->rawdev.thread_finished = false;
-					state->prog_state = STATE_STOPPED;
-					pthread_join(state->rawdev.tid, &tret);
-					if ((int)tret != 0 && (int)tret != (int)PTHREAD_CANCELED) {
-						D0(fprintf(debug_file, "Reading thread returned error %d\n", (int)tret));
-					} else {
-						D3(fprintf(debug_file, "Reading thread stopped\n"));
-					}
-				} else {
-					usleep(COMMAND_LOOP_DELAY);
-				}
-			} else if (state->rawdev.thread_state == STATE_STOPPED) {
-				state->rawdev.thread_state = STATE_RUNNING;
-				state->rawdev.thread_finished = false;
-//				if (pthread_create(&state->rawdev.tid, NULL, build_index, state) != 0) {
-				if (pthread_create(&state->rawdev.tid, NULL, reader, state) != 0) {
-					state->prog_state = STATE_STOPPED;
-					state->rawdev.thread_state = STATE_STOPPED;
-					D0(fprintf(debug_file, "%s:line %d: Can not start new thread, disk index is not built\n", __FILE__, __LINE__));
-				}
-			} else if (state->rawdev.thread_state == STATE_CANCEL) {
-				// cancel reading thread and return to running state waiting for the thread to terminate
-				state->rawdev.thread_state = STATE_RUNNING;
-				pthread_cancel(state->rawdev.tid);
-			}
+			usleep(COMMAND_LOOP_DELAY);
 		} else {                            // not running, not starting
+			state->rawdev.thread_state = STATE_RUNNING;
 			usleep(COMMAND_LOOP_DELAY);     // make it longer but interruptible by signals?
 		}
 	} // while (process)
@@ -1683,7 +1659,7 @@ int open_files(camogm_state *state)
 		}
 		framePars[port] = frameParsAll[port]->framePars;
 		aglobalPars[port] = frameParsAll[port]->globalPars;
-#endif /* DESABLE_CODE */
+#endif /* DISABLE_CODE */
 	}
 
 	return ret;
@@ -1718,9 +1694,20 @@ int main(int argc, char *argv[])
 	}
 
 	camogm_init(&sstate, argv[1]);
+	if (pthread_mutex_init(&sstate.mutex, NULL) != 0) {
+		perror("Unable to initialize mutex\n");
+		return EXIT_FAILURE;
+	}
 	ret = open_files(&sstate);
 	if (ret < 0)
 		return ret;
+	if (pthread_create(&sstate.rawdev.tid, NULL, reader, &sstate) != 0 ||
+			pthread_detach(sstate.rawdev.tid) != 0) {
+		D0(fprintf(debug_file, "%s:line %d: Can not start reading thread in detached state\n", __FILE__, __LINE__));
+		clean_up(&sstate);
+		return EXIT_FAILURE;
+	}
+	sstate.rawdev.thread_state = STATE_RUNNING;
 
 	ret = listener_loop(&sstate);
 

@@ -942,10 +942,19 @@ void *reader(void *arg)
 		fd = accept(sockfd, NULL, 0);
 		if (fd == -1)
 			continue;
+		if (state->prog_state == STATE_STOPPED && state->rawdev_op) {
+			pthread_mutex_lock(&state->mutex);
+			state->prog_state = STATE_READING;
+			pthread_mutex_unlock(&state->mutex);
+		} else {
+			close(fd);
+			D0(fprintf(debug_file, "Can not change state of the program, check settings\n"));
+			continue;
+		}
 		cmd_len = read(fd, cmd_buff, sizeof(cmd_buff) - 1);
 		cmd_ptr = cmd_buff;
 		trim_command(cmd_ptr, cmd_len);
-		while ((cmd = parse_command(&cmd_ptr)) != -2) {
+		while ((cmd = parse_command(&cmd_ptr)) != -2 && state->rawdev.thread_state != STATE_CANCEL) {
 			if (cmd >= 0)
 				D6(fprintf(debug_file, "Got command '%s', number %d\n", cmd_list[cmd], cmd));
 			switch (cmd) {
@@ -984,7 +993,7 @@ void *reader(void *arg)
 				mm_file_size = rawdev->mmap_default_size - rawdev->start_pos;
 				send_fnum(fd, disk_chunks);
 				close(fd);
-				while (disk_chunks > 0 && transfer) {
+				while (disk_chunks > 0 && transfer && state->rawdev.thread_state != STATE_CANCEL) {
 					fd = accept(sockfd, NULL, 0);
 					if (mmap_disk(rawdev, &mmap_range) == 0) {
 						send_buffer(fd, &rawdev->disk_mmap[mm_file_start], mm_file_size);
@@ -1041,7 +1050,7 @@ void *reader(void *arg)
 					cross_boundary_indx = NULL;
 					file_cntr = 0;
 					transfer = true;
-					while (file_cntr < index_dir.size && disk_indx != NULL) {
+					while (file_cntr < index_dir.size && disk_indx != NULL && state->rawdev.thread_state != STATE_CANCEL) {
 						if (is_in_range(&mmap_range, disk_indx) && rawdev->disk_mmap != NULL) {
 							fd = accept(sockfd, NULL, 0);
 							mm_file_start = disk_indx->f_offset - rawdev->mmap_offset;
@@ -1090,6 +1099,9 @@ void *reader(void *arg)
 		}
 		if (fstat(fd, &stat_buff) != EBADF)
 			close(fd);
+		pthread_mutex_lock(&state->mutex);
+		state->prog_state = STATE_STOPPED;
+		pthread_mutex_unlock(&state->mutex);
 		usleep(COMMAND_LOOP_DELAY);
 	}
 	pthread_cleanup_pop(0);
@@ -1114,7 +1126,6 @@ static inline void exit_thread(void *arg)
 		close(*s->sockfd_const);
 	if (fstat(*s->sockfd_temp, &buff) != EBADF)
 		close(*s->sockfd_temp);
-	s->state->rawdev.thread_finished = true;
 }
 
 /**
@@ -1171,7 +1182,7 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 	zero_cross = 0;
 	search_state = SEARCH_SKIP;
 	idir_result = 0;
-	while (process) {
+	while (process && state->rawdev.thread_state != STATE_CANCEL) {
 		rd = read(state->rawdev.rawdev_fd, buff, sizeof(buff));
 		err = errno;
 		if ((rd > 0) && (dev_curr_pos + rd > state->rawdev.end_pos)) {
