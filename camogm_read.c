@@ -1,5 +1,5 @@
 /** @file camogm_read.c
- * @brief Provides reading data written to raw device storage and saving the data to a device with file system.
+ * @brief Provides reading data written to raw device storage and transmitting the data over a socket.
  * @copyright  Copyright (C) 2016 Elphel, Inc.
  *
  * @par <b>License</b>
@@ -15,17 +15,24 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/** @brief This define is needed to use lseek64 and should be set before includes */
+/**
+ * @addtogroup SPECIAL_INCLUDES Special includes
+ * These defines are needed to use lseek64, strptime and usleep and should be set before includes
+ * @{
+ */
+/** Needed for lseek64 */
 #define _LARGEFILE64_SOURCE
+/** Needed for strptime and usleep */
 #define _XOPEN_SOURCE
+/** Needed for usleep */
 #define _XOPEN_SOURCE_EXTENDED
+/** @} */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <getopt.h>
 #include <string.h>
 #include <linux/limits.h>
 #include <netinet/in.h>
@@ -43,21 +50,22 @@
 
 /** @brief Offset in Exif where TIFF header starts */
 #define TIFF_HDR_OFFSET           12
-/** @brief Separator character between seconds and microseconds in JPEG file name */
-#define SUBSEC_SEPARATOR          '.'
+/** @brief The date and time format of Exif field */
 #define EXIF_DATE_TIME_FORMAT     "%Y:%m:%d %H:%M:%S"
+/** @brief The delimiters used to separate several commands in one command string sent over socket */
 #define CMD_DELIMITER             "/?"
+/** @brief The length of a buffer for command string */
 #define CMD_BUFF_LEN              1024
+/** @brief The length of a buffer for string formatting */
 #define SMALL_BUFF_LEN            32
-#define COMMAND_LOOP_DELAY        500000
+/** @brief 64 bit mask to align offsets to 4 kb page boundary */
 #define PAGE_BOUNDARY_MASK        0xffffffffffffe000
+/** @brief The format string used for file parameters reporting. Time and port number are extracted from Exif */
 #define INDEX_FORMAT_STR          "port_number=%d;unix_time=%ld;usec_time=%06u;offset=0x%010llx;file_size=%u\n"
 /** @brief The size of read buffer in bytes. The data will be read from disk in blocks of this size */
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
 #define INCLUDE_MARKERS           1
-/** @brief The amount of free disk space in bytes that should be left on the device during copying from raw device buffer to this disk */
-#define FREE_SIZE_LIMIT           10485760
 /** @brief File starting marker on a raw device. It corresponds to SOI JPEG marker */
 static unsigned char elphelst[] = {0xff, 0xd8};
 /** @brief File ending marker on a raw device. It corresponds to EOI JPEG marker */
@@ -71,6 +79,9 @@ static const struct iovec elphel_en = {
 		.iov_len = sizeof(elphelen)
 };
 
+/** @brief X Macro for commands. Add new commands to @e COMMAND_TABLE
+ * @{
+ */
 #define COMMAND_TABLE \
 	X(CMD_BUILD_INDEX, "build_index") \
 	X(CMD_GET_INDEX, "get_index") \
@@ -79,6 +90,7 @@ static const struct iovec elphel_en = {
 	X(CMD_READ_ALL_FILES, "read_all_files") \
 	X(CMD_STATUS, "status")
 
+/** @enum socket_commands */
 #define X(a, b) a,
 enum socket_commands {
 	COMMAND_TABLE
@@ -90,31 +102,7 @@ static const char *cmd_list[] = {
 	COMMAND_TABLE
 };
 #undef X
-
-/**
- * @enum file_result
- * @brief Return codes for file operations
- * @var file_result::FILE_OK
- * File operation has finished successfully
- * @var file_result::FILE_WR_ERR
- * An error occurred during file write
- * @var file_result::FILE_RD_ERR
- * An error occurred during file read
- * @var file_result::FILE_OPEN_ERR
- * Unable to open file
- * @var file_result::FILE_CLOSE_ERR
- * An error occurred during file close
- * @var file_result::FILE_OPT_ERR
- * Other file access errors
- */
-enum file_result {
-	FILE_OK             = 0,
-	FILE_WR_ERR         = -1,
-	FILE_RD_ERR         = -2,
-	FILE_OPEN_ERR       = -3,
-	FILE_CLOSE_ERR      = -4,
-	FILE_OPT_ERR        = -5
-};
+/** @} */
 
 /**
  * @enum match_result
@@ -133,24 +121,15 @@ enum match_result {
 };
 
 /**
- * @enum file_ops
- * @brief The states of file operations
- * @var file_ops::WRITE_START
- * Start writing data to a new file
- * @var file_ops::WRITE_RUNNING
- * Current data chunk will be written to already opened file
- * @var file_ops::WRITE_STOP
- * Write current data chunk to a file and close it
+ * @enum search_state
+ * @brief The state of the program during file search in raw device buffer
+ * @var search_state::SEARCH_SKIP
+ * Skip data in read buffer
+ * @var search_state::SEARCH_FILE_DATA
+ * The data in read buffer is a file data with known start offset
  */
-enum file_ops {
-	WRITE_START,
-	WRITE_RUNNING,
-	WRITE_STOP
-};
-
 enum search_state {
 	SEARCH_SKIP,
-	SEARCH_FILE_START,
 	SEARCH_FILE_DATA
 };
 
@@ -217,23 +196,6 @@ struct tiff_hdr {
 };
 
 /**
- * @struct file_opts
- * @brief This structure holds data associated with currently opened file.
- * @var file_opts::fh
- * FILE pointer
- * @var file_opts::file_cntr
- * Indicates the number of files read from raw storage device
- * @var file_opts::file_state
- * Contains the state of current file operation which can be one from #file_ops enum
- */
-struct file_opts {
-	FILE                *fh;
-	unsigned int        file_cntr;
-	int                 file_state;
-	camogm_state        *state;
-};
-
-/**
  * @struct crb_ptrs
  * @brief A set of vectors pointing to a file marker crossing read buffer boundary.
  * @var crb_ptrs::first_buff
@@ -246,10 +208,22 @@ struct crb_ptrs {
 	struct iovec        second_buff;
 };
 
+/**
+ * @struct exit_state
+ * @brief Container for the resources which should be freed before exit
+ * @var exit_state::state
+ * Pointer to #camogm_state structure containing current program state. This structure holds
+ * file descriptors and memory mapped regions which should be closed and unmapped accordingly
+ * @var exit_state::idir
+ * Pointer to disk index directory. The nodes of this directory are dynamically allocated and must be freed
+ * @var exit_state::sockfd_const
+ * Socket descriptor
+ * @var exit_state::sockfd_temp
+ * Socket descriptor
+ */
 struct exit_state {
 	camogm_state *state;
 	struct disk_idir *idir;
-	int ret_val;
 	int *sockfd_const;
 	int *sockfd_temp;
 };
@@ -257,6 +231,11 @@ struct exit_state {
 static inline void exit_thread(void *arg);
 static void build_index(camogm_state *state, struct disk_idir *idir);
 
+/**
+ * @brief Debug function, prints the content of disk index directory
+ * @param[in]   idir   pointer to disk index directory to be printed
+ * @return      none
+ */
 void dump_index_dir(const struct disk_idir *idir)
 {
 	struct disk_index *ind = idir->head;
@@ -268,6 +247,11 @@ void dump_index_dir(const struct disk_idir *idir)
 	}
 }
 
+/**
+ * @brief Create a new node in a linked list of disk indexes
+ * @param[in,out]   index   pointer to a newly allocated structure
+ * @return          0 in case a new disk index structure was successfully created and -1 otherwise
+ */
 int create_node(struct disk_index **index)
 {
 	if (*index != NULL)
@@ -282,6 +266,12 @@ int create_node(struct disk_index **index)
 	}
 }
 
+/**
+ * @brief Add a new index node to disk index directory
+ * @param[in,out]   idir   pointer to disk index directory
+ * @param[in]       index  pointer to index node to be added to disk index directory
+ * @return          The number of entries in disk index directory
+ */
 int add_node(struct disk_idir *idir, struct disk_index *index)
 {
 	if (idir->head == NULL && idir->tail == NULL) {
@@ -298,6 +288,12 @@ int add_node(struct disk_idir *idir, struct disk_index *index)
 	return idir->size;
 }
 
+/**
+ * @brief Find index node by its start offset
+ * @param[in]   idir   pointer to disk index directory
+ * @param[in]   offset the offset of the file which should be found
+ * @return      pointer to disk index node or NULL if the corresponding file was not found
+ */
 struct disk_index *find_by_offset(const struct disk_idir *idir, uint64_t offset)
 {
 	struct disk_index *index = idir->head;
@@ -311,6 +307,12 @@ struct disk_index *find_by_offset(const struct disk_idir *idir, uint64_t offset)
 	return index;
 }
 
+/**
+ * @brief Remove a single index node from disk index directory
+ * @param[in,out]   idir   pointer to disk index directory
+ * @param[in]       node   pointer to the index node which should be removed
+ * @return          The number of entries in disk index directory
+ */
 int remove_node(struct disk_idir *idir, struct disk_index *node)
 {
 	if (node == NULL)
@@ -340,6 +342,11 @@ int remove_node(struct disk_idir *idir, struct disk_index *node)
 	return idir->size;
 }
 
+/**
+ * Remove all entries from disk index directory an free memory
+ * @param[in]   idir   pointer to disk index directory
+ * @return      0 in case the directory was successfully deleted and -1 if the directory was empty
+ */
 int delete_idir(struct disk_idir *idir)
 {
 	struct disk_index *curr_ind;
@@ -371,6 +378,7 @@ int delete_idir(struct disk_idir *idir)
  * @param[in]   buff_sz   size of the data array
  * @param[in]   pattern   pointer to an array of char values containing pattern
  * @param[in]   pt_sz     size of the pattern array
+ * @param[in]   add_pattern include or exclude marker from resulting buffer offset
  * @return      the index in data buffer where pattern matches or error code from #match_result if it was not found
  */
 static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const unsigned char * restrict pattern, ssize_t pt_sz,
@@ -433,14 +441,11 @@ static void hdr_byte_order(struct tiff_hdr *hdr)
 }
 
 /**
- * @brief Read a string from Exif for a given record. This function is intended for
- * reading date and time from Exif and it omits any non-digit symbols from resulting string.
- * Spaces and tabs are converted to underscores. Terminating null byte is not added to the resulting string.
+ * @brief Read a string from Exif for a given record.
  * @param[in]   state   a pointer to a structure containing current state
- * @param[in]   ifd     Exif image file directory record containing string offset
- * @param[out]  buff    buffer for the string
+ * @param[in]   tag     Exif image file directory record containing string offset
+ * @param[out]  buff    buffer for the string to be read
  * @return      The number of bytes placed to the read buffer
- * @todo update description
  */
 static size_t exif_get_text(camogm_state *state, struct ifd_entry *tag, char *buff)
 {
@@ -455,21 +460,11 @@ static size_t exif_get_text(camogm_state *state, struct ifd_entry *tag, char *bu
 }
 
 /**
- * @brief Create JPEG file name from Exif data
- *
- * This function reads Exif data from file, extracts PageNumber, DateTimeOriginal and
- * SubSecTimeOriginal fields and assembles a file name in the following format:
- *
- * NN_YYYYMMDD_HHMMSS.UUUUUU.jpeg
- *
- * where NN is PageNumber; YYYY, MM and DD are year, month and date extracted from DateTimeOriginal
- * field; HH, MM and SS are hours, minutes and seconds extracted from DateTimeOriginal field; UUUUUU is us
- * value extracted from SubSecTimeOriginal field. The function assumes that @e name buffer is big enough
- * to hold the file name in the format shown above including the terminating null byte.
- * @param[in]   state   a pointer to a structure containing current state
- * @param[out]  name    resulting file name
- * @return      0 if file name was successfully created and negative value otherwise
- * @todo update description
+ * @brief Read Exif data from the file starting from #rawdev_buffer::file_start offset and
+ * create a new node in disk index directory
+ * @param[in]      state   a pointer to a structure containing current state
+ * @param[in,out]  idir    pointer to disk index directory
+ * @return      0 if new node was successfully added and -1 otherwise
  */
 static int save_index(camogm_state *state, struct disk_idir *idir)
 {
@@ -486,7 +481,7 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 	struct ifd_entry ifd_subsec = {0};
 	struct disk_index *node = NULL;
 	unsigned char read_buff[TIFF_HDR_OFFSET] = {0};
-	char str_buff[32] = {0};
+	char str_buff[SMALL_BUFF_LEN] = {0};
 	uint64_t save_pos = lseek64(state->rawdev.rawdev_fd, 0, SEEK_CUR);
 
 	if (idir == NULL)
@@ -562,7 +557,14 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 	return ret;
 }
 
-/* pos_stop points to the last byte of pattern thus the size should be incremented by 1 */
+/**
+ * @brief Calculate the size of current file and update the value in disk index directory
+ * @param[in,out]   idir       pointer to disk index directory
+ * @param[in]       pos_stop   the offset of the last byte of the current file
+ * @return          0 if the file size was successfully updated and -1 otherwise
+ * @note @e pos_stop points to the last byte of the file marker thus the size is incremented
+ * by 1
+ */
 int stop_index(struct disk_idir *idir, uint64_t pos_stop)
 {
 	int ret = 0;
@@ -573,45 +575,6 @@ int stop_index(struct disk_idir *idir, uint64_t pos_stop)
 	}
 	return ret;
 }
-
-/**
- * @brief Create new file name, check free space on disk and open a file
- * @param[in]   f_op   pointer to a structure holding information about currently opened file
- * @return      \e FILE_OK if file was successfully opened and negative error code otherwise
- */
-//static int start_new_file(struct file_opts *f_op)
-//{
-//	int ret;
-//	int err;
-//	struct statvfs vfs;
-//	uint64_t free_size = 0;
-//	char file_name[ELPHEL_PATH_MAX] = {0};
-//
-//	memset(&vfs, 0, sizeof(struct statvfs));
-//	ret = statvfs(f_op->state->path_prefix, &vfs);
-//	if (ret != 0) {
-//		D0(fprintf(debug_file, "Unable to get free size on disk, statvfs() returned %d\n", ret));
-//		return -CAMOGM_FRAME_FILE_ERR;
-//	}
-//	free_size = (uint64_t)vfs.f_bsize * (uint64_t)vfs.f_bfree;
-//	// statvfs can return irrelevant values in some fields for unsupported file systems,
-//	// thus free_size is checked to be equal to non-zero value
-//	if (free_size > 0 && free_size < FREE_SIZE_LIMIT) {
-//		return -CAMOGM_NO_SPACE;
-//	}
-//
-////	make_fname(f_op->state, file_name);
-//	sprintf(f_op->state->path, "%s%s", f_op->state->path_prefix, file_name);
-//
-//	if ((f_op->fh = fopen(f_op->state->path, "w")) == NULL) {
-//		err = errno;
-//		D0(fprintf(debug_file, "Error opening %s for writing\n", file_name));
-//		D0(fprintf(debug_file, "%s\n", strerror(err)));
-//		return -CAMOGM_FRAME_FILE_ERR;
-//	}
-//
-//	return FILE_OK;
-//}
 
 /**
  * @brief Detect cases when file marker crosses read buffer boundary
@@ -669,61 +632,12 @@ static int check_edge_case(const struct iovec *from, const struct iovec *to, con
 }
 
 /**
- * @brief Perform file operation in accordance with current file state.
- * @param[in]   f_op   pointer to a structure holding information about currently opened file
- * @param[in]   from   start pointer to data buffer
- * @param[in]   to     end pointer to data buffer
- * @return      a constant of #file_result type
+ * @brief Send mmaped buffer over opened socket
+ * @param[in]   sockfd    opened socket descriptor
+ * @param[in]   buff      pointer to memory mapped buffer
+ * @param[in]   sz        the size of @e buff
+ * @return      none
  */
-//static int write_buffer(struct file_opts *f_op, unsigned char *from, unsigned char *to)
-//{
-//	int ret = FILE_OK;
-//	int len;
-//	unsigned int sz;
-//
-//	sz = to - from;
-//	switch (f_op->file_state) {
-//	case WRITE_RUNNING:
-//		len = fwrite(from, sz, 1, f_op->fh);
-//		if (len != 1) {
-//			perror(__func__);
-//			ret = FILE_WR_ERR;
-//		}
-//		break;
-//	case WRITE_START:
-//		if ((ret = start_new_file(f_op)) == FILE_OK) {
-//			len = fwrite(from, sz, 1, f_op->fh);
-//			if (len != 1) {
-//				perror(__func__);
-//				ret = FILE_WR_ERR;
-//			}
-//		} else {
-//			if (ret == -CAMOGM_NO_SPACE)
-//				D0(fprintf(debug_file, "No free space left on the disk\n"));
-//			f_op->fh = NULL;
-//			ret = FILE_OPEN_ERR;
-//		}
-//		break;
-//	case WRITE_STOP:
-//		len = fwrite(from, sz, 1, f_op->fh);
-//		if (len != 1) {
-//			perror(__func__);
-//			ret = FILE_WR_ERR;
-//		}
-//		if (fclose(f_op->fh) != 0) {
-//			perror(__func__);
-//			ret = FILE_CLOSE_ERR;
-//		} else {
-//			f_op->fh = NULL;
-//			f_op->file_cntr++;
-//		}
-//		break;
-//	default:
-//		ret = FILE_OPT_ERR;
-//	}
-//	return ret;
-//}
-
 void send_buffer(int sockfd, unsigned char *buff, size_t sz)
 {
 	size_t bytes_left = sz;
@@ -741,6 +655,14 @@ void send_buffer(int sockfd, unsigned char *buff, size_t sz)
 	}
 }
 
+/**
+ * @brief Map a piece of raw device buffer to memory
+ * @param[in,out]   rawdev   pointer to #rawdev_buffer structure containing
+ * the current state of raw device buffer
+ * @param[in]       range    pointer to #range structure holding the offsets of
+ * mmaped region
+ * @return          0 in case the region was mmaped successfully and -1 in case of an error
+ */
 int mmap_disk(rawdev_buffer *rawdev, const struct range *range)
 {
 	int ret = 0;
@@ -762,6 +684,12 @@ int mmap_disk(rawdev_buffer *rawdev, const struct range *range)
 	return ret;
 }
 
+/**
+ * @brief Unmap currently mapped raw device buffer
+ * @param[in,out]   rawdev   pointer to #rawdev_buffer structure containing
+ * the current state of raw device buffer
+ * @return          0 in case the region was unmapped successfully and -1 in case of an error
+ */
 int munmap_disk(rawdev_buffer *rawdev)
 {
 	if (rawdev->disk_mmap == NULL)
@@ -777,6 +705,14 @@ int munmap_disk(rawdev_buffer *rawdev)
 	return 0;
 }
 
+/**
+ * @brief Check if the file pointed by disk index node is in the memory mapped region
+ * @param[in]   range   pointer to #range structure holding the offsets of
+ * memory mapped region
+ * @param[in]   indx    pointer to the disk index node which should be checked for
+ * presence in currently mapped region
+ * @return      @b true if the file is the region and @b false otherwise
+ */
 bool is_in_range(struct range *range, struct disk_index *indx)
 {
 	if (indx->f_offset >= range->from &&
@@ -788,6 +724,11 @@ bool is_in_range(struct range *range, struct disk_index *indx)
 }
 
 #define PORT_NUMBER 3456
+/**
+ * @brief Prepare socket for communication
+ * @param[out]   socket_fd   pointer to socket descriptor
+ * @return       none
+ */
 void prep_socket(int *socket_fd)
 {
 	int opt = 1;
@@ -803,10 +744,11 @@ void prep_socket(int *socket_fd)
 }
 
 /**
- *
- * @param cmd
- * cmd pointer is updated to point to current command
- * @return -1 command not recognized, -2 end of buffer
+ * @brief Parse command line
+ * @param[in]   cmd   pointer to command line buffer, this pointer is
+ * updated to point to current command
+ * @return Positive command number from #socket_commands, -1 if command not recognized and
+ * -2 to indicate that the command buffer has been fully processed
  */
 int parse_command(char **cmd)
 {
@@ -838,6 +780,8 @@ int parse_command(char **cmd)
  * @brief Break HTTP GET string after the command part as we do not need that part. The function
  * finds the first space character after the command part starts and replaces it with null.
  * @param[in,out]   cmd   pointer to HTTP GET string
+ * @param[in]       cmd_len the length of the command in buffer
+ * @return          none
  */
 void trim_command(char *cmd, ssize_t cmd_len)
 {
@@ -853,6 +797,14 @@ void trim_command(char *cmd, ssize_t cmd_len)
 	}
 }
 
+/**
+ * @brief Send a file crossing raw device buffer boundary.
+ * Such a file is split into two parts, the one in the end of the buffer and the other
+ * in the beginning, and should be sent in two steps
+ * @param[in]   rawdev   pointer to #rawdev_buffer structure containing
+ * @param[in]   indx     pointer to the disk index node
+ * @param[in]   sockfd   opened socket descriptor
+ */
 void send_split_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
 {
 	ssize_t rcntr = 0;
@@ -881,6 +833,12 @@ void send_split_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
 	lseek64(rawdev->rawdev_fd, curr_pos, SEEK_SET);
 }
 
+/**
+ * @brief Send the number of files (or disk chunks) found over socket connection
+ * @param[in]   sockfd   opened socket descriptor
+ * @param[in]   num      the number to be sent
+ * @return      none
+ */
 void send_fnum(int sockfd, size_t num)
 {
 	char buff[SMALL_BUFF_LEN] = {0};
@@ -891,6 +849,12 @@ void send_fnum(int sockfd, size_t num)
 	write(sockfd, buff, len);
 }
 
+/**
+ * @brief Read file parameters from a string and fill in disk index node structure
+ * @param[in]    cmd   pointer to a string with file parameters
+ * @param[out]   indx  pointer to disk index node structure
+ * @return       the number of parameters extracted from the string or -1 in case of an error
+ */
 int get_indx_args(char *cmd, struct disk_index *indx)
 {
 	char *cmd_start = strchr(cmd, ':');
@@ -901,9 +865,15 @@ int get_indx_args(char *cmd, struct disk_index *indx)
 }
 
 /**
+ * @brief Raw device buffer reading function.
  *
- * @param arg
- * @todo print unrecognized command
+ * This function is started in a separated thread right after the application has started. It opens a
+ * communication socket, waits for commands sent over the socket and process them.
+ * @param[in, out]   arg   pointer to #camogm_state structure
+ * @return           none
+ * @warning The main processing loop of the function is enclosed in @e pthread_cleanup_push and @e pthread_cleanup_pop
+ * calls. The effect of use of normal @b return or @b break to prematurely leave this loop is undefined.
+ * @todo print unrecognized command to debug output file
  */
 void *reader(void *arg)
 {
@@ -931,9 +901,7 @@ void *reader(void *arg)
 			.state = state,
 			.idir = &index_dir,
 			.sockfd_const = &sockfd,
-			.sockfd_temp = &fd,
-			.ret_val = 0
-
+			.sockfd_temp = &fd
 	};
 
 	prep_socket(&sockfd);
@@ -1109,6 +1077,13 @@ void *reader(void *arg)
 	return (void *) 0;
 }
 
+/**
+ * @brief Clean up after the reading thread is closed. This function is thread-cancellation handler and it is
+ * passed to @e pthread_cleanup_push() function.
+ * @param[in]   arg   pointer to #exit_state structure containing resources that
+ * should be closed
+ * @return      none
+ */
 static inline void exit_thread(void *arg)
 {
 	struct exit_state *s = (struct exit_state *)arg;
@@ -1129,15 +1104,17 @@ static inline void exit_thread(void *arg)
 }
 
 /**
- * @brief Extract JPEG files from raw device buffer
+ * @brief Extract the position and parameters of JPEG files in raw device buffer and
+ * build disk index directory for further file extraction.
  *
  * Data from raw device is read to a buffer in #PHY_BLK_SZ blocks. The buffer is
- * analyzed for JPEG markers and then the data from buffer is written to a file.
+ * then analyzed for JPEG markers stored in #elphelst and #elphelen arrays. The offsets and
+ * sizes of the files found in the buffer are recorded to disk index directory.
  * @param[in]   state   a pointer to a structure containing current state
- * @return      0 if files were extracted successfully and negative error code otherwise
- * @warning The main processing loop of the function is enclosed in @e pthread_cleanup_push and @e pthread_cleanup_pop
- * calls. The effect of use of normal @b return or @b break to prematurely leave this loop is undefined.
- * @todo update description, reorder decision tree
+ * @param[out]  idir    a pointer to disk index directory. This directory will contain
+ * offset of the files found in the raw device buffer.
+ * @return      none
+ * @todo reorder decision tree
  */
 void build_index(camogm_state *state, struct disk_idir *idir)
 {

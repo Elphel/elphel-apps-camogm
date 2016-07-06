@@ -61,6 +61,8 @@
 /** @brief Maximum length of file or raw device path */
 #define ELPHEL_PATH_MAX           300
 #define MMAP_CHUNK_SIZE           10485760
+/** @brief Time interval (in microseconds) for processing commands */
+#define COMMAND_LOOP_DELAY        500000
 
 /**
  * @enum state_flags

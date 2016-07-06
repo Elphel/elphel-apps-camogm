@@ -33,8 +33,6 @@
 #include "camogm_kml.h"
 #include "camogm_read.h"
 
-/** @brief Time interval (in microseconds) for processing commands */
-#define COMMAND_LOOP_DELAY        500000 //0.5sec
 /** @brief Default debug level */
 #define DEFAULT_DEBUG_LVL         6
 /** @brief JPEG trailer syze in bytes */
