@@ -26,6 +26,7 @@
 #include <sys/uio.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <getopt.h>
 
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
@@ -103,7 +104,7 @@ typedef enum {
 int debug_level;
 FILE* debug_file;
 
-void camogm_init(camogm_state *state, char *pipe_name);
+void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num);
 int camogm_start(camogm_state *state);
 int camogm_stop(camogm_state *state);
 void camogm_reset(camogm_state *state);
@@ -190,7 +191,7 @@ void put_uint64(void *buf, u_int64_t val)
  * @param[in]   pipe_name pointer to command pipe name string
  * @return      none
  */
-void camogm_init(camogm_state *state, char *pipe_name)
+void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 {
 	const char sserial[] = "elp0";
 	int * ipser = (int*)sserial;
@@ -231,6 +232,7 @@ void camogm_init(camogm_state *state, char *pipe_name)
 	state->rawdev.curr_pos_r = state->rawdev.start_pos;
 	state->active_chn = ALL_CHN_ACTIVE;
 	state->rawdev.mmap_default_size = MMAP_CHUNK_SIZE;
+	state->sock_port = port_num;
 }
 
 /**
@@ -1666,13 +1668,13 @@ int open_files(camogm_state *state)
 int main(int argc, char *argv[])
 {
 	const char usage[] =   "This program allows recording of the video/images acquired by Elphel camera to the storage media.\n" \
-			     "It is designed to run in the background and accept commands through a named pipe.\n\n" \
+			     "It is designed to run in the background and accept commands through a named pipe or a socket.\n\n" \
 			     "Usage:\n\n" \
-			     "%s <named_pipe_name>\n\n"	\
+			     "%s -n <named_pipe_name> -p <port_number>\n\n"	\
 			     "i.e.:\n\n" \
-			     "%s /var/state/camogm_cmd\n\n" \
-			     "When the program is runninig you may send commands by writing strings to the command file\n" \
-			     "(/var/state/camogm_cmd in the example above). The complete list of available commands is available\n" \
+			     "%s -n /var/state/camogm_cmd -p 1234\n\n" \
+			     "When the program is running you may send commands by writing strings to the command file\n" \
+			     "(/var/state/camogm_cmd in the example above) or to the socket. The complete list of available commands is available\n" \
 			     "on Elphel Wiki (http://wiki.elphel.com/index.php?title=Camogm), here is the example of usage\n" \
 			     "from the shell prompt in the camera:\n\n"	\
 			     "echo \"status; exif=1; format=jpeg;status=/var/tmp/camogm.status\" > /var/state/camogm_cmd\n\n" \
@@ -1684,14 +1686,29 @@ int main(int argc, char *argv[])
 			     "buffer, it only retrieves that data from the buffer (waiting when needed), packages it to selected\n" \
 			     "format and stores the result files.\n\n";
 	int ret;
+	int opt;
+	uint16_t port_num;
+	char pipe_name_str[ELPHEL_PATH_MAX] = {0};
 
-	// no command line options processing yet
-	if ((argc < 2) || (argv[1][1] == '-')) {
+	if ((argc < 5) || (argv[1][1] == '-')) {
 		printf(usage, argv[0], argv[0]);
 		return EXIT_SUCCESS;
 	}
+	while ((opt = getopt(argc, argv, "n:p:h")) != -1) {
+		switch (opt) {
+		case 'n':
+			strncpy(pipe_name_str, (const char *)optarg, ELPHEL_PATH_MAX - 1);
+			break;
+		case 'p':
+			port_num = (uint16_t)atoi((const char *)optarg);
+			break;
+		case 'h':
+			printf(usage, argv[0], argv[0]);
+			return EXIT_SUCCESS;
+		}
+	}
 
-	camogm_init(&sstate, argv[1]);
+	camogm_init(&sstate, pipe_name_str, port_num);
 	if (pthread_mutex_init(&sstate.mutex, NULL) != 0) {
 		perror("Unable to initialize mutex\n");
 		return EXIT_FAILURE;

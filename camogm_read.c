@@ -723,20 +723,20 @@ bool is_in_range(struct range *range, struct disk_index *indx)
 		return false;
 }
 
-#define PORT_NUMBER 3456
 /**
  * @brief Prepare socket for communication
  * @param[out]   socket_fd   pointer to socket descriptor
+ * @param[in]    port_num    socket port number
  * @return       none
  */
-void prep_socket(int *socket_fd)
+void prep_socket(int *socket_fd, uint16_t port_num)
 {
 	int opt = 1;
 	struct sockaddr_in sock;
 
 	memset((char *)&sock, 0, sizeof(struct sockaddr_in));
 	sock.sin_family = AF_INET;
-	sock.sin_port = htons(PORT_NUMBER);
+	sock.sin_port = htons(port_num);
 	*socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 	setsockopt(*socket_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt));
 	bind(*socket_fd, (struct sockaddr *) &sock, sizeof(struct sockaddr_in));
@@ -904,7 +904,7 @@ void *reader(void *arg)
 			.sockfd_temp = &fd
 	};
 
-	prep_socket(&sockfd);
+	prep_socket(&sockfd, state->sock_port);
 	pthread_cleanup_push(exit_thread, &exit_state);
 	while (true) {
 		fd = accept(sockfd, NULL, 0);

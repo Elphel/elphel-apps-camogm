@@ -89,11 +89,25 @@ enum state_flags {
  * The start position of raw device buffer
  * @var rawdev_buffer::end_pos
  * The end position of raw device buffer
- * @var rawdev_buffer::curr_pos
+ * @var rawdev_buffer::curr_pos_r
  * Current read position in raw device buffer
+ * @var rawdev_buffer::curr_pos_w
+ * Current write position in raw device buffer
+ * @var rawdevice_buffer::mmap_default_size
+ * The default size of memory mapped disk region
+ * @var rawdevice_buffer::mmap_current_size
+ * The size of currently memory mapped disk region. Can be less then #mmap_default_size
+ * @var rawdevice_buffer::mmap_offset
+ * Current offset (in bytes) from the beginning of raw device buffer
  * @var rawdev_buffer::file_start
  * Pointer to the beginning of current file. This pointer is set during raw device reading and
  * updated every time new file is found.
+ * @var rawdevice_buffer::tid
+ * The ID of raw device reading thread
+ * @var rawdev_buffer::thread_state
+ * The state of the reading thread. Used to interrupt current operation
+ * @var rawdev_buffer::disk_mmap
+ * Pointer to memory mapped buffer region
  */
 typedef struct {
 	int rawdev_fd;
@@ -101,15 +115,15 @@ typedef struct {
 	uint32_t overrun;
 	uint64_t start_pos;
 	uint64_t end_pos;
+	volatile uint64_t curr_pos_r;
 	uint64_t curr_pos_w;
-	unsigned char *disk_mmap;
 	uint64_t mmap_default_size;
 	uint64_t mmap_current_size;
 	uint64_t mmap_offset;
-	volatile uint64_t curr_pos_r;
 	uint64_t file_start;
 	pthread_t tid;
 	volatile int thread_state;
+	unsigned char *disk_mmap;
 } rawdev_buffer;
 
 /**
@@ -201,6 +215,7 @@ typedef struct {
 	int rawdev_op;                                          ///< flag indicating writing to raw device
 	rawdev_buffer rawdev;                                   ///< contains pointers to raw device buffer
 	unsigned int active_chn;                                ///< bitmask of active sensor ports
+	uint16_t sock_port; 									///< command socket port number
 } camogm_state;
 
 extern int debug_level;
