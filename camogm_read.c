@@ -47,11 +47,14 @@
 #include <sys/stat.h>
 
 #include "camogm_read.h"
+#include "index_list.h"
 
 /** @brief Offset in Exif where TIFF header starts */
 #define TIFF_HDR_OFFSET           12
 /** @brief The date and time format of Exif field */
 #define EXIF_DATE_TIME_FORMAT     "%Y:%m:%d %H:%M:%S"
+/** @brief The format string used for file parameters reporting. Time and port number are extracted from Exif */
+#define INDEX_FORMAT_STR          "port_number=%d;unix_time=%ld;usec_time=%06u;offset=0x%010llx;file_size=%u\n"
 /** @brief The delimiters used to separate several commands in one command string sent over socket */
 #define CMD_DELIMITER             "/?"
 /** @brief The length of a buffer for command string */
@@ -60,8 +63,6 @@
 #define SMALL_BUFF_LEN            32
 /** @brief 64 bit mask to align offsets to 4 kb page boundary */
 #define PAGE_BOUNDARY_MASK        0xffffffffffffe000
-/** @brief The format string used for file parameters reporting. Time and port number are extracted from Exif */
-#define INDEX_FORMAT_STR          "port_number=%d;unix_time=%ld;usec_time=%06u;offset=0x%010llx;file_size=%u\n"
 /** @brief The size of read buffer in bytes. The data will be read from disk in blocks of this size */
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
@@ -245,128 +246,6 @@ void dump_index_dir(const struct disk_idir *idir)
 				ind->port, ind->rawtime, ind->usec, ind->f_offset, ind->f_size);
 		ind = ind->next;
 	}
-}
-
-/**
- * @brief Create a new node in a linked list of disk indexes
- * @param[in,out]   index   pointer to a newly allocated structure
- * @return          0 in case a new disk index structure was successfully created and -1 otherwise
- */
-int create_node(struct disk_index **index)
-{
-	if (*index != NULL)
-		return -1;
-
-	*index = malloc(sizeof(struct disk_index));
-	if (*index != NULL) {
-		memset(*index, 0, sizeof(struct disk_index));
-		return 0;
-	} else {
-		return -1;
-	}
-}
-
-/**
- * @brief Add a new index node to disk index directory
- * @param[in,out]   idir   pointer to disk index directory
- * @param[in]       index  pointer to index node to be added to disk index directory
- * @return          The number of entries in disk index directory
- */
-int add_node(struct disk_idir *idir, struct disk_index *index)
-{
-	if (idir->head == NULL && idir->tail == NULL) {
-		idir->head = index;
-		idir->tail = index;
-		idir->size = 1;
-	} else {
-		index->prev = idir->tail;
-		idir->tail->next = index;
-		idir->tail = index;
-		idir->size++;
-	}
-
-	return idir->size;
-}
-
-/**
- * @brief Find index node by its start offset
- * @param[in]   idir   pointer to disk index directory
- * @param[in]   offset the offset of the file which should be found
- * @return      pointer to disk index node or NULL if the corresponding file was not found
- */
-struct disk_index *find_by_offset(const struct disk_idir *idir, uint64_t offset)
-{
-	struct disk_index *index = idir->head;
-
-	while (index != NULL) {
-		if (index->f_offset == offset)
-			break;
-		index = index->next;
-	}
-
-	return index;
-}
-
-/**
- * @brief Remove a single index node from disk index directory
- * @param[in,out]   idir   pointer to disk index directory
- * @param[in]       node   pointer to the index node which should be removed
- * @return          The number of entries in disk index directory
- */
-int remove_node(struct disk_idir *idir, struct disk_index *node)
-{
-	if (node == NULL)
-		return -1;
-
-	if (node == idir->head) {
-		idir->head = node->next;
-		idir->head->prev = NULL;
-	} else if (node == idir->tail) {
-		idir->tail = node->prev;
-		idir->tail->next = NULL;
-	} else {
-		struct disk_index *ind = idir->head;
-		while (ind != NULL) {
-			if (ind == node) {
-				ind->prev->next = ind->next;
-				ind->next->prev = ind->prev;
-				break;
-			}
-			ind = ind->next;
-		}
-	}
-	free(node);
-	node = NULL;
-	idir->size--;
-
-	return idir->size;
-}
-
-/**
- * Remove all entries from disk index directory an free memory
- * @param[in]   idir   pointer to disk index directory
- * @return      0 in case the directory was successfully deleted and -1 if the directory was empty
- */
-int delete_idir(struct disk_idir *idir)
-{
-	struct disk_index *curr_ind;
-	struct disk_index *next_ind;
-
-	if (idir == NULL || idir->head == NULL)
-		return -1;
-
-	curr_ind = idir->head;
-	next_ind = curr_ind->next;
-	while (curr_ind != NULL) {
-		free(curr_ind);
-		curr_ind = next_ind;
-		if (curr_ind != NULL)
-			next_ind = curr_ind->next;
-	}
-	idir->head = idir->tail = NULL;
-	idir->size = 0;
-
-	return 0;
 }
 
 /**
