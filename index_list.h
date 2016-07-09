@@ -68,7 +68,11 @@ struct disk_idir {
 void dump_index_dir(const struct disk_idir *idir);
 int create_node(struct disk_index **index);
 int add_node(struct disk_idir *idir, struct disk_index *index);
+int insert_prev(struct disk_idir *idir, struct disk_index *parent, struct disk_index *new_indx);
+int insert_next(struct disk_idir *idir, struct disk_index *parent, struct disk_index *new_indx);
+int insert_node(struct disk_idir *idir, struct disk_index *indx);
 struct disk_index *find_by_offset(const struct disk_idir *idir, uint64_t offset);
+struct disk_index *find_nearest_by_time(const struct disk_idir *idir, time_t time);
 int remove_node(struct disk_idir *idir, struct disk_index *node);
 int delete_idir(struct disk_idir *idir);
 

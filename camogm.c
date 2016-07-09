@@ -812,7 +812,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
 			/* debug code follows */
-			state->rawdev.end_pos = 134217728;
+			state->rawdev.end_pos = 128 * 1048576;
 			/* end of debug code */
 		}
 	}
@@ -1687,7 +1687,7 @@ int main(int argc, char *argv[])
 			     "format and stores the result files.\n\n";
 	int ret;
 	int opt;
-	uint16_t port_num;
+	uint16_t port_num = 0;
 	char pipe_name_str[ELPHEL_PATH_MAX] = {0};
 
 	if ((argc < 5) || (argv[1][1] == '-')) {

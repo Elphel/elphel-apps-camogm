@@ -53,6 +53,8 @@
 #define TIFF_HDR_OFFSET           12
 /** @brief The date and time format of Exif field */
 #define EXIF_DATE_TIME_FORMAT     "%Y:%m:%d %H:%M:%S"
+#define EXIF_TIMESTAMP_FORMAT     "%d:%d:%d_%d:%d:%d"
+//#define EXIF_TIMESTAMP_FORMAT     "%04d:%02d:%02d_%02d:%02d:%02d"
 /** @brief The format string used for file parameters reporting. Time and port number are extracted from Exif */
 #define INDEX_FORMAT_STR          "port_number=%d;unix_time=%ld;usec_time=%06u;offset=0x%010llx;file_size=%u\n"
 /** @brief The delimiters used to separate several commands in one command string sent over socket */
@@ -88,6 +90,7 @@ static const struct iovec elphel_en = {
 	X(CMD_GET_INDEX, "get_index") \
 	X(CMD_READ_DISK, "read_disk") \
 	X(CMD_READ_FILE, "read_file") \
+	X(CMD_FIND_FILE, "find_file") \
 	X(CMD_READ_ALL_FILES, "read_all_files") \
 	X(CMD_STATUS, "status")
 
@@ -225,12 +228,15 @@ struct crb_ptrs {
 struct exit_state {
 	camogm_state *state;
 	struct disk_idir *idir;
+	struct disk_idir *sparse_idir;
 	int *sockfd_const;
 	int *sockfd_temp;
 };
 
 static inline void exit_thread(void *arg);
 static void build_index(camogm_state *state, struct disk_idir *idir);
+static int mmap_disk(rawdev_buffer *rawdev, const struct range *range);
+static int munmap_disk(rawdev_buffer *rawdev);
 
 /**
  * @brief Debug function, prints the content of disk index directory
@@ -241,9 +247,11 @@ void dump_index_dir(const struct disk_idir *idir)
 {
 	struct disk_index *ind = idir->head;
 
+	printf("Head pointer = 0x%p, tail pointer = 0x%p\n", idir->head, idir->tail);
 	while (ind != NULL) {
 		fprintf(debug_file, INDEX_FORMAT_STR,
 				ind->port, ind->rawtime, ind->usec, ind->f_offset, ind->f_size);
+		fprintf(debug_file, "\tCurrent pointer: 0x%p, Prev pointer: 0x%p, next pointer: 0x%p\n", ind, ind->prev, ind->next);
 		ind = ind->next;
 	}
 }
@@ -326,14 +334,14 @@ static void hdr_byte_order(struct tiff_hdr *hdr)
  * @param[out]  buff    buffer for the string to be read
  * @return      The number of bytes placed to the read buffer
  */
-static size_t exif_get_text(camogm_state *state, struct ifd_entry *tag, char *buff)
+static size_t exif_get_text(rawdev_buffer *rawdev, struct ifd_entry *tag, char *buff)
 {
 	size_t bytes = 0;
 	size_t str_len = tag->len * exif_data_fmt[tag->format];
-	uint64_t curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + tag->offset;
+	uint64_t curr_pos = rawdev->file_start + TIFF_HDR_OFFSET + tag->offset;
 
-	lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
-	bytes = read(state->rawdev.rawdev_fd, buff, str_len);
+	lseek64(rawdev->rawdev_fd, curr_pos, SEEK_SET);
+	bytes = read(rawdev->rawdev_fd, buff, str_len);
 
 	return bytes;
 }
@@ -418,12 +426,12 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 		}
 		if (ifd_date_time.len != 0) {
 			struct tm tm;
-			exif_get_text(state, &ifd_date_time, str_buff);
+			exif_get_text(&state->rawdev, &ifd_date_time, str_buff);
 			strptime(str_buff, EXIF_DATE_TIME_FORMAT, &tm);
 			node->rawtime = mktime(&tm);
 		}
 		if (ifd_subsec.len != 0) {
-			exif_get_text(state, &ifd_subsec, str_buff);
+			exif_get_text(&state->rawdev, &ifd_subsec, str_buff);
 			node->usec = strtoul(str_buff, NULL, 10);
 		}
 		if (node->rawtime != -1)
@@ -436,6 +444,96 @@ static int save_index(camogm_state *state, struct disk_idir *idir)
 	return ret;
 }
 
+static int read_index(rawdev_buffer *rawdev, struct disk_index *indx)
+{
+	int ret = 0;
+	int process = 2;
+	uint32_t data32;
+	uint16_t num_entries = 0;
+	uint64_t curr_pos;
+	uint64_t subifd_offset = 0;
+	struct tiff_hdr hdr;
+	struct ifd_entry ifd;
+	struct ifd_entry ifd_page_num = {0};
+	struct ifd_entry ifd_date_time = {0};
+	struct ifd_entry ifd_subsec = {0};
+	struct disk_index *node = NULL;
+	unsigned char read_buff[TIFF_HDR_OFFSET] = {0};
+	char str_buff[SMALL_BUFF_LEN] = {0};
+	uint64_t save_pos = lseek64(rawdev->rawdev_fd, 0, SEEK_CUR);
+
+	if (indx == NULL)
+		return -1;
+
+	if (create_node(&node) != 0)
+		return -1;
+
+	curr_pos = rawdev->file_start;
+	lseek64(rawdev->rawdev_fd, curr_pos, SEEK_SET);
+	if (read(rawdev->rawdev_fd, read_buff, sizeof(read_buff)) <= 0) {
+		lseek64(rawdev->rawdev_fd, save_pos, SEEK_SET);
+		return -1;
+	}
+	if (read_buff[2] == 0xff && read_buff[3] == 0xe1) {
+		// get IFD0 offset from TIFF header
+		read(rawdev->rawdev_fd, &hdr, sizeof(struct tiff_hdr));
+		hdr_byte_order(&hdr);
+		curr_pos = rawdev->file_start + TIFF_HDR_OFFSET + hdr.offset;
+		lseek64(rawdev->rawdev_fd, curr_pos, SEEK_SET);
+		// process IFD0 and SubIFD fields
+		do {
+			read(rawdev->rawdev_fd, &num_entries, sizeof(num_entries));
+			num_entries = __be16_to_cpu(num_entries);
+			for (int i = 0; i < num_entries; i++) {
+				read(rawdev->rawdev_fd, &ifd, sizeof(struct ifd_entry));
+				ifd_byte_order(&ifd);
+				switch (ifd.tag) {
+				case Exif_Image_PageNumber:
+					ifd_page_num = ifd;
+					break;
+				case Exif_Photo_DateTimeOriginal & 0xffff:
+					ifd_date_time = ifd;
+					break;
+				case Exif_Image_ExifTag:
+					subifd_offset = ifd.offset;
+					break;
+				case Exif_Photo_SubSecTimeOriginal & 0xffff:
+					ifd_subsec = ifd;
+					break;
+				}
+			}
+			// ensure that IFD0 finished correctly (0x00000000 in the end), set file pointer to SubIFD and
+			// process remaining fields
+			read(rawdev->rawdev_fd, &data32, sizeof(data32));
+			process -= (subifd_offset == 0 || data32 != 0) ? 2 : 1;
+			curr_pos = rawdev->file_start + TIFF_HDR_OFFSET + subifd_offset;
+			lseek64(rawdev->rawdev_fd, curr_pos, SEEK_SET);
+		} while (process > 0);
+
+		// fill disk index node with Exif data and add it to disk index directory
+		node->f_offset = rawdev->file_start;
+		if (ifd_page_num.len != 0) {
+			node->port = (uint32_t)ifd_page_num.offset;
+		}
+		if (ifd_date_time.len != 0) {
+			struct tm tm;
+			exif_get_text(rawdev, &ifd_date_time, str_buff);
+			strptime(str_buff, EXIF_DATE_TIME_FORMAT, &tm);
+			node->rawtime = mktime(&tm);
+		}
+		if (ifd_subsec.len != 0) {
+			exif_get_text(rawdev, &ifd_subsec, str_buff);
+			node->usec = strtoul(str_buff, NULL, 10);
+		}
+		if (node->rawtime != -1)
+			*indx = *node;
+		else
+			ret = -1;
+	}
+
+	lseek64(rawdev->rawdev_fd, save_pos, SEEK_SET);
+	return ret;
+}
 /**
  * @brief Calculate the size of current file and update the value in disk index directory
  * @param[in,out]   idir       pointer to disk index directory
@@ -534,6 +632,28 @@ void send_buffer(int sockfd, unsigned char *buff, size_t sz)
 	}
 }
 
+int send_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
+{
+	uint64_t mm_file_start;
+	struct range mmap_range;
+
+	mmap_range.from = indx->f_offset & PAGE_BOUNDARY_MASK;
+	mmap_range.to = indx->f_offset + indx->f_size;
+	mm_file_start = indx->f_offset - mmap_range.from;
+	if (mmap_disk(rawdev, &mmap_range) == 0) {
+		send_buffer(sockfd, &rawdev->disk_mmap[mm_file_start], indx->f_size);
+		if (munmap_disk(rawdev) != 0) {
+			D0(fprintf(debug_file, "Unable to unmap memory region\n"));
+			return -1;
+		}
+	} else {
+		D0(fprintf(debug_file, "Unable to map disk to memory region:"
+				"disk region start = 0x%llx, disk region end = 0x%llx\n", mmap_range.from, mmap_range.to));
+		return -1;
+	}
+	 return 0;
+}
+
 /**
  * @brief Map a piece of raw device buffer to memory
  * @param[in,out]   rawdev   pointer to #rawdev_buffer structure containing
@@ -542,7 +662,7 @@ void send_buffer(int sockfd, unsigned char *buff, size_t sz)
  * mmaped region
  * @return          0 in case the region was mmaped successfully and -1 in case of an error
  */
-int mmap_disk(rawdev_buffer *rawdev, const struct range *range)
+static int mmap_disk(rawdev_buffer *rawdev, const struct range *range)
 {
 	int ret = 0;
 	size_t mmap_size = range->to - range->from;
@@ -569,7 +689,7 @@ int mmap_disk(rawdev_buffer *rawdev, const struct range *range)
  * the current state of raw device buffer
  * @return          0 in case the region was unmapped successfully and -1 in case of an error
  */
-int munmap_disk(rawdev_buffer *rawdev)
+static int munmap_disk(rawdev_buffer *rawdev)
 {
 	if (rawdev->disk_mmap == NULL)
 		return 0;
@@ -681,6 +801,7 @@ void trim_command(char *cmd, ssize_t cmd_len)
  * Such a file is split into two parts, the one in the end of the buffer and the other
  * in the beginning, and should be sent in two steps
  * @param[in]   rawdev   pointer to #rawdev_buffer structure containing
+ * the current state of raw device buffer
  * @param[in]   indx     pointer to the disk index node
  * @param[in]   sockfd   opened socket descriptor
  */
@@ -743,6 +864,154 @@ int get_indx_args(char *cmd, struct disk_index *indx)
 	return sscanf(++cmd_start, INDEX_FORMAT_STR, &indx->port, &indx->rawtime, &indx->usec, &indx->f_offset, &indx->f_size);
 }
 
+int get_timestamp_args(char *cmd, struct disk_index *indx)
+{
+	int ret;
+	struct tm tm;
+	char *cmd_start = strchr(cmd, ':');
+
+	if (cmd_start == NULL)
+		return -1;
+	ret = sscanf(++cmd_start, EXIF_TIMESTAMP_FORMAT, &tm.tm_year, &tm.tm_mon,
+			&tm.tm_mday, &tm.tm_hour, &tm.tm_min, &tm.tm_sec);
+	tm.tm_year -= 1900;
+	tm.tm_mon -= 1;
+	indx->rawtime = mktime(&tm);
+	return ret;
+}
+
+#define SEARCH_SIZE_WINDOW        (2 * 1048576)
+int get_search_window(const struct range *r, struct range *s)
+{
+	if ((r->to - r->from) < SEARCH_SIZE_WINDOW)
+		return -1;
+
+	uint64_t middle = (r->to + r->from) / 2;
+	s->from = (middle - SEARCH_SIZE_WINDOW / 2) & PAGE_BOUNDARY_MASK;
+	s->to = middle + SEARCH_SIZE_WINDOW / 2;
+	return 0;
+}
+
+int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_index *indx)
+{
+	int ret = -1;
+	int pos_start;
+
+	if (mmap_disk(rawdev, (const struct range *)wnd) == 0) {
+		fprintf(debug_file, "Searching in mmapped window: from 0x%llx, to 0x%llx\n", wnd->from, wnd->from + rawdev->mmap_current_size);
+		pos_start = find_marker(rawdev->disk_mmap, rawdev->mmap_current_size, elphel_st.iov_base, elphel_st.iov_len, 0);
+		fprintf(debug_file, "pos_start = %d\n", pos_start);
+		if (pos_start >= 0) {
+			rawdev->file_start = rawdev->mmap_offset + pos_start;
+			read_index(rawdev, indx);
+			ret = 0;
+		}
+		munmap_disk(rawdev);
+	} else {
+		fprintf(debug_file, "Error mmaping region\n");
+	}
+
+	return ret;
+}
+
+/**
+ * @brief Find a file on disk having time stamp close to the time stamp given.
+ * @param[in]       rawdev   pointer to #rawdev_buffer structure containing
+ * the current state of raw device buffer
+ * @param[in]       idir     pointer to sparse disk index directory where indexes are sorted
+ * in time order
+ * @param[in,out]   indx     pointer to #disk_index structure with time stamp fields filled in.
+ * This structure will contain the disk index found (if any) and thus the time stamp
+ * provided through this structure will be overwritten.
+ * @return          0 if an index was found and -1 otherwise. The @b indx will contain the
+ * information about the index found on disk.
+ */
+
+// Time window used for disk index search. Index within this window is considered a candidate
+#define SEARCH_TIME_WINDOW        600
+int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_index *indx)
+{
+	int ret = 0;
+	bool indx_appended;
+	bool process = true;
+	struct range range;
+	struct range search_window;
+	struct disk_index *indx_found;
+	struct disk_index *nearest_indx = find_nearest_by_time((const struct disk_idir *)idir, indx->rawtime);
+
+	struct tm *tm = gmtime(&indx->rawtime);
+	fprintf(debug_file, "%s: looking for offset near %04d-%02d-%02d %02d:%02d:%02d\n", __func__,
+			tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+	uint64_t nr;
+	nr = (nearest_indx == NULL) ? 0 : nearest_indx->f_offset;
+	fprintf(debug_file, "Nearest index offset: 0x%llx\n", nr);
+
+	// define disk offsets where search will be performed
+	if (nearest_indx == NULL) {
+		range.from = rawdev->start_pos;
+		range.to = rawdev->end_pos;
+	} else {
+		if (indx->rawtime > nearest_indx->rawtime) {
+			range.from = nearest_indx->f_offset;
+			if (nearest_indx->next != NULL)
+				range.to = nearest_indx->next->f_offset;
+			else
+				range.to = rawdev->end_pos;
+		} else {
+			range.to = nearest_indx->f_offset;
+			if (nearest_indx->prev != NULL)
+				range.from = nearest_indx->prev->f_offset;
+			else
+				range.from = rawdev->start_pos;
+		}
+	}
+
+	fprintf(debug_file, "Starting search in range: from 0x%llx, to 0x%llx\n", range.from, range.to);
+
+	while (process && get_search_window(&range, &search_window) == 0) {
+		indx_found = NULL;
+		if (create_node(&indx_found) == -1)
+			break;
+		indx_appended = false;
+		fprintf(debug_file, "Search window: from 0x%llx, to 0x%llx\n", search_window.from, search_window.to);
+		if (find_in_window(rawdev, &search_window, indx_found) == 0) {
+			double time_diff = difftime(indx_found->rawtime, indx->rawtime);
+			fprintf(debug_file, "Index found: time diff %f, file offset 0x%llx, rawtime found %d, rawtime given %d\n",
+					time_diff, indx_found->f_offset, indx_found->rawtime, indx->rawtime);
+			if (fabs(time_diff) > SEARCH_TIME_WINDOW) {
+				// the index found is not within search time window, update sparse index directory and
+				// define a new search window
+				if (time_diff > 0) {
+					range.to = search_window.from;
+				} else {
+					range.from = search_window.to;
+				}
+			} else {
+				// the index found is within search time window, stop search and return
+				process = false;
+				*indx = *indx_found;
+			}
+			insert_node(idir, indx_found);
+			indx_appended = true;
+		} else {
+			// index not found in the search window, move toward the start of the range
+			range.to = search_window.from;
+		}
+		fprintf(debug_file, "Updating range, new range: from 0x%llx, to 0x%llx\n", range.from, range.to);
+	}
+	if (indx->f_offset == 0 && indx->f_size == 0) {
+		// no files were found within specified time window
+		ret = -1;
+	}
+	if (indx_appended == false)
+		free(indx_found);
+
+	fprintf(debug_file, "\nSparse index directory dump, %d nodes:\n", idir->size);
+	dump_index_dir(idir);
+
+	return ret;
+}
+
 /**
  * @brief Raw device buffer reading function.
  *
@@ -771,17 +1040,17 @@ void *reader(void *arg)
 	struct stat stat_buff;
 	struct range mmap_range;
 	struct disk_index *disk_indx, *cross_boundary_indx;
-	struct disk_idir index_dir = {
-			.head = NULL,
-			.tail = NULL,
-			.size = 0
-	};
+	struct disk_idir index_dir;
+	struct disk_idir index_sparse;
 	struct exit_state exit_state = {
 			.state = state,
 			.idir = &index_dir,
+			.sparse_idir = &index_sparse,
 			.sockfd_const = &sockfd,
 			.sockfd_temp = &fd
 	};
+	memset(&index_dir, 0, sizeof(struct disk_index));
+	memset(&index_sparse, 0, sizeof(struct disk_index));
 
 	prep_socket(&sockfd, state->sock_port);
 	pthread_cleanup_push(exit_thread, &exit_state);
@@ -870,21 +1139,28 @@ void *reader(void *arg)
 					struct disk_index indx;
 					if (get_indx_args(cmd_ptr, &indx) > 0 &&
 							(disk_indx = find_by_offset(&index_dir, indx.f_offset)) != NULL){
-						mmap_range.from = indx.f_offset & PAGE_BOUNDARY_MASK;
-						mmap_range.to = indx.f_offset + indx.f_size;
-						mm_file_start = indx.f_offset - mmap_range.from;
-						if (mmap_disk(rawdev, &mmap_range) == 0) {
-							send_buffer(fd, &rawdev->disk_mmap[mm_file_start], indx.f_size);
-							if (munmap_disk(rawdev) != 0) {
-								D0(fprintf(debug_file, "Unable to unmap memory region\n"));
-							}
-						} else {
-							D0(fprintf(debug_file, "Unable to map disk to memory region:"
-									"disk region start = 0x%llx, disk region end = 0x%llx\n", mmap_range.from, mmap_range.to));
-						}
+						send_file(rawdev, disk_indx, fd);
 					}
 				}
 				break;
+			case CMD_FIND_FILE: {
+				struct disk_index indx;
+				if (get_timestamp_args(cmd_ptr, &indx) > 0) {
+					if (index_dir.size == 0) {
+						find_disk_offset(rawdev, &index_sparse, &indx);
+					} else {
+						struct disk_index *indx_ptr;
+						indx_ptr = find_nearest_by_time(&index_sparse, indx.rawtime);
+						/* debug code follows */
+						if (indx_ptr != NULL)
+							printf("Index found in pre-built index directory: offset = 0x%llx\n", indx_ptr->f_offset);
+						else
+							printf("Index NOT found in pre-built index directory. Probably it should be rebuilt\n");
+						/* end of debug code */
+					}
+				}
+				break;
+			}
 			case CMD_READ_ALL_FILES:
 				// read files from raw device buffer and send them over socket; the disk index directory
 				// should be built beforehand
@@ -976,6 +1252,8 @@ static inline void exit_thread(void *arg)
 	}
 	if (s->idir->size != 0)
 		delete_idir(s->idir);
+	if (s->sparse_idir-> size != 0)
+		delete_idir(s->sparse_idir);
 	if (fstat(*s->sockfd_const, &buff) != EBADF)
 		close(*s->sockfd_const);
 	if (fstat(*s->sockfd_temp, &buff) != EBADF)
@@ -1109,13 +1387,16 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 					// error condition (normally should not happen), drop current read buffer and do nothing
 					buff_processed = 1;
 					D6(fprintf(debug_file, "State 'abnormal stop marker, skip data'\n"));
-				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop && search_state == SEARCH_FILE_DATA) {
+				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop) {
 					// normal condition, start marker following stop marker found - this indicates a new file
-					uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
-					idir_result = stop_index(idir, disk_pos);
+					if (search_state == SEARCH_FILE_DATA) {
+						uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
+						idir_result = stop_index(idir, disk_pos);
+					}
 					if (zero_cross == 0) {
 						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
 						idir_result = save_index(state, idir);
+						search_state = SEARCH_FILE_DATA;
 						save_from = save_from + pos_start + add_stm_len;
 						// @todo: replace with pointer to current buffer
 						save_to = buff + rd;

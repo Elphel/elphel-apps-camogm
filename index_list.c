@@ -17,6 +17,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <math.h>
 
 #include "index_list.h"
 
@@ -61,6 +63,81 @@ int add_node(struct disk_idir *idir, struct disk_index *index)
 	return idir->size;
 }
 
+int insert_node(struct disk_idir *idir, struct disk_index *indx)
+{
+	int ret = 0;
+	struct disk_index *node;
+
+	if (idir->head == NULL) {
+		add_node(idir, indx);
+		return 1;
+	}
+
+	node = idir->head;
+	while (node != NULL) {
+		if (indx->rawtime < node->rawtime) {
+			ret = insert_prev(idir, node, indx);
+			break;
+		}
+		node = node->next;
+	}
+	if (node == NULL)
+		ret = insert_next(idir, idir->tail, indx);
+
+	return ret;
+}
+
+/**
+ * @brief Insert new index to the list before the index specified. It means that new index will
+ * be inserted toward the head.
+ * @param[in,out]   idir   pointer to the lined list of indexes
+ * @param[in]       parent pointer to the element before which the new element will be inserted
+ * @param[in]       new_indx pointer to the element which will be inserted
+ * @return          The number of nodes in the list
+ */
+int insert_prev(struct disk_idir *idir, struct disk_index *parent, struct disk_index *new_indx)
+{
+	if (parent->prev != NULL) {
+		new_indx->next = parent;
+		new_indx->prev = parent->prev;
+		parent->prev->next = new_indx;
+		parent->prev = new_indx;
+	} else {
+		new_indx->next = parent;
+		new_indx->prev = NULL;
+		parent->prev = new_indx;
+		idir->head = new_indx;
+	}
+	idir->size++;
+
+	return idir->size;
+}
+/**
+ * @brief Insert new index to the list after the index specified. It means that new index will
+ * be inserted toward the tail.
+ * @param[in,out]   idir   pointer to the linked list of indexes
+ * @param[in]       parent pointer to the element after which the new element will be inserted
+ * @param[in]       new_indx pointer to the element which will be inserted
+ * @return          The number of nodes in the list
+ */
+int insert_next(struct disk_idir *idir, struct disk_index *parent, struct disk_index *new_indx)
+{
+	if (parent->next != NULL) {
+		new_indx->next = parent->next;
+		new_indx->prev = parent;
+		parent->next->prev = new_indx;
+		parent->next = new_indx;
+	} else {
+		new_indx->next = NULL;
+		new_indx->prev = parent;
+		parent->next = new_indx;
+		idir->tail = new_indx;
+	}
+	idir->size++;
+
+	return idir->size;
+}
+
 /**
  * @brief Find index node by its start offset
  * @param[in]   idir   pointer to disk index directory
@@ -78,6 +155,27 @@ struct disk_index *find_by_offset(const struct disk_idir *idir, uint64_t offset)
 	}
 
 	return index;
+}
+
+struct disk_index *find_nearest_by_time(const struct disk_idir *idir, time_t time)
+{
+	struct disk_index *ptr = NULL;
+	struct disk_index *index = idir->head;
+
+	if (idir->size == 0)
+		return NULL;
+	if (index->next != NULL)
+		ptr = index->next;
+	else
+		return index;
+
+	while (index != NULL) {
+		if (fabs(difftime(index->rawtime, time)) < fabs(difftime(ptr->rawtime, time)))
+			ptr = index;
+		index = index->next;
+	}
+
+	return ptr;
 }
 
 /**
