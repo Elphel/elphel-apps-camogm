@@ -214,7 +214,7 @@ int remove_node(struct disk_idir *idir, struct disk_index *node)
 }
 
 /**
- * Remove all entries from disk index directory an free memory
+ * @brief Remove all entries from disk index directory an free memory
  * @param[in]   idir   pointer to disk index directory
  * @return      0 in case the directory was successfully deleted and -1 if the directory was empty
  */

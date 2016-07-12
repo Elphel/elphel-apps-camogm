@@ -91,6 +91,8 @@ static const struct iovec elphel_en = {
 	X(CMD_READ_DISK, "read_disk") \
 	X(CMD_READ_FILE, "read_file") \
 	X(CMD_FIND_FILE, "find_file") \
+	X(CMD_NEXT_FILE, "next_file") \
+	X(CMD_PREV_FILE, "prev_file") \
 	X(CMD_READ_ALL_FILES, "read_all_files") \
 	X(CMD_STATUS, "status")
 
@@ -288,6 +290,36 @@ static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz,
 				ret = i;
 			else
 				ret = i - j;
+			j = 0;
+			break;
+		}
+	}
+	if (j > 0) {
+		// partial match found in the end of data buffer, we need more data for further comparison
+		ret = MATCH_PARTIAL;
+	}
+	return ret;
+}
+
+static int find_marker_backward(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const unsigned char * restrict pattern, ssize_t pt_sz,
+		int add_pattern)
+{
+	int ret = MATCH_NOT_FOUND;
+	int j = 0;
+
+	for (int i = buff_sz - 1; i > 0; i--) {
+		if (buff_ptr[i] != pattern[j]) {
+			// current symbol in data buffer and last symbol of pattern does not match
+			j = pt_sz - 1;
+		} else if (buff_ptr[i] == pattern[j] && j > 0) {
+			// pattern symbol match
+			j--;
+		} else if (buff_ptr[i] == pattern[j] && j == 0) {
+			// first pattern symbol match
+			if (add_pattern)
+				ret = i - j;
+			else
+				ret = i;
 			j = 0;
 			break;
 		}
@@ -542,14 +574,16 @@ static int read_index(rawdev_buffer *rawdev, struct disk_index *indx)
  * @note @e pos_stop points to the last byte of the file marker thus the size is incremented
  * by 1
  */
-int stop_index(struct disk_idir *idir, uint64_t pos_stop)
+int stop_index(struct disk_index *indx, uint64_t pos_stop)
 {
 	int ret = 0;
-	if (idir->tail != NULL) {
-		idir->tail->f_size = pos_stop - idir->tail->f_offset + 1;
+
+	if (indx != NULL) {
+		indx->f_size = pos_stop - indx->f_offset + 1;
 	} else {
 		ret = -1;
 	}
+
 	return ret;
 }
 
@@ -880,10 +914,11 @@ int get_timestamp_args(char *cmd, struct disk_index *indx)
 	return ret;
 }
 
-#define SEARCH_SIZE_WINDOW        (2 * 1048576)
+//#define SEARCH_SIZE_WINDOW        ((uint64_t)4 * (uint64_t)1048576)
 int get_search_window(const struct range *r, struct range *s)
 {
-	if ((r->to - r->from) < SEARCH_SIZE_WINDOW)
+	const uint64_t SEARCH_SIZE_WINDOW = 4194304;
+	if ((r->to - r->from) < SEARCH_SIZE_WINDOW || r->from > r->to)
 		return -1;
 
 	uint64_t middle = (r->to + r->from) / 2;
@@ -892,23 +927,35 @@ int get_search_window(const struct range *r, struct range *s)
 	return 0;
 }
 
+/**
+ * @brief Find JPEG file in a specified window. The window should be large enough to
+ * contain at least one file.
+ * @param[in]   rawdev   pointer to #rawdev_buffer structure containing
+ * the current state of raw device buffer
+ * @param[in]   wnd      pointer to a structure containing the offsets of a search window
+ * @param[out]  indx     disk index structure which will hold the offset and size of a file
+ * @return
+ */
 int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_index *indx)
 {
 	int ret = -1;
-	int pos_start;
+	int pos_start, pos_stop;
 
 	if (mmap_disk(rawdev, (const struct range *)wnd) == 0) {
 		fprintf(debug_file, "Searching in mmapped window: from 0x%llx, to 0x%llx\n", wnd->from, wnd->from + rawdev->mmap_current_size);
 		pos_start = find_marker(rawdev->disk_mmap, rawdev->mmap_current_size, elphel_st.iov_base, elphel_st.iov_len, 0);
-		fprintf(debug_file, "pos_start = %d\n", pos_start);
 		if (pos_start >= 0) {
 			rawdev->file_start = rawdev->mmap_offset + pos_start;
 			read_index(rawdev, indx);
+			pos_stop = find_marker(rawdev->disk_mmap + pos_start, rawdev->mmap_current_size - pos_start,
+					elphel_en.iov_base, elphel_en.iov_len, 1);
+			stop_index(indx, rawdev->mmap_offset + pos_stop + pos_start);
 			ret = 0;
 		}
+		fprintf(debug_file, "\t%s: pos_start = %d, pos_stop = %d\n", __func__, pos_start, pos_stop);
 		munmap_disk(rawdev);
 	} else {
-		fprintf(debug_file, "Error mmaping region\n");
+		fprintf(debug_file, "Error mmaping region from 0x%llx to 0x%llx\n", wnd->from, wnd->to);
 	}
 
 	return ret;
@@ -932,19 +979,21 @@ int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_i
 int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_index *indx)
 {
 	int ret = 0;
-	bool indx_appended;
+	bool indx_appended = false;
 	bool process = true;
 	struct range range;
 	struct range search_window;
-	struct disk_index *indx_found;
+	struct disk_index *indx_found = NULL;
 	struct disk_index *nearest_indx = find_nearest_by_time((const struct disk_idir *)idir, indx->rawtime);
 
+	/* debug code follows */
 	struct tm *tm = gmtime(&indx->rawtime);
 	fprintf(debug_file, "%s: looking for offset near %04d-%02d-%02d %02d:%02d:%02d\n", __func__,
 			tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
 	uint64_t nr;
 	nr = (nearest_indx == NULL) ? 0 : nearest_indx->f_offset;
 	fprintf(debug_file, "Nearest index offset: 0x%llx\n", nr);
+	/* end of debug code */
 
 	// define disk offsets where search will be performed
 	if (nearest_indx == NULL) {
@@ -976,7 +1025,7 @@ int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_
 		fprintf(debug_file, "Search window: from 0x%llx, to 0x%llx\n", search_window.from, search_window.to);
 		if (find_in_window(rawdev, &search_window, indx_found) == 0) {
 			double time_diff = difftime(indx_found->rawtime, indx->rawtime);
-			fprintf(debug_file, "Index found: time diff %f, file offset 0x%llx, rawtime found %d, rawtime given %d\n",
+			fprintf(debug_file, "Index found: time diff %f, file offset 0x%llx, rawtime found %ld, rawtime given %ld\n",
 					time_diff, indx_found->f_offset, indx_found->rawtime, indx->rawtime);
 			if (fabs(time_diff) > SEARCH_TIME_WINDOW) {
 				// the index found is not within search time window, update sparse index directory and
@@ -994,7 +1043,7 @@ int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_
 			insert_node(idir, indx_found);
 			indx_appended = true;
 		} else {
-			// index not found in the search window, move toward the start of the range
+			// index is not found in the search window, move toward the start of the range
 			range.to = search_window.from;
 		}
 		fprintf(debug_file, "Updating range, new range: from 0x%llx, to 0x%llx\n", range.from, range.to);
@@ -1003,7 +1052,7 @@ int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_
 		// no files were found within specified time window
 		ret = -1;
 	}
-	if (indx_appended == false)
+	if (indx_appended == false && indx_found != NULL)
 		free(indx_found);
 
 	fprintf(debug_file, "\nSparse index directory dump, %d nodes:\n", idir->size);
@@ -1145,12 +1194,13 @@ void *reader(void *arg)
 				break;
 			case CMD_FIND_FILE: {
 				struct disk_index indx;
+				struct disk_index *indx_ptr = NULL;
 				if (get_timestamp_args(cmd_ptr, &indx) > 0) {
-					if (index_dir.size == 0) {
-						find_disk_offset(rawdev, &index_sparse, &indx);
+					if (index_dir.size == 0 && find_disk_offset(rawdev, &index_sparse, &indx) == 0) {
+						indx_ptr = &indx;
+						index_sparse.curr_indx = indx_ptr;
 					} else {
-						struct disk_index *indx_ptr;
-						indx_ptr = find_nearest_by_time(&index_sparse, indx.rawtime);
+						indx_ptr = find_nearest_by_time(&index_dir, indx.rawtime);
 						/* debug code follows */
 						if (indx_ptr != NULL)
 							printf("Index found in pre-built index directory: offset = 0x%llx\n", indx_ptr->f_offset);
@@ -1158,7 +1208,48 @@ void *reader(void *arg)
 							printf("Index NOT found in pre-built index directory. Probably it should be rebuilt\n");
 						/* end of debug code */
 					}
+					if (indx_ptr != NULL)
+						send_file(rawdev, indx_ptr, fd);
 				}
+				break;
+			}
+			case CMD_NEXT_FILE: {
+				struct range rng;
+				struct disk_index *new_indx = NULL;
+				struct disk_index *indx_ptr = NULL;
+				uint64_t len;
+				if (index_sparse.curr_indx != NULL && create_node(&new_indx) == 0) {
+					if (index_sparse.curr_indx->next != NULL) {
+						len = index_sparse.curr_indx->next->f_offset - index_sparse.curr_indx->f_offset - 1;
+						if (len > 0) {
+							rng.from = index_sparse.curr_indx->f_offset + index_sparse.curr_indx->f_size + 1;
+							rng.to = index_sparse.curr_indx->next->f_offset;
+						} else {
+							indx_ptr = index_sparse.curr_indx->next;
+						}
+					} else {
+						rng.from = index_sparse.curr_indx->f_offset + index_sparse.curr_indx->f_size;
+						rng.to = rawdev->end_pos;
+					}
+					fprintf(debug_file, "Searching next file in rage from 0x%llx to 0x%llx\n", rng.from, rng.to);
+					if (indx_ptr == NULL) {
+						rng.from &= PAGE_BOUNDARY_MASK;
+						if (rng.to - rng.from > rawdev->mmap_default_size)
+							rng.to = rng.from + rawdev->mmap_default_size;
+						if (find_in_window(rawdev, &rng, new_indx) == 0) {
+							insert_next(&index_sparse, index_sparse.curr_indx, new_indx);
+							send_file(rawdev, new_indx, fd);
+							index_sparse.curr_indx = new_indx;
+						}
+					} else {
+						send_file(rawdev, indx_ptr, fd);
+						free(new_indx);
+					}
+					new_indx = NULL;
+				}
+				break;
+			}
+			case CMD_PREV_FILE: {
 				break;
 			}
 			case CMD_READ_ALL_FILES:
@@ -1378,7 +1469,7 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 					// normal condition, save current file size to index directory
 					uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
 					search_state = SEARCH_SKIP;
-					idir_result = stop_index(idir, disk_pos);
+					idir_result = stop_index(idir->tail, disk_pos);
 					buff_processed = 1;
 					if (zero_cross)
 						process = 0;
@@ -1391,7 +1482,7 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 					// normal condition, start marker following stop marker found - this indicates a new file
 					if (search_state == SEARCH_FILE_DATA) {
 						uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
-						idir_result = stop_index(idir, disk_pos);
+						idir_result = stop_index(idir->tail, disk_pos);
 					}
 					if (zero_cross == 0) {
 						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
@@ -1450,7 +1541,7 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 					if (result == MATCH_FOUND) {
 						search_state = SEARCH_SKIP;
 						uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
-						idir_result = stop_index(idir, disk_pos);
+						idir_result = stop_index(idir->tail, disk_pos);
 						save_from = next_chunk.iov_base + field_markers.second_buff.iov_len;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
 					} else {

@@ -812,7 +812,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
 			/* debug code follows */
-			state->rawdev.end_pos = 128 * 1048576;
+			state->rawdev.end_pos = (uint64_t)4096 * (uint64_t)1048576;
 			/* end of debug code */
 		}
 	}

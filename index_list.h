@@ -62,6 +62,7 @@ struct disk_index {
 struct disk_idir {
 	struct disk_index *head;
 	struct disk_index *tail;
+	struct disk_index *curr_indx;
 	size_t size;
 };
 
