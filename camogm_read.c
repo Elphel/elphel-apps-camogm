@@ -361,9 +361,10 @@ static void hdr_byte_order(struct tiff_hdr *hdr)
 
 /**
  * @brief Read a string from Exif for a given record.
- * @param[in]   state   a pointer to a structure containing current state
- * @param[in]   tag     Exif image file directory record containing string offset
- * @param[out]  buff    buffer for the string to be read
+ * @param[in,out]   rawdev   pointer to #rawdev_buffer structure containing
+ * the current state of raw device buffer
+ * @param[in]       tag     Exif image file directory record containing string offset
+ * @param[out]      buff    buffer for the string to be read
  * @return      The number of bytes placed to the read buffer
  */
 static size_t exif_get_text(rawdev_buffer *rawdev, struct ifd_entry *tag, char *buff)
@@ -380,103 +381,13 @@ static size_t exif_get_text(rawdev_buffer *rawdev, struct ifd_entry *tag, char *
 
 /**
  * @brief Read Exif data from the file starting from #rawdev_buffer::file_start offset and
- * create a new node in disk index directory
- * @param[in]      state   a pointer to a structure containing current state
- * @param[in,out]  idir    pointer to disk index directory
- * @return      0 if new node was successfully added and -1 otherwise
+ * create a new node corresponding to the offset
+ * @param[in,out]   rawdev   pointer to #rawdev_buffer structure containing
+ * the current state of raw device buffer
+ * @param[out]      indx     pointer to new disk index node
+ * @return      0 if new node was successfully created and -1 otherwise
  */
-static int save_index(camogm_state *state, struct disk_idir *idir)
-{
-	int ret = 0;
-	int process = 2;
-	uint32_t data32;
-	uint16_t num_entries = 0;
-	uint64_t curr_pos;
-	uint64_t subifd_offset = 0;
-	struct tiff_hdr hdr;
-	struct ifd_entry ifd;
-	struct ifd_entry ifd_page_num = {0};
-	struct ifd_entry ifd_date_time = {0};
-	struct ifd_entry ifd_subsec = {0};
-	struct disk_index *node = NULL;
-	unsigned char read_buff[TIFF_HDR_OFFSET] = {0};
-	char str_buff[SMALL_BUFF_LEN] = {0};
-	uint64_t save_pos = lseek64(state->rawdev.rawdev_fd, 0, SEEK_CUR);
-
-	if (idir == NULL)
-		return -1;
-
-	if (create_node(&node) != 0)
-		return -1;
-
-	curr_pos = state->rawdev.file_start;
-	lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
-	if (read(state->rawdev.rawdev_fd, read_buff, sizeof(read_buff)) <= 0) {
-		lseek64(state->rawdev.rawdev_fd, save_pos, SEEK_SET);
-		return -1;
-	}
-	if (read_buff[2] == 0xff && read_buff[3] == 0xe1) {
-		// get IFD0 offset from TIFF header
-		read(state->rawdev.rawdev_fd, &hdr, sizeof(struct tiff_hdr));
-		hdr_byte_order(&hdr);
-		curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + hdr.offset;
-		lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
-		// process IFD0 and SubIFD fields
-		do {
-			read(state->rawdev.rawdev_fd, &num_entries, sizeof(num_entries));
-			num_entries = __be16_to_cpu(num_entries);
-			for (int i = 0; i < num_entries; i++) {
-				read(state->rawdev.rawdev_fd, &ifd, sizeof(struct ifd_entry));
-				ifd_byte_order(&ifd);
-				switch (ifd.tag) {
-				case Exif_Image_PageNumber:
-					ifd_page_num = ifd;
-					break;
-				case Exif_Photo_DateTimeOriginal & 0xffff:
-					ifd_date_time = ifd;
-					break;
-				case Exif_Image_ExifTag:
-					subifd_offset = ifd.offset;
-					break;
-				case Exif_Photo_SubSecTimeOriginal & 0xffff:
-					ifd_subsec = ifd;
-					break;
-				}
-			}
-			// ensure that IFD0 finished correctly (0x00000000 in the end), set file pointer to SubIFD and
-			// process remaining fields
-			read(state->rawdev.rawdev_fd, &data32, sizeof(data32));
-			process -= (subifd_offset == 0 || data32 != 0) ? 2 : 1;
-			curr_pos = state->rawdev.file_start + TIFF_HDR_OFFSET + subifd_offset;
-			lseek64(state->rawdev.rawdev_fd, curr_pos, SEEK_SET);
-		} while (process > 0);
-
-		// fill disk index node with Exif data and add it to disk index directory
-		node->f_offset = state->rawdev.file_start;
-		if (ifd_page_num.len != 0) {
-			node->port = (uint32_t)ifd_page_num.offset;
-		}
-		if (ifd_date_time.len != 0) {
-			struct tm tm;
-			exif_get_text(&state->rawdev, &ifd_date_time, str_buff);
-			strptime(str_buff, EXIF_DATE_TIME_FORMAT, &tm);
-			node->rawtime = mktime(&tm);
-		}
-		if (ifd_subsec.len != 0) {
-			exif_get_text(&state->rawdev, &ifd_subsec, str_buff);
-			node->usec = strtoul(str_buff, NULL, 10);
-		}
-		if (node->rawtime != -1)
-			add_node(idir, node);
-		else
-			ret = -1;
-	}
-
-	lseek64(state->rawdev.rawdev_fd, save_pos, SEEK_SET);
-	return ret;
-}
-
-static int read_index(rawdev_buffer *rawdev, struct disk_index *indx)
+static int read_index(rawdev_buffer *rawdev, struct disk_index **indx)
 {
 	int ret = 0;
 	int process = 2;
@@ -495,9 +406,6 @@ static int read_index(rawdev_buffer *rawdev, struct disk_index *indx)
 	uint64_t save_pos = lseek64(rawdev->rawdev_fd, 0, SEEK_CUR);
 
 	if (indx == NULL)
-		return -1;
-
-	if (create_node(&node) != 0)
 		return -1;
 
 	curr_pos = rawdev->file_start;
@@ -542,25 +450,33 @@ static int read_index(rawdev_buffer *rawdev, struct disk_index *indx)
 			lseek64(rawdev->rawdev_fd, curr_pos, SEEK_SET);
 		} while (process > 0);
 
-		// fill disk index node with Exif data and add it to disk index directory
-		node->f_offset = rawdev->file_start;
-		if (ifd_page_num.len != 0) {
-			node->port = (uint32_t)ifd_page_num.offset;
-		}
-		if (ifd_date_time.len != 0) {
-			struct tm tm;
-			exif_get_text(rawdev, &ifd_date_time, str_buff);
-			strptime(str_buff, EXIF_DATE_TIME_FORMAT, &tm);
-			node->rawtime = mktime(&tm);
-		}
-		if (ifd_subsec.len != 0) {
-			exif_get_text(rawdev, &ifd_subsec, str_buff);
-			node->usec = strtoul(str_buff, NULL, 10);
-		}
-		if (node->rawtime != -1)
-			*indx = *node;
-		else
+		// create and fill new disk index node with Exif data
+		if (create_node(&node) == 0) {
+			node->f_offset = rawdev->file_start;
+			if (ifd_page_num.len != 0) {
+				node->port = (uint32_t)ifd_page_num.offset;
+			}
+			if (ifd_date_time.len != 0) {
+				struct tm tm;
+				exif_get_text(rawdev, &ifd_date_time, str_buff);
+				strptime(str_buff, EXIF_DATE_TIME_FORMAT, &tm);
+				node->rawtime = mktime(&tm);
+			}
+			if (ifd_subsec.len != 0) {
+				exif_get_text(rawdev, &ifd_subsec, str_buff);
+				node->usec = strtoul(str_buff, NULL, 10);
+			}
+			if (node->rawtime != -1) {
+				*indx = node;
+			} else {
+				free(node);
+				ret = -1;
+			}
+		} else {
 			ret = -1;
+		}
+	} else {
+		ret = -1;
 	}
 
 	lseek64(rawdev->rawdev_fd, save_pos, SEEK_SET);
@@ -568,7 +484,7 @@ static int read_index(rawdev_buffer *rawdev, struct disk_index *indx)
 }
 /**
  * @brief Calculate the size of current file and update the value in disk index directory
- * @param[in,out]   idir       pointer to disk index directory
+ * @param[in,out]   indx       pointer to disk index node which size should be calculated
  * @param[in]       pos_stop   the offset of the last byte of the current file
  * @return          0 if the file size was successfully updated and -1 otherwise
  * @note @e pos_stop points to the last byte of the file marker thus the size is incremented
@@ -666,6 +582,14 @@ void send_buffer(int sockfd, unsigned char *buff, size_t sz)
 	}
 }
 
+/**
+ * @brief Send file pointed by disk index node over opened socket
+ * @param[in,out]   rawdev   pointer to #rawdev_buffer structure containing
+ * the current state of raw device buffer
+ * @param[in]       indx     disk index directory node
+ * @param[in]       sockfd   opened socket descriptor
+ * @return
+ */
 int send_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
 {
 	uint64_t mm_file_start;
@@ -936,7 +860,7 @@ int get_search_window(const struct range *r, struct range *s)
  * @param[out]  indx     disk index structure which will hold the offset and size of a file
  * @return
  */
-int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_index *indx)
+int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_index **indx)
 {
 	int ret = -1;
 	int pos_start, pos_stop;
@@ -946,11 +870,12 @@ int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_i
 		pos_start = find_marker(rawdev->disk_mmap, rawdev->mmap_current_size, elphel_st.iov_base, elphel_st.iov_len, 0);
 		if (pos_start >= 0) {
 			rawdev->file_start = rawdev->mmap_offset + pos_start;
-			read_index(rawdev, indx);
-			pos_stop = find_marker(rawdev->disk_mmap + pos_start, rawdev->mmap_current_size - pos_start,
-					elphel_en.iov_base, elphel_en.iov_len, 1);
-			stop_index(indx, rawdev->mmap_offset + pos_stop + pos_start);
-			ret = 0;
+			if (read_index(rawdev, indx) == 0) {
+				pos_stop = find_marker(rawdev->disk_mmap + pos_start, rawdev->mmap_current_size - pos_start,
+						elphel_en.iov_base, elphel_en.iov_len, 1);
+				stop_index(*indx, rawdev->mmap_offset + pos_stop + pos_start);
+				ret = 0;
+			}
 		}
 		fprintf(debug_file, "\t%s: pos_start = %d, pos_stop = %d\n", __func__, pos_start, pos_stop);
 		munmap_disk(rawdev);
@@ -976,18 +901,18 @@ int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_i
 
 // Time window used for disk index search. Index within this window is considered a candidate
 #define SEARCH_TIME_WINDOW        600
-int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_index *indx)
+struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idir *idir, uint64_t *rawtime)
 {
-	int ret = 0;
 	bool indx_appended = false;
 	bool process = true;
 	struct range range;
 	struct range search_window;
 	struct disk_index *indx_found = NULL;
-	struct disk_index *nearest_indx = find_nearest_by_time((const struct disk_idir *)idir, indx->rawtime);
+	struct disk_index *indx_ret = NULL;
+	struct disk_index *nearest_indx = find_nearest_by_time((const struct disk_idir *)idir, *rawtime);
 
 	/* debug code follows */
-	struct tm *tm = gmtime(&indx->rawtime);
+	struct tm *tm = gmtime(rawtime);
 	fprintf(debug_file, "%s: looking for offset near %04d-%02d-%02d %02d:%02d:%02d\n", __func__,
 			tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
 	uint64_t nr;
@@ -1000,7 +925,7 @@ int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_
 		range.from = rawdev->start_pos;
 		range.to = rawdev->end_pos;
 	} else {
-		if (indx->rawtime > nearest_indx->rawtime) {
+		if (*rawtime > nearest_indx->rawtime) {
 			range.from = nearest_indx->f_offset;
 			if (nearest_indx->next != NULL)
 				range.to = nearest_indx->next->f_offset;
@@ -1019,14 +944,12 @@ int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_
 
 	while (process && get_search_window(&range, &search_window) == 0) {
 		indx_found = NULL;
-		if (create_node(&indx_found) == -1)
-			break;
 		indx_appended = false;
 		fprintf(debug_file, "Search window: from 0x%llx, to 0x%llx\n", search_window.from, search_window.to);
-		if (find_in_window(rawdev, &search_window, indx_found) == 0) {
-			double time_diff = difftime(indx_found->rawtime, indx->rawtime);
+		if (find_in_window(rawdev, &search_window, &indx_found) == 0) {
+			double time_diff = difftime(indx_found->rawtime, *rawtime);
 			fprintf(debug_file, "Index found: time diff %f, file offset 0x%llx, rawtime found %ld, rawtime given %ld\n",
-					time_diff, indx_found->f_offset, indx_found->rawtime, indx->rawtime);
+					time_diff, indx_found->f_offset, indx_found->rawtime, *rawtime);
 			if (fabs(time_diff) > SEARCH_TIME_WINDOW) {
 				// the index found is not within search time window, update sparse index directory and
 				// define a new search window
@@ -1038,27 +961,20 @@ int find_disk_offset(rawdev_buffer *rawdev, struct disk_idir *idir, struct disk_
 			} else {
 				// the index found is within search time window, stop search and return
 				process = false;
-				*indx = *indx_found;
+				indx_ret = indx_found;
 			}
 			insert_node(idir, indx_found);
-			indx_appended = true;
 		} else {
 			// index is not found in the search window, move toward the start of the range
 			range.to = search_window.from;
 		}
 		fprintf(debug_file, "Updating range, new range: from 0x%llx, to 0x%llx\n", range.from, range.to);
 	}
-	if (indx->f_offset == 0 && indx->f_size == 0) {
-		// no files were found within specified time window
-		ret = -1;
-	}
-	if (indx_appended == false && indx_found != NULL)
-		free(indx_found);
 
 	fprintf(debug_file, "\nSparse index directory dump, %d nodes:\n", idir->size);
 	dump_index_dir(idir);
 
-	return ret;
+	return indx_ret;
 }
 
 /**
@@ -1196,9 +1112,10 @@ void *reader(void *arg)
 				struct disk_index indx;
 				struct disk_index *indx_ptr = NULL;
 				if (get_timestamp_args(cmd_ptr, &indx) > 0) {
-					if (index_dir.size == 0 && find_disk_offset(rawdev, &index_sparse, &indx) == 0) {
-						indx_ptr = &indx;
-						index_sparse.curr_indx = indx_ptr;
+					if (index_dir.size == 0) {
+						indx_ptr = find_disk_index(rawdev, &index_sparse, &indx.rawtime);
+						if (indx_ptr != NULL)
+							index_sparse.curr_indx = indx_ptr;
 					} else {
 						indx_ptr = find_nearest_by_time(&index_dir, indx.rawtime);
 						/* debug code follows */
@@ -1218,7 +1135,7 @@ void *reader(void *arg)
 				struct disk_index *new_indx = NULL;
 				struct disk_index *indx_ptr = NULL;
 				uint64_t len;
-				if (index_sparse.curr_indx != NULL && create_node(&new_indx) == 0) {
+				if (index_sparse.curr_indx != NULL) {
 					if (index_sparse.curr_indx->next != NULL) {
 						len = index_sparse.curr_indx->next->f_offset - index_sparse.curr_indx->f_offset - 1;
 						if (len > 0) {
@@ -1236,16 +1153,14 @@ void *reader(void *arg)
 						rng.from &= PAGE_BOUNDARY_MASK;
 						if (rng.to - rng.from > rawdev->mmap_default_size)
 							rng.to = rng.from + rawdev->mmap_default_size;
-						if (find_in_window(rawdev, &rng, new_indx) == 0) {
+						if (find_in_window(rawdev, &rng, &new_indx) == 0) {
 							insert_next(&index_sparse, index_sparse.curr_indx, new_indx);
 							send_file(rawdev, new_indx, fd);
 							index_sparse.curr_indx = new_indx;
 						}
 					} else {
 						send_file(rawdev, indx_ptr, fd);
-						free(new_indx);
 					}
-					new_indx = NULL;
 				}
 				break;
 			}
@@ -1383,6 +1298,7 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 	uint64_t dev_curr_pos = 0;
 	uint64_t include_st_marker, include_en_marker;
 	size_t add_stm_len, add_enm_len;
+	struct disk_index *node = NULL;
 
 	state->rawdev.rawdev_fd = open(state->rawdev.rawdev_path, O_RDONLY);
 	if (state->rawdev.rawdev_fd < 0) {
@@ -1441,6 +1357,7 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 				pos_start = find_marker(save_from, save_to - save_from, elphel_st.iov_base, elphel_st.iov_len, include_st_marker);
 				pos_stop = find_marker(save_from, save_to - save_from, elphel_en.iov_base, elphel_en.iov_len, include_en_marker);
 
+				node = NULL;
 				if (pos_start == MATCH_NOT_FOUND && pos_stop == MATCH_NOT_FOUND) {
 					// normal condition, search in progress
 					buff_processed = 1;
@@ -1449,7 +1366,9 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 					// normal condition, new file found
 					search_state = SEARCH_FILE_DATA;
 					state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
-					idir_result = save_index(state, idir);
+					idir_result = read_index(&state->rawdev, &node);
+					if (idir_result == 0)
+						add_node(idir, node);
 					buff_processed = 1;
 					D6(fprintf(debug_file, "New file found. File start position: %llu\n", state->rawdev.file_start));
 					D6(fprintf(debug_file, "State 'starting file'\n"));
@@ -1459,7 +1378,9 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 					remove_node(idir, idir->tail);
 					if (zero_cross == 0) {
 						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
-						idir_result = save_index(state, idir);
+						idir_result = read_index(&state->rawdev, &node);
+						if (idir_result == 0)
+							add_node(idir, node);
 					} else {
 						process = 0;
 					}
@@ -1486,7 +1407,9 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 					}
 					if (zero_cross == 0) {
 						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
-						idir_result = save_index(state, idir);
+						idir_result = read_index(&state->rawdev, &node);
+						if (idir_result == 0)
+							add_node(idir, node);
 						search_state = SEARCH_FILE_DATA;
 						save_from = save_from + pos_start + add_stm_len;
 						// @todo: replace with pointer to current buffer
@@ -1513,7 +1436,9 @@ void build_index(camogm_state *state, struct disk_idir *idir)
 					if (result == MATCH_FOUND) {
 						search_state = SEARCH_FILE_DATA;
 						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
-						idir_result = save_index(state, idir);
+						idir_result = read_index(&state->rawdev, &node);
+						if (idir_result == 0)
+							add_node(idir, node);
 						D6(fprintf(debug_file, "File start position: %llu\n", state->rawdev.file_start));
 						save_from = next_chunk.iov_base + field_markers.second_buff.iov_len;
 						save_to = next_chunk.iov_base + next_chunk.iov_len;
