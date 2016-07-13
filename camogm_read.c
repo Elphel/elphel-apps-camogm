@@ -53,8 +53,8 @@
 #define TIFF_HDR_OFFSET           12
 /** @brief The date and time format of Exif field */
 #define EXIF_DATE_TIME_FORMAT     "%Y:%m:%d %H:%M:%S"
-#define EXIF_TIMESTAMP_FORMAT     "%d:%d:%d_%d:%d:%d"
-//#define EXIF_TIMESTAMP_FORMAT     "%04d:%02d:%02d_%02d:%02d:%02d"
+/** @brief The date and time format of 'find_file' command */
+#define EXIF_TIMESTAMP_FORMAT     "%04d:%02d:%02d_%02d:%02d:%02d"
 /** @brief The format string used for file parameters reporting. Time and port number are extracted from Exif */
 #define INDEX_FORMAT_STR          "port_number=%d;unix_time=%ld;usec_time=%06u;offset=0x%010llx;file_size=%u\n"
 /** @brief The delimiters used to separate several commands in one command string sent over socket */
@@ -69,6 +69,10 @@
 #define PHY_BLK_SZ                4096
 /** @brief Include or exclude file start and stop markers from resulting file. This must be set to 1 for JPEG files */
 #define INCLUDE_MARKERS           1
+/** @brief The size of file search window. This window is memory mapped. */
+#define SEARCH_SIZE_WINDOW        ((uint64_t)4 * (uint64_t)1048576)
+/** @brief Time window (in seconds) used for disk index search. Index within this window is considered a candidate */
+#define SEARCH_TIME_WINDOW        600
 /** @brief File starting marker on a raw device. It corresponds to SOI JPEG marker */
 static unsigned char elphelst[] = {0xff, 0xd8};
 /** @brief File ending marker on a raw device. It corresponds to EOI JPEG marker */
@@ -243,7 +247,7 @@ static int munmap_disk(rawdev_buffer *rawdev);
 /**
  * @brief Debug function, prints the content of disk index directory
  * @param[in]   idir   pointer to disk index directory to be printed
- * @return      none
+ * @return      None
  */
 void dump_index_dir(const struct disk_idir *idir)
 {
@@ -268,7 +272,7 @@ void dump_index_dir(const struct disk_idir *idir)
  * @param[in]   pattern   pointer to an array of char values containing pattern
  * @param[in]   pt_sz     size of the pattern array
  * @param[in]   add_pattern include or exclude marker from resulting buffer offset
- * @return      the index in data buffer where pattern matches or error code from #match_result if it was not found
+ * @return      The index in data buffer where pattern matches or error code from #match_result if it was not found
  */
 static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const unsigned char * restrict pattern, ssize_t pt_sz,
 		int add_pattern)
@@ -365,7 +369,7 @@ static void hdr_byte_order(struct tiff_hdr *hdr)
  * the current state of raw device buffer
  * @param[in]       tag     Exif image file directory record containing string offset
  * @param[out]      buff    buffer for the string to be read
- * @return      The number of bytes placed to the read buffer
+ * @return          The number of bytes placed to the read buffer
  */
 static size_t exif_get_text(rawdev_buffer *rawdev, struct ifd_entry *tag, char *buff)
 {
@@ -385,7 +389,7 @@ static size_t exif_get_text(rawdev_buffer *rawdev, struct ifd_entry *tag, char *
  * @param[in,out]   rawdev   pointer to #rawdev_buffer structure containing
  * the current state of raw device buffer
  * @param[out]      indx     pointer to new disk index node
- * @return      0 if new node was successfully created and -1 otherwise
+ * @return          0 if new node was successfully created and -1 otherwise
  */
 static int read_index(rawdev_buffer *rawdev, struct disk_index **indx)
 {
@@ -490,7 +494,7 @@ static int read_index(rawdev_buffer *rawdev, struct disk_index **indx)
  * @note @e pos_stop points to the last byte of the file marker thus the size is incremented
  * by 1
  */
-int stop_index(struct disk_index *indx, uint64_t pos_stop)
+static int stop_index(struct disk_index *indx, uint64_t pos_stop)
 {
 	int ret = 0;
 
@@ -511,7 +515,7 @@ int stop_index(struct disk_index *indx, uint64_t pos_stop)
  * the end of file marker
  * @param[in]   marker pointer to a buffer holding file marker to be detect
  * @param[in]   crbp   pointer to a structure which will store two cross border pointers
- * @return      a constant of #match_result type
+ * @return      A constant of #match_result type
  */
 static int check_edge_case(const struct iovec *from, const struct iovec *to, const struct iovec *marker, struct crb_ptrs *crbp)
 {
@@ -563,9 +567,9 @@ static int check_edge_case(const struct iovec *from, const struct iovec *to, con
  * @param[in]   sockfd    opened socket descriptor
  * @param[in]   buff      pointer to memory mapped buffer
  * @param[in]   sz        the size of @e buff
- * @return      none
+ * @return      None
  */
-void send_buffer(int sockfd, unsigned char *buff, size_t sz)
+static void send_buffer(int sockfd, unsigned char *buff, size_t sz)
 {
 	size_t bytes_left = sz;
 	ssize_t bytes_written = 0;
@@ -588,9 +592,9 @@ void send_buffer(int sockfd, unsigned char *buff, size_t sz)
  * the current state of raw device buffer
  * @param[in]       indx     disk index directory node
  * @param[in]       sockfd   opened socket descriptor
- * @return
+ * @return          0 in case disk index node was sent successfully and -1 otherwise
  */
-int send_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
+static int send_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
 {
 	uint64_t mm_file_start;
 	struct range mmap_range;
@@ -670,7 +674,7 @@ static int munmap_disk(rawdev_buffer *rawdev)
  * presence in currently mapped region
  * @return      @b true if the file is the region and @b false otherwise
  */
-bool is_in_range(struct range *range, struct disk_index *indx)
+static bool is_in_range(struct range *range, struct disk_index *indx)
 {
 	if (indx->f_offset >= range->from &&
 			indx->f_offset <= range->to &&
@@ -684,9 +688,9 @@ bool is_in_range(struct range *range, struct disk_index *indx)
  * @brief Prepare socket for communication
  * @param[out]   socket_fd   pointer to socket descriptor
  * @param[in]    port_num    socket port number
- * @return       none
+ * @return       None
  */
-void prep_socket(int *socket_fd, uint16_t port_num)
+static void prep_socket(int *socket_fd, uint16_t port_num)
 {
 	int opt = 1;
 	struct sockaddr_in sock;
@@ -704,10 +708,10 @@ void prep_socket(int *socket_fd, uint16_t port_num)
  * @brief Parse command line
  * @param[in]   cmd   pointer to command line buffer, this pointer is
  * updated to point to current command
- * @return Positive command number from #socket_commands, -1 if command not recognized and
- * -2 to indicate that the command buffer has been fully processed
+ * @return      Positive command number from #socket_commands, -1 if command not
+ * recognized and -2 to indicate that the command buffer has been fully processed
  */
-int parse_command(char **cmd)
+static int parse_command(char **cmd)
 {
 	size_t cmd_len;
 	int cmd_indx = -1;
@@ -738,9 +742,9 @@ int parse_command(char **cmd)
  * finds the first space character after the command part starts and replaces it with null.
  * @param[in,out]   cmd   pointer to HTTP GET string
  * @param[in]       cmd_len the length of the command in buffer
- * @return          none
+ * @return          None
  */
-void trim_command(char *cmd, ssize_t cmd_len)
+static void trim_command(char *cmd, ssize_t cmd_len)
 {
 	char *ptr_start, *ptr_end;
 
@@ -762,8 +766,9 @@ void trim_command(char *cmd, ssize_t cmd_len)
  * the current state of raw device buffer
  * @param[in]   indx     pointer to the disk index node
  * @param[in]   sockfd   opened socket descriptor
+ * @return      None
  */
-void send_split_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
+static void send_split_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
 {
 	ssize_t rcntr = 0;
 	ssize_t scntr = 0;
@@ -795,9 +800,9 @@ void send_split_file(rawdev_buffer *rawdev, struct disk_index *indx, int sockfd)
  * @brief Send the number of files (or disk chunks) found over socket connection
  * @param[in]   sockfd   opened socket descriptor
  * @param[in]   num      the number to be sent
- * @return      none
+ * @return      None
  */
-void send_fnum(int sockfd, size_t num)
+static void send_fnum(int sockfd, size_t num)
 {
 	char buff[SMALL_BUFF_LEN] = {0};
 	int len;
@@ -811,9 +816,9 @@ void send_fnum(int sockfd, size_t num)
  * @brief Read file parameters from a string and fill in disk index node structure
  * @param[in]    cmd   pointer to a string with file parameters
  * @param[out]   indx  pointer to disk index node structure
- * @return       the number of parameters extracted from the string or -1 in case of an error
+ * @return       The number of parameters extracted from the string or -1 in case of an error
  */
-int get_indx_args(char *cmd, struct disk_index *indx)
+static int get_indx_args(char *cmd, struct disk_index *indx)
 {
 	char *cmd_start = strchr(cmd, ':');
 
@@ -822,7 +827,14 @@ int get_indx_args(char *cmd, struct disk_index *indx)
 	return sscanf(++cmd_start, INDEX_FORMAT_STR, &indx->port, &indx->rawtime, &indx->usec, &indx->f_offset, &indx->f_size);
 }
 
-int get_timestamp_args(char *cmd, struct disk_index *indx)
+/**
+ * @brief Read time stamp from a string and copy time in UNIX format to disk index
+ * node structure
+ * @param[in]   cmd   pointer to a string withe time stamp
+ * @param[out]  indx  pointer to disk index node structure
+ * @return      The number of input items matched from the string or -1 in case of an error
+ */
+static int get_timestamp_args(char *cmd, struct disk_index *indx)
 {
 	int ret;
 	struct tm tm;
@@ -838,10 +850,15 @@ int get_timestamp_args(char *cmd, struct disk_index *indx)
 	return ret;
 }
 
-//#define SEARCH_SIZE_WINDOW        ((uint64_t)4 * (uint64_t)1048576)
-int get_search_window(const struct range *r, struct range *s)
+/**
+ * @brief Define memory mapped disk window where files will be searched
+ * @param[in]   r   disk offsets range where memory mapped window will be located
+ * @param[out]  s   search window
+ * @return      0 if the window was successfully located in the region specified and
+ * -1 in case of an error
+ */
+static int get_search_window(const struct range *r, struct range *s)
 {
-	const uint64_t SEARCH_SIZE_WINDOW = 4194304;
 	if ((r->to - r->from) < SEARCH_SIZE_WINDOW || r->from > r->to)
 		return -1;
 
@@ -858,9 +875,9 @@ int get_search_window(const struct range *r, struct range *s)
  * the current state of raw device buffer
  * @param[in]   wnd      pointer to a structure containing the offsets of a search window
  * @param[out]  indx     disk index structure which will hold the offset and size of a file
- * @return
+ * @return      0 if a file was found and -1 otherwise
  */
-int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_index **indx)
+static int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_index **indx)
 {
 	int ret = -1;
 	int pos_start, pos_stop;
@@ -888,20 +905,15 @@ int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct disk_i
 
 /**
  * @brief Find a file on disk having time stamp close to the time stamp given.
- * @param[in]       rawdev   pointer to #rawdev_buffer structure containing
+ * @param[in]   rawdev   pointer to #rawdev_buffer structure containing
  * the current state of raw device buffer
- * @param[in]       idir     pointer to sparse disk index directory where indexes are sorted
+ * @param[in]   idir     pointer to sparse disk index directory where indexes are sorted
  * in time order
- * @param[in,out]   indx     pointer to #disk_index structure with time stamp fields filled in.
- * This structure will contain the disk index found (if any) and thus the time stamp
- * provided through this structure will be overwritten.
- * @return          0 if an index was found and -1 otherwise. The @b indx will contain the
- * information about the index found on disk.
+ * @param[in]   rawtime  time (in UNIX format) of a possible index candidate
+ * @return      A pointer to disk index node found or NULL if there were no close
+ * index candidates
  */
-
-// Time window used for disk index search. Index within this window is considered a candidate
-#define SEARCH_TIME_WINDOW        600
-struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idir *idir, uint64_t *rawtime)
+static struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idir *idir, uint64_t *rawtime)
 {
 	bool indx_appended = false;
 	bool process = true;
@@ -983,7 +995,7 @@ struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idir *idir
  * This function is started in a separated thread right after the application has started. It opens a
  * communication socket, waits for commands sent over the socket and process them.
  * @param[in, out]   arg   pointer to #camogm_state structure
- * @return           none
+ * @return           None
  * @warning The main processing loop of the function is enclosed in @e pthread_cleanup_push and @e pthread_cleanup_pop
  * calls. The effect of use of normal @b return or @b break to prematurely leave this loop is undefined.
  * @todo print unrecognized command to debug output file
@@ -1243,7 +1255,7 @@ void *reader(void *arg)
  * passed to @e pthread_cleanup_push() function.
  * @param[in]   arg   pointer to #exit_state structure containing resources that
  * should be closed
- * @return      none
+ * @return      None
  */
 static inline void exit_thread(void *arg)
 {
@@ -1276,10 +1288,10 @@ static inline void exit_thread(void *arg)
  * @param[in]   state   a pointer to a structure containing current state
  * @param[out]  idir    a pointer to disk index directory. This directory will contain
  * offset of the files found in the raw device buffer.
- * @return      none
+ * @return      None
  * @todo reorder decision tree
  */
-void build_index(camogm_state *state, struct disk_idir *idir)
+static void build_index(camogm_state *state, struct disk_idir *idir)
 {
 	const int include_markers = INCLUDE_MARKERS;
 	int process;
