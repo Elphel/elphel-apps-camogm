@@ -1289,7 +1289,6 @@ static inline void exit_thread(void *arg)
  * @param[out]  idir    a pointer to disk index directory. This directory will contain
  * offset of the files found in the raw device buffer.
  * @return      None
- * @todo reorder decision tree
  */
 static void build_index(camogm_state *state, struct disk_idir *idir)
 {
@@ -1374,6 +1373,26 @@ static void build_index(camogm_state *state, struct disk_idir *idir)
 					// normal condition, search in progress
 					buff_processed = 1;
 //					D6(fprintf(debug_file, "State 'skip data'\n"));
+				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop) {
+					// normal condition, start marker following stop marker found - this indicates a new file
+					if (search_state == SEARCH_FILE_DATA) {
+						uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
+						idir_result = stop_index(idir->tail, disk_pos);
+					}
+					if (zero_cross == 0) {
+						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
+						idir_result = read_index(&state->rawdev, &node);
+						if (idir_result == 0)
+							add_node(idir, node);
+						search_state = SEARCH_FILE_DATA;
+						save_from = save_from + pos_start + add_stm_len;
+						// @todo: replace with pointer to current buffer
+						save_to = buff + rd;
+					} else {
+						buff_processed = 1;
+						process = 0;
+					}
+					D6(fprintf(debug_file, "State 'stop current file and start new file'\n"));
 				} else if (pos_start >= 0 && pos_stop == MATCH_NOT_FOUND && search_state == SEARCH_SKIP) {
 					// normal condition, new file found
 					search_state = SEARCH_FILE_DATA;
@@ -1411,26 +1430,6 @@ static void build_index(camogm_state *state, struct disk_idir *idir)
 					// error condition (normally should not happen), drop current read buffer and do nothing
 					buff_processed = 1;
 					D6(fprintf(debug_file, "State 'abnormal stop marker, skip data'\n"));
-				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop) {
-					// normal condition, start marker following stop marker found - this indicates a new file
-					if (search_state == SEARCH_FILE_DATA) {
-						uint64_t disk_pos = dev_curr_pos + pos_stop + (save_from - active_buff);
-						idir_result = stop_index(idir->tail, disk_pos);
-					}
-					if (zero_cross == 0) {
-						state->rawdev.file_start = dev_curr_pos + pos_start + (save_from - active_buff);
-						idir_result = read_index(&state->rawdev, &node);
-						if (idir_result == 0)
-							add_node(idir, node);
-						search_state = SEARCH_FILE_DATA;
-						save_from = save_from + pos_start + add_stm_len;
-						// @todo: replace with pointer to current buffer
-						save_to = buff + rd;
-					} else {
-						buff_processed = 1;
-						process = 0;
-					}
-					D6(fprintf(debug_file, "State 'stop current file and start new file'\n"));
 				} else if (pos_start == MATCH_PARTIAL && search_state == SEARCH_SKIP) {
 					// partial start marker found in the end of read buffer, get next chunk of data and try to find marker there
 					enum match_result result;
