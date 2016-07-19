@@ -1,5 +1,5 @@
 /** @file camogm_jpeg.h
- * @brief Provides writing to series of individual JPEG files for camogm
+ * @brief Provides writing to series of individual JPEG files for @e camogm
  * @copyright Copyright (C) 2016 Elphel, Inc.
  *
  * @par <b>License</b>

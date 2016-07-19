@@ -63,6 +63,12 @@ int add_node(struct disk_idir *idir, struct disk_index *index)
 	return idir->size;
 }
 
+/**
+ * @brief Insert new node in chronological order
+ * @param[in,out]   idir   index directory to which a new node should be added
+ * @param[in]       indx   a pointer to new node
+ * @return          The number of nodes in the directory
+ */
 int insert_node(struct disk_idir *idir, struct disk_index *indx)
 {
 	int ret = 0;
@@ -157,6 +163,11 @@ struct disk_index *find_by_offset(const struct disk_idir *idir, uint64_t offset)
 	return index;
 }
 
+/** @brief Find index node by its time stamp
+ * @param[in]   idir   pointer to disk index directory
+ * @param[in]   time   the time stamp of the file which should be found
+ * @return      pointer to disk index node or NULL if the corresponding file was not found
+ */
 struct disk_index *find_nearest_by_time(const struct disk_idir *idir, time_t time)
 {
 	struct disk_index *ptr = NULL;

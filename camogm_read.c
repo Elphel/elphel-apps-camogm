@@ -305,6 +305,18 @@ static int find_marker(const unsigned char * restrict buff_ptr, ssize_t buff_sz,
 	return ret;
 }
 
+/**
+ * @brief Find pattern in a data buffer in reverse order
+ *
+ * This function searches for the first occurrence of pattern in a data buffer and returns a pointer to
+ * the position of this pattern in the buffer.
+ * @param[in]   buff_ptr  pointer to an array of char values where the pattern should be found
+ * @param[in]   buff_sz   size of the data array
+ * @param[in]   pattern   pointer to an array of char values containing pattern
+ * @param[in]   pt_sz     size of the pattern array
+ * @param[in]   add_pattern include or exclude marker from resulting buffer offset
+ * @return      The index in data buffer where pattern matches or error code from #match_result if it was not found
+ */
 static int find_marker_backward(const unsigned char * restrict buff_ptr, ssize_t buff_sz, const unsigned char * restrict pattern, ssize_t pt_sz,
 		int add_pattern)
 {
