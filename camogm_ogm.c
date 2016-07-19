@@ -178,7 +178,7 @@ int camogm_frame_ogm(camogm_state *state)
  * @brief Finish OGM file operation
  * @param[in]   state   a pointer to a structure containing current state
  * @return      0 if file was saved successfully and negative error code otherwise
- * @note: zero packets are OK, use them to end file with "last" turned on
+ * @note Zero packets are OK, use them to end file with "last" turned on
  */
 int camogm_end_ogm(camogm_state *state)
 {

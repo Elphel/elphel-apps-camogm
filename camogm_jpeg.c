@@ -53,12 +53,12 @@ int camogm_start_jpeg(camogm_state *state)
 	int rslt;
 
 	if (!state->rawdev_op) {
-		strcpy(state->path, state->path_prefix); //!make state->path a directory name (will be replaced when the frames will be written)
+		strcpy(state->path, state->path_prefix);   // make state->path a directory name (will be replaced when the frames will be written)
 		slash = strrchr(state->path, '/');
 		D2(fprintf(debug_file, "camogm_start_jpeg\n"));
 		if (slash) {
 			D3(fprintf(debug_file, "Full path %s\n", state->path));
-			slash[0] = '\0'; //! truncate path to the directory name
+			slash[0] = '\0';                       // truncate path to the directory name
 			D3(fprintf(debug_file, "directory path %s\n", state->path));
 			rslt = mkdir(state->path, 0777);
 			D3(fprintf(debug_file, "mkdir (%s, 0777) returned %d, errno=%d\n", state->path, rslt, errno));

@@ -311,7 +311,7 @@ int parse_special(void)
 	// a hack - invlude length'skip if data position (header size is known and there is a gap)
 	if (strcmp(str, "data_size") == 0) {
 		gap = headerSize - lseek(ofd, 0, SEEK_CUR) - 8;
-		if (gap > 0) { //!it should be exactly 0 if there is no gap or >8 if there is
+		if (gap > 0) { //it should be exactly 0 if there is no gap or >8 if there is
 			D4(fprintf(debug_file, "Inserting a skip tag to compensate for a gap (%d bytes) between the header and the frame data\n", gap));
 			if (gap < 8) {
 				D0(fprintf(debug_file, "not enough room to insret 'skip' tag - %d (need 8)\n", gap));
@@ -321,7 +321,7 @@ int parse_special(void)
 			putBigEndian(gap, 4);
 			D4(fprintf(debug_file, "writing string <%s>\n", "skip"));
 			write(ofd, "skip", 4);
-			lseek(ofd, gap - 8, SEEK_CUR); //! lseek over the gap and proceed as before
+			lseek(ofd, gap - 8, SEEK_CUR); // lseek over the gap and proceed as before
 		}
 		if (sizes != NULL) {
 			l = 0;

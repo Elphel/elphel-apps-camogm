@@ -72,7 +72,7 @@
 /** @brief The size of file search window. This window is memory mapped. */
 #define SEARCH_SIZE_WINDOW        ((uint64_t)4 * (uint64_t)1048576)
 /** @brief Time window (in seconds) used for disk index search. Index within this window is considered a candidate */
-#define SEARCH_TIME_WINDOW        600
+#define SEARCH_TIME_WINDOW        60
 /** @brief File starting marker on a raw device. It corresponds to SOI JPEG marker */
 static unsigned char elphelst[] = {0xff, 0xd8};
 /** @brief File ending marker on a raw device. It corresponds to EOI JPEG marker */
@@ -253,7 +253,6 @@ void dump_index_dir(const struct disk_idir *idir)
 {
 	struct disk_index *ind = idir->head;
 
-	printf("Head pointer = 0x%p, tail pointer = 0x%p\n", idir->head, idir->tail);
 	while (ind != NULL) {
 		fprintf(debug_file, INDEX_FORMAT_STR,
 				ind->port, ind->rawtime, ind->usec, ind->f_offset, ind->f_size);
@@ -993,7 +992,7 @@ static struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idi
  * @return           None
  * @warning The main processing loop of the function is enclosed in @e pthread_cleanup_push and @e pthread_cleanup_pop
  * calls. The effect of use of normal @b return or @b break to prematurely leave this loop is undefined.
- * @todo print unrecognized command to debug output file
+ * @todo Print unrecognized command to debug output file
  */
 void *reader(void *arg)
 {
@@ -1106,6 +1105,7 @@ void *reader(void *arg)
 				}
 				break;
 			case CMD_READ_FILE:
+				// read single file by offset given
 				if (index_dir.size > 0) {
 					struct disk_index indx;
 					if (get_indx_args(cmd_ptr, &indx) > 0 &&
@@ -1115,6 +1115,7 @@ void *reader(void *arg)
 				}
 				break;
 			case CMD_FIND_FILE: {
+				// find file by time stamp
 				struct disk_index indx;
 				struct disk_index *indx_ptr = NULL;
 				if (get_timestamp_args(cmd_ptr, &indx) > 0) {
@@ -1124,12 +1125,6 @@ void *reader(void *arg)
 							index_sparse.curr_indx = indx_ptr;
 					} else {
 						indx_ptr = find_nearest_by_time(&index_dir, indx.rawtime);
-						/* debug code follows */
-						if (indx_ptr != NULL)
-							printf("Index found in pre-built index directory: offset = 0x%llx\n", indx_ptr->f_offset);
-						else
-							printf("Index NOT found in pre-built index directory. Probably it should be rebuilt\n");
-						/* end of debug code */
 					}
 					if (indx_ptr != NULL)
 						send_file(rawdev, indx_ptr, fd);
@@ -1137,6 +1132,7 @@ void *reader(void *arg)
 				break;
 			}
 			case CMD_NEXT_FILE: {
+				// read next file after previously found file
 				struct range rng;
 				struct disk_index *new_indx = NULL;
 				struct disk_index *indx_ptr = NULL;
