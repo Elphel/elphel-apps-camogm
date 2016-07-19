@@ -161,15 +161,6 @@ int camogm_frame_jpeg(camogm_state *state)
 			}
 		}
 
-		/* debug code follows */
-		fprintf(debug_file, "\n=== raw device write, iovec dump ===\n");
-		fprintf(debug_file, "split_cntr = %ld; split_ptr = %p; split_index = %d\n", split_cntr, split_ptr, split_index);
-		for (int i = 0; i < chunks_used; i++) {
-			fprintf(debug_file, "i = %d; iov_base = %p; iov_len = %u\n", i, chunks_iovec[i].iov_base, chunks_iovec[i].iov_len);
-		}
-		fprintf(debug_file, "total len = %d\n======\n", l);
-		/* end of debug code */
-
 		if (split_index < 0) {
 			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, chunks_used);
 		} else {
