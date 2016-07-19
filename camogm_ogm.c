@@ -70,7 +70,7 @@ int camogm_start_ogm(camogm_state *state)
 	memcpy(&hdbuf[1], &sh, sizeof(sh));
 	hdbuf[0] = 1;
 	// put it into Ogg stream
-	ogg_header.packet = hdbuf;
+	ogg_header.packet = (unsigned char *)hdbuf;
 	ogg_header.bytes = sizeof(sh) + 1;
 	ogg_header.b_o_s = 1;
 	ogg_header.e_o_s = 0;
@@ -80,10 +80,9 @@ int camogm_start_ogm(camogm_state *state)
 
 	// while(ogg_stream_pageout(&(state->os), &(state->og))) {
 	while (ogg_stream_flush(&(state->os), &(state->og))) {
-		int i, j;
+		int i;
 		if ((((i = fwrite(state->og.header, 1, state->og.header_len, state->vf))) != state->og.header_len) ||
 				(state->og.body_len && (((i = fwrite(state->og.body, 1, state->og.body_len, state->vf))) != state->og.body_len))) {
-			j = errno;
 			D2(fprintf(debug_file, "\n%d %ld %ld\n", i, state->og.header_len, state->og.body_len));
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
@@ -194,10 +193,9 @@ int camogm_end_ogm(camogm_state *state)
 	ogg_header.granulepos = ++(state->granulepos);
 	ogg_stream_packetin(&(state->os), &ogg_header); // +++++++++++++++++++++++++++++++++++++++++++++++++++++
 	while (ogg_stream_flush(&(state->os), &(state->og))) {
-		int i, j;
+		int i;
 		if ((((i = fwrite(state->og.header, 1, state->og.header_len, state->vf))) != state->og.header_len) ||
 				(state->og.body_len && (((i = fwrite(state->og.body, 1, state->og.body_len, state->vf))) != state->og.body_len))) {
-			j = errno;
 			D0(fprintf(debug_file, "\n%d %ld %ld\n", i, state->og.header_len, state->og.body_len));
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
