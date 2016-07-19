@@ -93,16 +93,16 @@ enum state_flags {
  * Current read position in raw device buffer
  * @var rawdev_buffer::curr_pos_w
  * Current write position in raw device buffer
- * @var rawdevice_buffer::mmap_default_size
+ * @var rawdev_buffer::mmap_default_size
  * The default size of memory mapped disk region
- * @var rawdevice_buffer::mmap_current_size
+ * @var rawdev_buffer::mmap_current_size
  * The size of currently memory mapped disk region. Can be less then #mmap_default_size
- * @var rawdevice_buffer::mmap_offset
+ * @var rawdev_buffer::mmap_offset
  * Current offset (in bytes) from the beginning of raw device buffer
  * @var rawdev_buffer::file_start
  * Pointer to the beginning of current file. This pointer is set during raw device reading and
  * updated every time new file is found.
- * @var rawdevice_buffer::tid
+ * @var rawdev_buffer::tid
  * The ID of raw device reading thread
  * @var rawdev_buffer::thread_state
  * The state of the reading thread. Used to interrupt current operation
@@ -229,5 +229,6 @@ unsigned long getGPValue(unsigned int port, unsigned long GPNumber);
 void setGValue(unsigned int port, unsigned long GNumber, unsigned long value);
 int waitDaemonEnabled(unsigned int port, int daemonBit);
 int isDaemonEnabled(unsigned int port, int daemonBit);
+int is_fd_valid(int fd);
 
 #endif /* _CAMOGM_H */

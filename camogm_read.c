@@ -461,7 +461,7 @@ static int read_index(rawdev_buffer *rawdev, struct disk_index **indx)
 				node->port = (uint32_t)ifd_page_num.offset;
 			}
 			if (ifd_date_time.len != 0) {
-				struct tm tm;
+				struct tm tm = {0};
 				exif_get_text(rawdev, &ifd_date_time, str_buff);
 				strptime(str_buff, EXIF_DATE_TIME_FORMAT, &tm);
 				node->rawtime = mktime(&tm);
@@ -883,7 +883,6 @@ static int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct
 	int pos_start, pos_stop;
 
 	if (mmap_disk(rawdev, (const struct range *)wnd) == 0) {
-		fprintf(debug_file, "Searching in mmapped window: from 0x%llx, to 0x%llx\n", wnd->from, wnd->from + rawdev->mmap_current_size);
 		pos_start = find_marker(rawdev->disk_mmap, rawdev->mmap_current_size, elphel_st.iov_base, elphel_st.iov_len, 0);
 		if (pos_start >= 0) {
 			rawdev->file_start = rawdev->mmap_offset + pos_start;
@@ -894,10 +893,9 @@ static int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct
 				ret = 0;
 			}
 		}
-		fprintf(debug_file, "\t%s: pos_start = %d, pos_stop = %d\n", __func__, pos_start, pos_stop);
 		munmap_disk(rawdev);
 	} else {
-		fprintf(debug_file, "Error mmaping region from 0x%llx to 0x%llx\n", wnd->from, wnd->to);
+		D0(fprintf(debug_file, "ERROR: can not memory map region from 0x%llx to 0x%llx\n", wnd->from, wnd->to));
 	}
 
 	return ret;
@@ -913,24 +911,14 @@ static int find_in_window(rawdev_buffer *rawdev, const struct range *wnd, struct
  * @return      A pointer to disk index node found or NULL if there were no close
  * index candidates
  */
-static struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idir *idir, uint64_t *rawtime)
+static struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idir *idir, time_t *rawtime)
 {
-	bool indx_appended = false;
 	bool process = true;
 	struct range range;
 	struct range search_window;
 	struct disk_index *indx_found = NULL;
 	struct disk_index *indx_ret = NULL;
 	struct disk_index *nearest_indx = find_nearest_by_time((const struct disk_idir *)idir, *rawtime);
-
-	/* debug code follows */
-	struct tm *tm = gmtime(rawtime);
-	fprintf(debug_file, "%s: looking for offset near %04d-%02d-%02d %02d:%02d:%02d\n", __func__,
-			tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
-	uint64_t nr;
-	nr = (nearest_indx == NULL) ? 0 : nearest_indx->f_offset;
-	fprintf(debug_file, "Nearest index offset: 0x%llx\n", nr);
-	/* end of debug code */
 
 	// define disk offsets where search will be performed
 	if (nearest_indx == NULL) {
@@ -952,16 +940,12 @@ static struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idi
 		}
 	}
 
-	fprintf(debug_file, "Starting search in range: from 0x%llx, to 0x%llx\n", range.from, range.to);
+	D6(fprintf(debug_file, "Starting search in range: from 0x%llx, to 0x%llx\n", range.from, range.to));
 
 	while (process && get_search_window(&range, &search_window) == 0) {
 		indx_found = NULL;
-		indx_appended = false;
-		fprintf(debug_file, "Search window: from 0x%llx, to 0x%llx\n", search_window.from, search_window.to);
 		if (find_in_window(rawdev, &search_window, &indx_found) == 0) {
 			double time_diff = difftime(indx_found->rawtime, *rawtime);
-			fprintf(debug_file, "Index found: time diff %f, file offset 0x%llx, rawtime found %ld, rawtime given %ld\n",
-					time_diff, indx_found->f_offset, indx_found->rawtime, *rawtime);
 			if (fabs(time_diff) > SEARCH_TIME_WINDOW) {
 				// the index found is not within search time window, update sparse index directory and
 				// define a new search window
@@ -980,10 +964,9 @@ static struct disk_index *find_disk_index(rawdev_buffer *rawdev, struct disk_idi
 			// index is not found in the search window, move toward the start of the range
 			range.to = search_window.from;
 		}
-		fprintf(debug_file, "Updating range, new range: from 0x%llx, to 0x%llx\n", range.from, range.to);
 	}
 
-	fprintf(debug_file, "\nSparse index directory dump, %d nodes:\n", idir->size);
+	D6(fprintf(debug_file, "\nSparse index directory dump, %d nodes:\n", idir->size));
 	dump_index_dir(idir);
 
 	return indx_ret;
@@ -1014,7 +997,6 @@ void *reader(void *arg)
 	size_t file_cntr;
 	camogm_state *state = (camogm_state *)arg;
 	rawdev_buffer *rawdev = &state->rawdev;
-	struct stat stat_buff;
 	struct range mmap_range;
 	struct disk_index *disk_indx, *cross_boundary_indx;
 	struct disk_idir index_dir;
@@ -1160,7 +1142,6 @@ void *reader(void *arg)
 						rng.from = index_sparse.curr_indx->f_offset + index_sparse.curr_indx->f_size;
 						rng.to = rawdev->end_pos;
 					}
-					fprintf(debug_file, "Searching next file in rage from 0x%llx to 0x%llx\n", rng.from, rng.to);
 					if (indx_ptr == NULL) {
 						rng.from &= PAGE_BOUNDARY_MASK;
 						if (rng.to - rng.from > rawdev->mmap_default_size)
@@ -1238,7 +1219,7 @@ void *reader(void *arg)
 				D0(fprintf(debug_file, "Unrecognized command is skipped\n"));
 			}
 		}
-		if (fstat(fd, &stat_buff) != EBADF)
+		if (is_fd_valid(fd))
 			close(fd);
 		pthread_mutex_lock(&state->mutex);
 		state->prog_state = STATE_STOPPED;
@@ -1260,21 +1241,18 @@ void *reader(void *arg)
 static inline void exit_thread(void *arg)
 {
 	struct exit_state *s = (struct exit_state *)arg;
-	struct stat buff;
 
-	if (fstat(s->state->rawdev.rawdev_fd, &buff) != EBADF) {
-		if (s->state->rawdev.disk_mmap != NULL)
-			munmap(s->state->rawdev.disk_mmap, s->state->rawdev.mmap_current_size);
+	if (s->state->rawdev.disk_mmap != NULL)
+		munmap(s->state->rawdev.disk_mmap, s->state->rawdev.mmap_current_size);
+	if (is_fd_valid(s->state->rawdev.rawdev_fd))
 		close(s->state->rawdev.rawdev_fd);
-		s->state->rawdev.rawdev_fd = -1;
-	}
 	if (s->idir->size != 0)
 		delete_idir(s->idir);
 	if (s->sparse_idir-> size != 0)
 		delete_idir(s->sparse_idir);
-	if (fstat(*s->sockfd_const, &buff) != EBADF)
+	if (is_fd_valid(*s->sockfd_const))
 		close(*s->sockfd_const);
-	if (fstat(*s->sockfd_temp, &buff) != EBADF)
+	if (is_fd_valid(*s->sockfd_temp))
 		close(*s->sockfd_temp);
 }
 
@@ -1372,7 +1350,6 @@ static void build_index(camogm_state *state, struct disk_idir *idir)
 				if (pos_start == MATCH_NOT_FOUND && pos_stop == MATCH_NOT_FOUND) {
 					// normal condition, search in progress
 					buff_processed = 1;
-//					D6(fprintf(debug_file, "State 'skip data'\n"));
 				} else if (pos_start >= 0 && pos_stop >= 0 && pos_start > pos_stop) {
 					// normal condition, start marker following stop marker found - this indicates a new file
 					if (search_state == SEARCH_FILE_DATA) {

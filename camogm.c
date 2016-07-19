@@ -146,6 +146,7 @@ void setGValue(unsigned int port, unsigned long GNumber, unsigned long value);
 unsigned int select_port(camogm_state *states);
 inline void set_chn_state(camogm_state *s, unsigned int port, unsigned int new_state);
 inline int is_chn_active(camogm_state *s, unsigned int port);
+void clean_up(camogm_state *state);
 
 void put_uint16(void *buf, u_int16_t val)
 {
@@ -216,6 +217,7 @@ void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 
 	// reading thread has not been started yet, mutex lock is not necessary
 	state->prog_state = STATE_STOPPED;
+	state->rawdev.thread_state = STATE_STOPPED;
 
 	// kml stuff
 	camogm_kml_set_horHalfFov(state, 20.0);
@@ -812,7 +814,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
 			/* debug code follows */
-			state->rawdev.end_pos = (uint64_t)4096 * (uint64_t)1048576;
+			state->rawdev.end_pos = (uint64_t)128 * (uint64_t)1048576;
 			/* end of debug code */
 		}
 	}
@@ -1220,6 +1222,7 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 	} else if (strcmp(cmd, "exit") == 0) {
 		camogm_stop(state);
 		camogm_free(state);
+		clean_up(state);
 		exit(0);
 	} else if (strcmp(cmd, "duration") == 0) {
 		if (!(args) || (((d = strtol(args, NULL, 10))) <= 0)) d = DEFAULT_DURATION;
@@ -1354,21 +1357,25 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 }
 
 /**
- * @brief This function closes open files and deletes allocated memory.
+ * @brief This function closes open files, terminates reading thread and deletes allocated memory.
  * @param[in]   state   pointer to #camogm_state structure for a particular sensor channel
  * return       None
  */
 void clean_up(camogm_state *state)
 {
 	for (int port = 0; port < SENSOR_PORTS; port++) {
-		if (state->fd_exif[port] > 0)
+		if (is_fd_valid(state->fd_exif[port]))
 			close(state->fd_exif[port]);
-		if (state->fd_head[port] > 0)
+		if (is_fd_valid(state->fd_head[port]))
 			close(state->fd_head[port]);
-		if (state->fd_circ[port] > 0)
+		if (is_fd_valid(state->fd_circ[port]))
 			close(state->fd_circ[port]);
-		if (state->fd_fparmsall[port])
+		if (is_fd_valid(state->fd_fparmsall[port]))
 			close(state->fd_fparmsall[port]);
+	}
+
+	if (state->rawdev.thread_state != STATE_STOPPED) {
+		pthread_cancel(state->rawdev.tid);
 	}
 }
 
@@ -1787,4 +1794,15 @@ int isDaemonEnabled(unsigned int port, int daemonBit)   // <0 - use default
 {
 	if ((daemonBit >= 0) && (daemonBit < 32)) lastDaemonBit[port] = daemonBit;
 	return ((framePars[port][GLOBALPARS(port, G_THIS_FRAME) & PARS_FRAMES_MASK].pars[P_DAEMON_EN] & (1 << lastDaemonBit[port])) != 0);
+}
+
+/**
+ * @brief Check if file descriptor is valid. This function is used to check if file
+ * is opened before closing it.
+ * @param[in]   fd   file descriptor to check
+ * @return      1 if descriptor is valid and 0 otherwise
+ */
+inline int is_fd_valid(int fd)
+{
+	return fcntl(fd, F_GETFD) != -1 || errno != EBADF;
 }
