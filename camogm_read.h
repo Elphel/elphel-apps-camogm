@@ -1,8 +1,8 @@
-/** @file camogm_ogm.h
- * @brief Provides writing to OGM files for @e camogm
- * @copyright Copyright (C) 2016 Elphel, Inc.
+/** @file camogm_read.h
+ * @brief Provides reading data written to raw device storage and saving the data to a device with file system.
+ * @copyright  Copyright (C) 2016 Elphel, Inc.
  *
- * @par <b>License</b>
+ * <b>License:</b>
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -14,16 +14,24 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
-#ifndef _CAMOGM_OGM_H
-#define _CAMOGM_OGM_H
+#ifndef _CAMOGM_READ_H
+#define _CAMOGM_READ_H
 
 #include "camogm.h"
 
-int camogm_init_ogm(void);
-int camogm_start_ogm(camogm_state *state);
-int camogm_frame_ogm(camogm_state *state);
-int camogm_end_ogm(camogm_state *state);
-void camogm_free_ogm(void);
+/**
+ * @struct range
+ * @brief Container for offsets in raw device buffer
+ * @var range::from
+ * Starting offset
+ * @var range::to
+ * Ending offset
+ */
+struct range {
+	uint64_t from;
+	uint64_t to;
+};
 
-#endif /* _CAMOGM_OGM_H */
+void *reader(void *arg);
+
+#endif /* _CAMOGM_READ_H */
