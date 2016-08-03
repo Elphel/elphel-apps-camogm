@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <string.h>
+#include <c313a.h>
 
 #include "camogm_jpeg.h"
 
@@ -81,6 +82,9 @@ int camogm_start_jpeg(camogm_state *state)
 		}
 	}
 
+	fprintf(debug_file, "Start recording buffer usage statistics\n");
+	fprintf(debug_file, "\"JPEG write time, us\",\"free buff, %\",\"free buff, %\",\"free buff, %\",\"free buff, %\"\n");
+
 	return 0;
 }
 
@@ -100,7 +104,10 @@ int camogm_frame_jpeg(camogm_state *state)
 	unsigned char *split_ptr = NULL;
 	long split_cntr = 0;
 	int port = state->port_num;
+	uint32_t start_time, end_time;
+	off_t free_space;
 
+	start_time = lseek(state->fd_circ[0], LSEEK_CIRC_UTIME, SEEK_END);
 	if (!state->rawdev_op) {
 		l = 0;
 		for (i = 0; i < (state->chunk_index) - 1; i++) {
@@ -122,7 +129,7 @@ int camogm_frame_jpeg(camogm_state *state)
 		}
 		close(state->ivf);
 	} else {
-		D0(fprintf(debug_file, "\n%s: current pointers start_pos = %llu, end_pos = %llu, curr_pos = %llu, data in buffer %d\n", __func__,
+		D3(fprintf(debug_file, "\n%s: current pointers start_pos = %llu, end_pos = %llu, curr_pos = %llu, data in buffer %d\n", __func__,
 				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w, l));
 		split_index = -1;
 		for (int i = 0, total_len = 0; i < state->chunk_index - 1; i++) {
@@ -130,7 +137,7 @@ int camogm_frame_jpeg(camogm_state *state)
 			if (total_len + state->rawdev.curr_pos_w > state->rawdev.end_pos) {
 				split_index = i;
 				chunks_used++;
-				D0(fprintf(debug_file, "\n>>> raw storage roll over detected\n"));
+				D3(fprintf(debug_file, "\n>>> raw storage roll over detected\n"));
 				break;
 			}
 		}
@@ -185,8 +192,24 @@ int camogm_frame_jpeg(camogm_state *state)
 		state->rawdev.curr_pos_w += l;
 		if (state->rawdev.curr_pos_w > state->rawdev.end_pos)
 			state->rawdev.curr_pos_w = state->rawdev.curr_pos_w - state->rawdev.end_pos + state->rawdev.start_pos;
-		D0(fprintf(debug_file, "%d bytes written, curr_pos = %llu\n", l, state->rawdev.curr_pos_w));
+		D6(fprintf(debug_file, "%d bytes written, curr_pos = %llu\n", l, state->rawdev.curr_pos_w));
 	}
+	end_time = lseek(state->fd_circ[0], LSEEK_CIRC_UTIME, SEEK_END);
+//	fprintf(debug_file, "JPEG write time = %u us\n", end_time - start_time);
+	fprintf(debug_file, "%u,", end_time - start_time);
+//	fprintf(debug_file, "Free space in buffers: ");
+	for (int i = 0; i < SENSOR_PORTS; i++) {
+		int buff_size, jpeg_pos;
+		jpeg_pos = lseek(state->fd_circ[i], 0 , SEEK_CUR);
+		free_space = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
+		buff_size = lseek(state->fd_circ[i], 0, SEEK_END);
+		lseek(state->fd_circ[i], jpeg_pos, SEEK_SET);
+//		fprintf(debug_file, "chn %d = %ld ",
+		fprintf(debug_file, "%ld,",
+//				i,
+				(int)(100 * (float)free_space / (float)buff_size));
+	}
+	fprintf(debug_file, "\b\n");
 
 	return 0;
 }

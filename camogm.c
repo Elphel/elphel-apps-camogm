@@ -479,6 +479,9 @@ int sendImageFrame(camogm_state *state)
 	int * ifp_this = (int*)&(state->this_frame_params[state->port_num]);
 	int fp;
 	int port = state->port_num;
+	unsigned char app15[64] = {0xff, 0xef};
+	int app15_pos = 0;
+	int stuffing;
 
 // This is probably needed only for Quicktime (not to exceed already allocated frame index)
 	if (state->frameno >= (state->max_frames)) {
@@ -571,7 +574,7 @@ int sendImageFrame(camogm_state *state)
 		D3(fprintf(debug_file, "_5_"));
 // update the Exif header with the current frame metadata
 		state->exifSize[port] = lseek(state->fd_exif[port], 1, SEEK_END); // at the beginning of page 1 - position == page length
-		if (state->exifSize > 0) {
+		if (state->exifSize[port] > 0) {
 //state->this_frame_params.meta_index
 			lseek(state->fd_exif[port], state->this_frame_params[port].meta_index, SEEK_END); // select meta page to use (matching frame)
 			rslt = read(state->fd_exif[port], state->ed[port], state->exifSize[port]);
@@ -592,14 +595,27 @@ int sendImageFrame(camogm_state *state)
 		state->packetchunks[state->chunk_index++].chunk = state->jpegHeader[port];
 		state->packetchunks[state->chunk_index  ].bytes = state->exifSize[port];
 		state->packetchunks[state->chunk_index++].chunk = state->ed[port];
+		app15_pos = state->chunk_index++;
 		state->packetchunks[state->chunk_index  ].bytes = state->head_size[port] - 2;
 		state->packetchunks[state->chunk_index++].chunk = &(state->jpegHeader[port][2]);
+		stuffing = 32 - (2 + state->exifSize[port] + state->head_size[port]) % 32;
 	} else {
 		D3(fprintf(debug_file, "_8_"));
+		app15_pos = state->chunk_index++;
 		state->packetchunks[state->chunk_index  ].bytes = state->head_size[port];
 		state->packetchunks[state->chunk_index++].chunk = state->jpegHeader[port];
+		stuffing = 32 - (state->head_size[port] % 32);
 	}
 	D3(fprintf(debug_file, "_9_"));
+
+	// align JPEG (+ Exif) header to 32 bytes by adding APP15 marker
+	if (stuffing < 4) {
+		stuffing += 32;
+	}
+	app15[3] = stuffing - 2;
+	state->packetchunks[app15_pos].bytes = stuffing;
+	state->packetchunks[app15_pos].chunk = app15;
+	fprintf(debug_file, "\nadd %d stuffing bytes as APP15\n", stuffing);
 
 /* JPEG image data may be split in two segments (rolled over buffer end) - process both variants */
 	if ((state->cirbuf_rp[port] + state->jpeg_len) > state->circ_buff_size[port]) { // two segments
@@ -1566,6 +1582,7 @@ unsigned int select_port(camogm_state *state)
 			}
 		}
 	}
+
 	return chn;
 }
 

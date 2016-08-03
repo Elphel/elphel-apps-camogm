@@ -186,7 +186,7 @@ typedef struct {
 	int formats;                                            ///< bitmask of used (initialized) formats
 	int format;                                             ///< output file format
 	int set_format;                                         ///< output format to set (will be updated after stop)
-	elph_packet_chunk packetchunks[7];
+	elph_packet_chunk packetchunks[8];
 	int chunk_index;
 	int buf_overruns[SENSOR_PORTS];
 	int buf_min[SENSOR_PORTS];
