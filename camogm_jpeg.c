@@ -31,6 +31,11 @@
 
 #include "camogm_jpeg.h"
 
+/** The position of size field in copy buffer */
+#define VECTOR_SZ_POS             0
+/** The position of vector pointer field in copy buffer */
+#define POINTER_POS               1
+
 int camogm_init_jpeg(camogm_state *state)
 {
 	return 0;
@@ -129,87 +134,104 @@ int camogm_frame_jpeg(camogm_state *state)
 		}
 		close(state->ivf);
 	} else {
-		D3(fprintf(debug_file, "\n%s: current pointers start_pos = %llu, end_pos = %llu, curr_pos = %llu, data in buffer %d\n", __func__,
-				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w, l));
-		split_index = -1;
-		for (int i = 0, total_len = 0; i < state->chunk_index - 1; i++) {
-			total_len += state->packetchunks[i + 1].bytes;
-			if (total_len + state->rawdev.curr_pos_w > state->rawdev.end_pos) {
-				split_index = i;
-				chunks_used++;
-				D3(fprintf(debug_file, "\n>>> raw storage roll over detected\n"));
-				break;
-			}
-		}
-		k = 0;
-		l = 0;
-		for (int i = 0; i < chunks_used; i++) {
-			++k;
-			if (i == split_index) {
-				// one of the chunks rolls over the end of the raw storage, split it into two segments and
-				// use additional chunk in chunks_iovec for this additional segment
-				split_cntr = state->rawdev.end_pos - (l + state->rawdev.curr_pos_w);
-				split_ptr = state->packetchunks[k].chunk + split_cntr;
+//		D3(fprintf(debug_file, "\n%s: current pointers start_pos = %llu, end_pos = %llu, curr_pos = %llu, data in buffer %d\n", __func__,
+//				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w, l));
+//		split_index = -1;
+//		for (int i = 0, total_len = 0; i < state->chunk_index - 1; i++) {
+//			total_len += state->packetchunks[i + 1].bytes;
+//			if (total_len + state->rawdev.curr_pos_w > state->rawdev.end_pos) {
+//				split_index = i;
+//				chunks_used++;
+//				D3(fprintf(debug_file, "\n>>> raw storage roll over detected\n"));
+//				break;
+//			}
+//		}
+//		k = 0;
+//		l = 0;
+//		for (int i = 0; i < chunks_used; i++) {
+//			++k;
+//			if (i == split_index) {
+//				// one of the chunks rolls over the end of the raw storage, split it into two segments and
+//				// use additional chunk in chunks_iovec for this additional segment
+//				split_cntr = state->rawdev.end_pos - (l + state->rawdev.curr_pos_w);
+//				split_ptr = state->packetchunks[k].chunk + split_cntr;
+//
+//				D3(fprintf(debug_file, "Splitting chunk #%d: total chunk size = %ld, start address = 0x%p\n",
+//						i, state->packetchunks[k].bytes, state->packetchunks[k].chunk));
+//
+//				// be careful with indexes here
+//				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
+//				chunks_iovec[i].iov_len = split_cntr;
+//				l += chunks_iovec[i].iov_len;
+//				chunks_iovec[++i].iov_base = split_ptr + 1;
+//				chunks_iovec[i].iov_len = state->packetchunks[k].bytes - split_cntr;
+//				l += chunks_iovec[i].iov_len;
+//			} else {
+//				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
+//				chunks_iovec[i].iov_len = state->packetchunks[k].bytes;
+//				l += chunks_iovec[i].iov_len;
+//			}
+//		}
+//
+//		if (split_index < 0) {
+//			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, chunks_used);
+//		} else {
+//			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, split_index + 1);
+//			fprintf(debug_file, "write first part: split_index = %d, %d bytes written\n", split_index, iovlen);
+//			if (lseek64(state->rawdev.rawdev_fd, state->rawdev.start_pos, SEEK_SET) != state->rawdev.start_pos) {
+//				perror(__func__);
+//				D0(fprintf(debug_file, "error positioning file pointer to the beginning of raw device\n"));
+//				return -CAMOGM_FRAME_FILE_ERR;
+//			}
+//			state->rawdev.overrun++;
+//			iovlen += writev(state->rawdev.rawdev_fd, &chunks_iovec[split_index + 1], chunks_used - split_index);
+//			fprintf(debug_file, "write second part: split_index + 1 = %d, chunks_used - split_index = %d, %d bytes written in total\n",
+//					split_index + 1, chunks_used - split_index, iovlen);
+//		}
+//		if (iovlen < l) {
+//			j = errno;
+//			perror(__func__);
+//			D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
+//			return -CAMOGM_FRAME_FILE_ERR;
+//		}
+//		state->rawdev.curr_pos_w += l;
+//		if (state->rawdev.curr_pos_w > state->rawdev.end_pos)
+//			state->rawdev.curr_pos_w = state->rawdev.curr_pos_w - state->rawdev.end_pos + state->rawdev.start_pos;
+//		D6(fprintf(debug_file, "%d bytes written, curr_pos = %llu\n", l, state->rawdev.curr_pos_w));
 
-				D3(fprintf(debug_file, "Splitting chunk #%d: total chunk size = %ld, start address = 0x%p\n",
-						i, state->packetchunks[k].bytes, state->packetchunks[k].chunk));
-
-				// be careful with indexes here
-				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
-				chunks_iovec[i].iov_len = split_cntr;
-				l += chunks_iovec[i].iov_len;
-				chunks_iovec[++i].iov_base = split_ptr + 1;
-				chunks_iovec[i].iov_len = state->packetchunks[k].bytes - split_cntr;
-				l += chunks_iovec[i].iov_len;
-			} else {
-				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
-				chunks_iovec[i].iov_len = state->packetchunks[k].bytes;
-				l += chunks_iovec[i].iov_len;
-			}
-		}
-
-		if (split_index < 0) {
-			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, chunks_used);
-		} else {
-			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, split_index + 1);
-			fprintf(debug_file, "write first part: split_index = %d, %d bytes written\n", split_index, iovlen);
-			if (lseek64(state->rawdev.rawdev_fd, state->rawdev.start_pos, SEEK_SET) != state->rawdev.start_pos) {
-				perror(__func__);
-				D0(fprintf(debug_file, "error positioning file pointer to the beginning of raw device\n"));
-				return -CAMOGM_FRAME_FILE_ERR;
-			}
-			state->rawdev.overrun++;
-			iovlen += writev(state->rawdev.rawdev_fd, &chunks_iovec[split_index + 1], chunks_used - split_index);
-			fprintf(debug_file, "write second part: split_index + 1 = %d, chunks_used - split_index = %d, %d bytes written in total\n",
-					split_index + 1, chunks_used - split_index, iovlen);
-		}
-		if (iovlen < l) {
-			j = errno;
-			perror(__func__);
-			D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
+		uint8_t buff[128] = {0};
+		uint32_t *buff_p = (uint32_t *)buff;
+		uint8_t *pos;
+		int fd = open("/sys/devices/soc0/amba@0/80000000.elphel-ahci/write", O_WRONLY);
+		if (fd < 0) {
+			perror("ERROR: can not open test_write file\n");
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
-		state->rawdev.curr_pos_w += l;
-		if (state->rawdev.curr_pos_w > state->rawdev.end_pos)
-			state->rawdev.curr_pos_w = state->rawdev.curr_pos_w - state->rawdev.end_pos + state->rawdev.start_pos;
-		D6(fprintf(debug_file, "%d bytes written, curr_pos = %llu\n", l, state->rawdev.curr_pos_w));
+		buff_p[VECTOR_SZ_POS] = state->chunk_index - 1;
+		fprintf(debug_file, "dump iovect array\n");
+		for (int i = 0; i < state->chunk_index - 1; i++) {
+			fprintf(debug_file, "ptr: %p, length: %ld\n", state->packetchunks[i + 1].chunk, state->packetchunks[i + 1].bytes);
+		}
+		buff_p[POINTER_POS] = (uint32_t) &state->packetchunks[1];
+		if (write(fd, buff, 8) < 0) {
+			perror("Can not pass IO vector to driver:");
+		}
+		close(fd);
 	}
 	end_time = lseek(state->fd_circ[0], LSEEK_CIRC_UTIME, SEEK_END);
 //	fprintf(debug_file, "JPEG write time = %u us\n", end_time - start_time);
-	fprintf(debug_file, "%u,", end_time - start_time);
 //	fprintf(debug_file, "Free space in buffers: ");
-	for (int i = 0; i < SENSOR_PORTS; i++) {
-		int buff_size, jpeg_pos;
-		jpeg_pos = lseek(state->fd_circ[i], 0 , SEEK_CUR);
-		free_space = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
-		buff_size = lseek(state->fd_circ[i], 0, SEEK_END);
-		lseek(state->fd_circ[i], jpeg_pos, SEEK_SET);
+//	for (int i = 0; i < SENSOR_PORTS; i++) {
+//		int buff_size, jpeg_pos;
+//		jpeg_pos = lseek(state->fd_circ[i], 0 , SEEK_CUR);
+//		free_space = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
+//		buff_size = lseek(state->fd_circ[i], 0, SEEK_END);
+//		lseek(state->fd_circ[i], jpeg_pos, SEEK_SET);
 //		fprintf(debug_file, "chn %d = %ld ",
-		fprintf(debug_file, "%ld,",
 //				i,
-				(int)(100 * (float)free_space / (float)buff_size));
-	}
-	fprintf(debug_file, "\b\n");
+//				(int)(100 * (float)free_space / (float)buff_size));
+//	}
+//	fprintf(debug_file, "\b\n");
 
 	return 0;
 }

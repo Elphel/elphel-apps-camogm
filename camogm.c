@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <getopt.h>
+#include <ctype.h>
 
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
@@ -59,6 +60,8 @@
 #define ALL_CHN_INACTIVE          0x00
 /** @brief This is a basic helper macro for processing all sensor ports at a time */
 #define FOR_EACH_PORT(indtype, indvar) for (indtype indvar = 0; indvar < SENSOR_PORTS; indvar++)
+/** @brief The path to Elphel AHCI driver sysfs entry. The trailing slash is mandatory. */
+#define SYSFS_DRIVER_ENTRY        "/sys/devices/soc0/amba@0/80000000.elphel-ahci/"
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 
@@ -101,6 +104,11 @@ typedef enum {
 	FILE_PATH
 } path_type;
 
+enum sysfs_path_type {
+	TYPE_START,
+	TYPE_SIZE
+};
+
 int debug_level;
 FILE* debug_file;
 
@@ -139,7 +147,10 @@ void  camogm_set_start_after_timestamp(camogm_state *state, double d);
 void  camogm_set_max_frames(camogm_state *state, int d);
 void  camogm_set_frames_per_chunk(camogm_state *state, int d);
 
-uint64_t get_disk_size(const char *name);
+static uint64_t get_disk_size(const char *name);
+static int get_sysfs_name(const char *dev_name, char *sys_name, size_t str_sz, int type);
+static int get_disk_range(const char *name, struct range *rng);
+static int set_disk_range(const char *name, const struct range *rng);
 int open_files(camogm_state *state);
 unsigned long getGPValue(unsigned int port, unsigned long GPNumber);
 void setGValue(unsigned int port, unsigned long GNumber, unsigned long value);
@@ -831,6 +842,18 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
 			state->rawdev_op = 1;
 		}
+
+		/* debug code follows*/
+		struct range rng = {
+				.from = 0,
+				.to = 0
+		};
+		if (get_disk_range(state->rawdev.rawdev_path, &rng) == 0) {
+			set_disk_range(SYSFS_DRIVER_ENTRY, &rng);
+		} else {
+			D0(fprintf(debug_file, "ERROR: unable to get disk size and starting sector\n"));
+		}
+		/* end of debug code */
 	}
 }
 
@@ -1537,7 +1560,7 @@ int listener_loop(camogm_state *state)
  * @param   name   pointer to disk name string
  * @return  disk size in bytes if it was read correctly and 0 otherwise
  */
-uint64_t get_disk_size(const char *name)
+static uint64_t get_disk_size(const char *name)
 {
 	int fd;
 	uint64_t dev_sz;
@@ -1553,6 +1576,159 @@ uint64_t get_disk_size(const char *name)
 	close(fd);
 
 	return dev_sz;
+}
+
+/**
+ * @brief Make sysfs path from disk name in accordance with the type provided.
+ * The 'start' file does not exist for full disk path (/dev/sda) and this function
+ * returns empty string in @e sys_name and non-zero return value.
+ * @param[in]   dev_name   pointer to a string containing device name
+ * @param[out]  sys_name   pointer to a string where sysfs path will be stored
+ * @param[in]   str_sz     the size of @e dname and @e sname strings including the
+ * terminating null byte
+ * @param[in]   type    the type of sysfs path required. Can be one of #sysfs_path_type
+ * @return      The number of characters in resulting path, including the terminating
+ * null byte, or a negative value in case of an error.
+ */
+static int get_sysfs_name(const char *dev_name, char *sys_name, size_t str_sz, int type)
+{
+	int ret = -1;
+	const char prefix[] = "/sys/block/";
+	char size_name[] = "size";
+	char start_name[] = "start";
+	char device_name[ELPHEL_PATH_MAX] = {0};
+	char disk_name[ELPHEL_PATH_MAX] = {0};
+	char part_name[ELPHEL_PATH_MAX] = {0};
+	char *postfix = NULL;
+	char *ptr = NULL;
+	size_t dname_sz = strlen(dev_name) - 1;
+
+	strncpy(device_name, dev_name, ELPHEL_PATH_MAX);
+
+	// strip trailing slash
+	if (device_name[dname_sz] == '/') {
+		device_name[dname_sz] = '\0';
+		dname_sz--;
+	}
+
+	// get partition and disk names
+	ptr = strrchr(device_name, '/');
+	if (ptr == NULL) {
+		D0(fprintf(debug_file, "%s: the path specified is invalid\n", __func__));
+		return ret;
+	}
+	strcpy(part_name, ptr + 1);
+	strcpy(disk_name, ptr + 1);
+	if (strlen(disk_name) > 0)
+		disk_name[strlen(disk_name) - 1] = '\0';
+
+	if (type == TYPE_SIZE)
+		postfix = size_name;
+	else if (type == TYPE_START)
+		postfix = start_name;
+
+	if (isdigit(device_name[dname_sz])) {
+		// we've got partition
+		ret = snprintf(sys_name, str_sz, "%s%s/%s/%s", prefix, disk_name, part_name, postfix);
+	} else {
+		// we've got entire disk
+		ret = snprintf(sys_name, str_sz, "%s%s/%s", prefix, part_name, postfix);
+		if (type == TYPE_START)
+			// the 'start' does not exist for full disk, notify caller
+			// that we've got this situation here
+			sys_name[0] = '\0';
+	}
+
+	return ret;
+}
+
+/**
+ * @brief Get disk start and end sectors. If the name specified is the name of a disk instead of
+ * the name of a partition on that disk (i.e /dev/sda instead /dev/sda2), then the full size of the
+ * disk is returned. This function is used with #set_disk_range to allocate raw device buffer on a disk.
+ * @param[in]   name   pointer to disk name string
+ * @param[out]  rng    pointer to the structure containing disk size
+ * @return      0 if disk size was retrieved successfully and -1 in case of an error
+ */
+static int get_disk_range(const char *name, struct range *rng)
+{
+	int ret = 0;
+	int fd;
+	uint64_t val;
+	char data[SMALL_BUFF_LEN] = {0};
+	char sysfs_name[ELPHEL_PATH_MAX] = {0};
+
+	// read start LBA
+	if (get_sysfs_name(name, sysfs_name, ELPHEL_PATH_MAX, TYPE_START) > 0) {
+		if (strlen(sysfs_name) > 0) {
+			fd = open(sysfs_name, O_RDONLY);
+			if (fd >= 0) {
+				read(fd, data, SMALL_BUFF_LEN);
+				if ((val = strtoull(data, NULL, 10)) != 0)
+					rng->from = val;
+				else
+					ret = -1;
+				close(fd);
+			}
+		} else {
+			rng->from = 0;
+		}
+	}
+
+	// read disk size in LBA
+	if (get_sysfs_name(name, sysfs_name, ELPHEL_PATH_MAX, TYPE_SIZE) > 0) {
+		fd = open(sysfs_name, O_RDONLY);
+		if (fd >= 0) {
+			read(fd, data, SMALL_BUFF_LEN);
+			if ((val = strtoull(data, NULL, 10)) != 0)
+				rng->to = rng->from + val;
+			else
+				ret = -1;
+			close(fd);
+		}
+	}
+
+	// sanity check
+	if (rng->from >= rng->to)
+		ret = -1;
+
+	return ret;
+}
+
+/**
+ * @brief Pass raw device buffer start and end LBAs to driver via its files in
+ * sysfs. This function is used with #get_disk_range to allocate raw device buffer on a disk.
+ * @param[in]   name   path to sysfs disk driver entry
+ * @param[in]   rng    pointer to structure containing disk size
+ * @return      0 if the values from @e rng were set successfully and -1 in case of an error
+ */
+static int set_disk_range(const char *name, const struct range *rng)
+{
+	int fd;
+	int ret = 0;
+	const char lba_start[] = "lba_start";
+	const char lba_end[] = "lba_end";
+	char path[ELPHEL_PATH_MAX] = {0};
+	char buff[SMALL_BUFF_LEN] = {0};
+	int len;
+
+	snprintf(path, ELPHEL_PATH_MAX, "%s%s", name, lba_start);
+	fd = open(path, O_WRONLY);
+	if (fd < 0)
+		return -1;
+	len = snprintf(buff, SMALL_BUFF_LEN, "%llu", rng->from);
+	write(fd, buff, len + 1);
+	close(fd);
+
+	snprintf(path, ELPHEL_PATH_MAX, "%s%s", name, lba_end);
+	fd = open(path, O_WRONLY);
+	if (fd < 0)
+		return -1;
+	len = snprintf(buff, SMALL_BUFF_LEN, "%llu", rng->to);
+	write(fd, buff, len + 1);
+	close(fd);
+
+	return ret;
 }
 
 /**

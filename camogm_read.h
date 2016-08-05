@@ -19,6 +19,9 @@
 
 #include "camogm.h"
 
+/** @brief The length of a buffer for string formatting */
+#define SMALL_BUFF_LEN            32
+
 /**
  * @struct range
  * @brief Container for offsets in raw device buffer
