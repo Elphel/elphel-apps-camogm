@@ -9,10 +9,20 @@ OBJS = $(SRC:.c=.o)
 CFLAGS   += -Wall -I$(STAGING_DIR_HOST)/usr/include-uapi/elphel
 LDLIBS   += -logg -pthread -lm
 
+SYSCONFDIR = /etc/
+BINDIR     = /usr/bin/
+WWW_PAGES  = /www/pages
+
 all: $(PROGS)
 
 $(PROGS): $(OBJS)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+	install: 
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 0755 -t $(DESTDIR)$(BINDIR) $(PROGS)
+	install -d $(DESTDIR)$(SYSCONFDIR)
+	install -m 0644 -t $(DESTDIR)$(SYSCONFDIR) $(CONFIGS)
 
 clean:
 	rm -rf $(PROGS) *.o *~
