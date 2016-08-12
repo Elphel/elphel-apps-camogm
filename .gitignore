@@ -3,3 +3,5 @@ html/*
 .cproject
 .externalToolBuilders
 .settings
+*.directory
+

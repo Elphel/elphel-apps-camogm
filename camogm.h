@@ -25,6 +25,8 @@
 #include <c313a.h>
 #include <ogg/ogg.h>
 #include "ogmstreams.h"
+#include <x393_devices.h>
+
 
 #define CAMOGM_FRAME_NOT_READY    1        ///< frame pointer valid, but not yet acquired
 #define CAMOGM_FRAME_INVALID      2        ///< invalid frame pointer
