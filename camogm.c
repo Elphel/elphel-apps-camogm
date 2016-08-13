@@ -90,7 +90,7 @@ const char *ctlFileNames[] = {  DEV393_PATH(DEV393_FRAMEPARS0), DEV393_PATH(DEV3
 const char *circbufFileNames[] = {DEV393_PATH(DEV393_CIRCBUF0), DEV393_PATH(DEV393_CIRCBUF1),
                                   DEV393_PATH(DEV393_CIRCBUF2), DEV393_PATH(DEV393_CIRCBUF3)
 };
-
+#endif
 
 int lastDaemonBit[SENSOR_PORTS] = {DAEMON_BIT_CAMOGM};
 struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
