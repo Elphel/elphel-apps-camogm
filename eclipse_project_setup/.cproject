@@ -23,12 +23,14 @@
 							<tool id="org.eclipse.cdt.build.core.settings.holder.1963286915" name="Assembly" superClass="org.eclipse.cdt.build.core.settings.holder">
 								<option id="org.eclipse.cdt.build.core.settings.holder.symbols.603462095" name="Symbols" superClass="org.eclipse.cdt.build.core.settings.holder.symbols" valueType="definedSymbols">
 									<listOptionValue builtIn="false" value="__GNUC__=1"/>
+									<listOptionValue builtIn="false" value="&quot;size_t=unsigned int&quot;"/>
 								</option>
 								<inputType id="org.eclipse.cdt.build.core.settings.holder.inType.574933238" languageId="org.eclipse.cdt.core.assembly" languageName="Assembly" sourceContentType="org.eclipse.cdt.core.asmSource" superClass="org.eclipse.cdt.build.core.settings.holder.inType"/>
 							</tool>
 							<tool id="org.eclipse.cdt.build.core.settings.holder.1479459009" name="GNU C++" superClass="org.eclipse.cdt.build.core.settings.holder">
 								<option id="org.eclipse.cdt.build.core.settings.holder.symbols.1243255488" name="Symbols" superClass="org.eclipse.cdt.build.core.settings.holder.symbols" valueType="definedSymbols">
 									<listOptionValue builtIn="false" value="__GNUC__=1"/>
+									<listOptionValue builtIn="false" value="&quot;size_t=unsigned int&quot;"/>
 								</option>
 								<inputType id="org.eclipse.cdt.build.core.settings.holder.inType.854106261" languageId="org.eclipse.cdt.core.g++" languageName="GNU C++" sourceContentType="org.eclipse.cdt.core.cxxSource,org.eclipse.cdt.core.cxxHeader" superClass="org.eclipse.cdt.build.core.settings.holder.inType"/>
 							</tool>
@@ -44,14 +46,15 @@
 								</option>
 								<option id="org.eclipse.cdt.build.core.settings.holder.symbols.1301792307" name="Symbols" superClass="org.eclipse.cdt.build.core.settings.holder.symbols" valueType="definedSymbols">
 									<listOptionValue builtIn="false" value="__GNUC__=1"/>
+									<listOptionValue builtIn="false" value="&quot;size_t=unsigned int&quot;"/>
 								</option>
 								<inputType id="org.eclipse.cdt.build.core.settings.holder.inType.1943978810" languageId="org.eclipse.cdt.core.gcc" languageName="GNU C" sourceContentType="org.eclipse.cdt.core.cSource,org.eclipse.cdt.core.cHeader" superClass="org.eclipse.cdt.build.core.settings.holder.inType"/>
 							</tool>
 						</toolChain>
 					</folderInfo>
 					<fileInfo id="0.531211255.880371970" name="camogm.c" rcbsApplicability="disable" resourcePath="camogm.c" toolsToInvoke="org.eclipse.cdt.build.core.settings.holder.910595191.1163900395">
-						<tool id="org.eclipse.cdt.build.core.settings.holder.910595191.1163900395" name="GNU C" superClass="org.eclipse.cdt.build.core.settings.holder.910595191">
-							<option id="org.eclipse.cdt.build.core.settings.holder.symbols.822557485" superClass="org.eclipse.cdt.build.core.settings.holder.symbols" valueType="definedSymbols">
+						<tool id="org.eclipse.cdt.build.core.settings.holder.910595191.1163900395" name="GNU C" superClass="org.eclipse.cdt.build.core.settings.holder.1963286915">
+							<option id="org.eclipse.cdt.build.core.settings.holder.symbols.822557485" name="Symbols" superClass="org.eclipse.cdt.build.core.settings.holder.symbols" valueType="definedSymbols">
 								<listOptionValue builtIn="false" value="__GNUC__=1"/>
 								<listOptionValue builtIn="false" value="&quot;size_t=unsigned int&quot;"/>
 							</option>
