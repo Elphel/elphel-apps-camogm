@@ -1,28 +1,36 @@
 PROGS      = camogm
-PHPFILES   = camogmstate.php
-
+PHPSCRIPTS = camogmstate.php
+CONFIGS =    qt_source
 SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c camogm_read.c index_list.c
 OBJS = camogm.o camogm_ogm.o camogm_jpeg.o camogm_mov.o camogm_kml.o camogm_read.o index_list.o
 #OBJS = $(SRC:.c=.o)
 
 #CFLAGS   += -Wall -I$(ELPHEL_KERNEL_DIR)/include/uapi/elphel
-CFLAGS   += -Wall -I$(STAGING_DIR_HOST)/usr/include-uapi/elphel
+CFLAGS   += -Wall -I$(STAGING_DIR_HOST)/usr/include-uapi
 LDLIBS   += -logg -pthread -lm
+
+INSTALL    = install
+INSTMODE   = 0755
+INSTDOCS   = 0644
+OWN = -o root -g root
 
 SYSCONFDIR = /etc/
 BINDIR     = /usr/bin/
 WWW_PAGES  = /www/pages
+
 
 all: $(PROGS)
 
 $(PROGS): $(OBJS)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-install:
-	install -d $(DESTDIR)$(BINDIR)
-	install -m 0755 -t $(DESTDIR)$(BINDIR) $(PROGS)
-	install -d $(DESTDIR)$(SYSCONFDIR)
-	install -m 0644 -t $(DESTDIR)$(SYSCONFDIR) $(CONFIGS)
+install: $(PROGS) $(PHPSCRIPTS) $(CONFIGS)
+	$(INSTALL) $(OWN) -d $(DESTDIR)$(BINDIR)
+	$(INSTALL) $(OWN) -m $(INSTMODE) $(PROGS)      $(DESTDIR)$(BINDIR)
+	$(INSTALL) $(OWN) -d $(DESTDIR)$(SYSCONFDIR)
+	$(INSTALL) $(OWN) -m $(INSTDOCS) $(CONFIGS)    $(DESTDIR)$(SYSCONFDIR)
+	$(INSTALL) $(OWN) -d $(DESTDIR)$(WWW_PAGES)
+	$(INSTALL) $(OWN) -m $(INSTMODE) $(PHPSCRIPTS) $(DESTDIR)$(WWW_PAGES)
 
 clean:
 	rm -rf $(PROGS) *.o *~

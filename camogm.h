@@ -21,11 +21,11 @@
 
 #include <pthread.h>
 #include <stdbool.h>
-#include <exifa.h>
-#include <c313a.h>
 #include <ogg/ogg.h>
 #include "ogmstreams.h"
-#include <x393_devices.h>
+#include <elphel/exifa.h>
+#include <elphel/c313a.h>
+#include <elphel/x393_devices.h>
 
 
 #define CAMOGM_FRAME_NOT_READY    1        ///< frame pointer valid, but not yet acquired
