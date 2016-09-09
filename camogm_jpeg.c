@@ -28,24 +28,9 @@
 #include <sys/types.h>
 #include <string.h>
 #include <c313a.h>
+#include <elphel/ahci_cmd.h>
 
 #include "camogm_jpeg.h"
-
-/* this should be in system includes */
-#define DRV_CMD_WRITE             (1 << 0)
-#define DRV_CMD_FINISH            (1 << 1)
-#define DRV_CMD_EXIF              (1 << 2)
-
-struct frame_data {
-       unsigned int sensor_port;
-       int cirbuf_ptr;
-       int jpeg_len;
-       int meta_index;
-       int cmd;
-};
-
-const char sysfs_fname[] = "/sys/devices/soc0/amba@0/80000000.elphel-ahci/write";
-/* end of system includes */
 
 int camogm_init_jpeg(camogm_state *state)
 {
