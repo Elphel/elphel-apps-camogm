@@ -124,6 +124,7 @@ typedef struct {
 	pthread_t tid;
 	volatile int thread_state;
 	unsigned char *disk_mmap;
+	int sysfs_fd;
 } rawdev_buffer;
 
 /**

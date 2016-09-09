@@ -31,10 +31,21 @@
 
 #include "camogm_jpeg.h"
 
-/** The position of size field in copy buffer */
-#define VECTOR_SZ_POS             0
-/** The position of vector pointer field in copy buffer */
-#define POINTER_POS               1
+/* this should be in system includes */
+#define DRV_CMD_WRITE             (1 << 0)
+#define DRV_CMD_FINISH            (1 << 1)
+#define DRV_CMD_EXIF              (1 << 2)
+
+struct frame_data {
+       unsigned int sensor_port;
+       int cirbuf_ptr;
+       int jpeg_len;
+       int meta_index;
+       int cmd;
+};
+
+const char sysfs_fname[] = "/sys/devices/soc0/amba@0/80000000.elphel-ahci/write";
+/* end of system includes */
 
 int camogm_init_jpeg(camogm_state *state)
 {
@@ -84,11 +95,14 @@ int camogm_start_jpeg(camogm_state *state)
 			D3(fprintf(debug_file, "Open raw device %s; start_pos = %llu, end_pos = %llu, curr_pos = %llu\n", state->rawdev.rawdev_path,
 					state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w));
 			lseek64(state->rawdev.rawdev_fd, state->rawdev.curr_pos_w, SEEK_SET);
+
+			state->rawdev.sysfs_fd = open(sysfs_fname, O_WRONLY);
+			if (state->rawdev.sysfs_fd < 0) {
+				D0(fprintf(debug_file, "Error opening sysfs file: %s\n", sysfs_fname));
+				return -CAMOGM_FRAME_FILE_ERR;
+			}
 		}
 	}
-
-	fprintf(debug_file, "Start recording buffer usage statistics\n");
-	fprintf(debug_file, "\"JPEG write time, us\",\"free buff, %\",\"free buff, %\",\"free buff, %\",\"free buff, %\"\n");
 
 	return 0;
 }
@@ -111,8 +125,8 @@ int camogm_frame_jpeg(camogm_state *state)
 	int port = state->port_num;
 	uint32_t start_time, end_time;
 	off_t free_space;
+	struct frame_data fdata = {0};
 
-	start_time = lseek(state->fd_circ[0], LSEEK_CIRC_UTIME, SEEK_END);
 	if (!state->rawdev_op) {
 		l = 0;
 		for (i = 0; i < (state->chunk_index) - 1; i++) {
@@ -134,104 +148,23 @@ int camogm_frame_jpeg(camogm_state *state)
 		}
 		close(state->ivf);
 	} else {
-//		D3(fprintf(debug_file, "\n%s: current pointers start_pos = %llu, end_pos = %llu, curr_pos = %llu, data in buffer %d\n", __func__,
-//				state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w, l));
-//		split_index = -1;
-//		for (int i = 0, total_len = 0; i < state->chunk_index - 1; i++) {
-//			total_len += state->packetchunks[i + 1].bytes;
-//			if (total_len + state->rawdev.curr_pos_w > state->rawdev.end_pos) {
-//				split_index = i;
-//				chunks_used++;
-//				D3(fprintf(debug_file, "\n>>> raw storage roll over detected\n"));
-//				break;
-//			}
-//		}
-//		k = 0;
-//		l = 0;
-//		for (int i = 0; i < chunks_used; i++) {
-//			++k;
-//			if (i == split_index) {
-//				// one of the chunks rolls over the end of the raw storage, split it into two segments and
-//				// use additional chunk in chunks_iovec for this additional segment
-//				split_cntr = state->rawdev.end_pos - (l + state->rawdev.curr_pos_w);
-//				split_ptr = state->packetchunks[k].chunk + split_cntr;
-//
-//				D3(fprintf(debug_file, "Splitting chunk #%d: total chunk size = %ld, start address = 0x%p\n",
-//						i, state->packetchunks[k].bytes, state->packetchunks[k].chunk));
-//
-//				// be careful with indexes here
-//				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
-//				chunks_iovec[i].iov_len = split_cntr;
-//				l += chunks_iovec[i].iov_len;
-//				chunks_iovec[++i].iov_base = split_ptr + 1;
-//				chunks_iovec[i].iov_len = state->packetchunks[k].bytes - split_cntr;
-//				l += chunks_iovec[i].iov_len;
-//			} else {
-//				chunks_iovec[i].iov_base = state->packetchunks[k].chunk;
-//				chunks_iovec[i].iov_len = state->packetchunks[k].bytes;
-//				l += chunks_iovec[i].iov_len;
-//			}
-//		}
-//
-//		if (split_index < 0) {
-//			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, chunks_used);
-//		} else {
-//			iovlen = writev(state->rawdev.rawdev_fd, chunks_iovec, split_index + 1);
-//			fprintf(debug_file, "write first part: split_index = %d, %d bytes written\n", split_index, iovlen);
-//			if (lseek64(state->rawdev.rawdev_fd, state->rawdev.start_pos, SEEK_SET) != state->rawdev.start_pos) {
-//				perror(__func__);
-//				D0(fprintf(debug_file, "error positioning file pointer to the beginning of raw device\n"));
-//				return -CAMOGM_FRAME_FILE_ERR;
-//			}
-//			state->rawdev.overrun++;
-//			iovlen += writev(state->rawdev.rawdev_fd, &chunks_iovec[split_index + 1], chunks_used - split_index);
-//			fprintf(debug_file, "write second part: split_index + 1 = %d, chunks_used - split_index = %d, %d bytes written in total\n",
-//					split_index + 1, chunks_used - split_index, iovlen);
-//		}
-//		if (iovlen < l) {
-//			j = errno;
-//			perror(__func__);
-//			D0(fprintf(debug_file, "writev error %d (returned %d, expected %d)\n", j, iovlen, l));
-//			return -CAMOGM_FRAME_FILE_ERR;
-//		}
-//		state->rawdev.curr_pos_w += l;
-//		if (state->rawdev.curr_pos_w > state->rawdev.end_pos)
-//			state->rawdev.curr_pos_w = state->rawdev.curr_pos_w - state->rawdev.end_pos + state->rawdev.start_pos;
-//		D6(fprintf(debug_file, "%d bytes written, curr_pos = %llu\n", l, state->rawdev.curr_pos_w));
-
-		uint8_t buff[128] = {0};
-		uint32_t *buff_p = (uint32_t *)buff;
-		uint8_t *pos;
-		int fd = open("/sys/devices/soc0/amba@0/80000000.elphel-ahci/write", O_WRONLY);
-		if (fd < 0) {
-			perror("ERROR: can not open test_write file\n");
-			return -CAMOGM_FRAME_FILE_ERR;
-		}
-		buff_p[VECTOR_SZ_POS] = state->chunk_index - 1;
 		fprintf(debug_file, "dump iovect array\n");
 		for (int i = 0; i < state->chunk_index - 1; i++) {
 			fprintf(debug_file, "ptr: %p, length: %ld\n", state->packetchunks[i + 1].chunk, state->packetchunks[i + 1].bytes);
 		}
-		buff_p[POINTER_POS] = (uint32_t) &state->packetchunks[1];
-		if (write(fd, buff, 8) < 0) {
-			perror("Can not pass IO vector to driver:");
+		fdata.sensor_port = port;
+		fdata.cirbuf_ptr = state->cirbuf_rp[port];
+		fdata.jpeg_len = state->jpeg_len;
+		if (state->exif) {
+			fdata.meta_index = state->this_frame_params[port].meta_index;
+			fdata.cmd |= DRV_CMD_EXIF;
 		}
-		close(fd);
+		fdata.cmd |= DRV_CMD_WRITE;
+		if (write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data)) < 0) {
+			D0(fprintf(debug_file, "Can not pass IO vector to driver: %s\n", strerror(errno)));
+			return -CAMOGM_FRAME_FILE_ERR;
+		}
 	}
-	end_time = lseek(state->fd_circ[0], LSEEK_CIRC_UTIME, SEEK_END);
-//	fprintf(debug_file, "JPEG write time = %u us\n", end_time - start_time);
-//	fprintf(debug_file, "Free space in buffers: ");
-//	for (int i = 0; i < SENSOR_PORTS; i++) {
-//		int buff_size, jpeg_pos;
-//		jpeg_pos = lseek(state->fd_circ[i], 0 , SEEK_CUR);
-//		free_space = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
-//		buff_size = lseek(state->fd_circ[i], 0, SEEK_END);
-//		lseek(state->fd_circ[i], jpeg_pos, SEEK_SET);
-//		fprintf(debug_file, "chn %d = %ld ",
-//				i,
-//				(int)(100 * (float)free_space / (float)buff_size));
-//	}
-//	fprintf(debug_file, "\b\n");
 
 	return 0;
 }
@@ -246,9 +179,22 @@ int camogm_frame_jpeg(camogm_state *state)
 int camogm_end_jpeg(camogm_state *state)
 {
 	int ret = 0;
+	struct frame_data fdata = {0};
+
 	if (state->rawdev_op) {
-		ret = close(state->rawdev.rawdev_fd);
 		D0(fprintf(debug_file, "Closing raw device %s\n", state->rawdev.rawdev_path));
+		ret = close(state->rawdev.rawdev_fd);
+		if (ret == -1)
+			D0(fprintf(debug_file, "Error: %s\n", strerror(errno)));
+
+		fdata.cmd = DRV_CMD_FINISH;
+		if (write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data)) < 0) {
+			D0(fprintf(debug_file, "Error sending 'finish' command to driver\n"));
+		}
+		D0(fprintf(debug_file, "Closing sysfs file %s\n", sysfs_fname));
+		ret = close(state->rawdev.sysfs_fd);
+		if (ret == -1)
+			D0(fprintf(debug_file, "Error: %s\n", strerror(errno)));
 	}
 	return ret;
 }
