@@ -28,6 +28,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <ctype.h>
+#include <elphel/ahci_cmd.h>
 
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
@@ -60,8 +61,6 @@
 #define ALL_CHN_INACTIVE          0x00
 /** @brief This is a basic helper macro for processing all sensor ports at a time */
 #define FOR_EACH_PORT(indtype, indvar) for (indtype indvar = 0; indvar < SENSOR_PORTS; indvar++)
-/** @brief The path to Elphel AHCI driver sysfs entry. The trailing slash is mandatory. */
-#define SYSFS_DRIVER_ENTRY        "/sys/devices/soc0/amba@0/80000000.elphel-ahci/"
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 
@@ -150,7 +149,7 @@ void  camogm_set_frames_per_chunk(camogm_state *state, int d);
 static uint64_t get_disk_size(const char *name);
 static int get_sysfs_name(const char *dev_name, char *sys_name, size_t str_sz, int type);
 static int get_disk_range(const char *name, struct range *rng);
-static int set_disk_range(const char *name, const struct range *rng);
+static int set_disk_range(const struct range *rng);
 int open_files(camogm_state *state);
 unsigned long getGPValue(unsigned int port, unsigned long GPNumber);
 void setGValue(unsigned int port, unsigned long GNumber, unsigned long value);
@@ -833,7 +832,7 @@ void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 				.to = 0
 		};
 		if (get_disk_range(state->rawdev.rawdev_path, &rng) == 0) {
-			set_disk_range(SYSFS_DRIVER_ENTRY, &rng);
+			set_disk_range(&rng);
 		} else {
 			D0(fprintf(debug_file, "ERROR: unable to get disk size and starting sector\n"));
 		}
@@ -1686,26 +1685,21 @@ static int get_disk_range(const char *name, struct range *rng)
  * @param[in]   rng    pointer to structure containing disk size
  * @return      0 if the values from @e rng were set successfully and -1 in case of an error
  */
-static int set_disk_range(const char *name, const struct range *rng)
+static int set_disk_range(const struct range *rng)
 {
 	int fd;
 	int ret = 0;
-	const char lba_start[] = "lba_start";
-	const char lba_end[] = "lba_end";
-	char path[ELPHEL_PATH_MAX] = {0};
 	char buff[SMALL_BUFF_LEN] = {0};
 	int len;
 
-	snprintf(path, ELPHEL_PATH_MAX, "%s%s", name, lba_start);
-	fd = open(path, O_WRONLY);
+	fd = open(SYSFS_AHCI_LBA_START, O_WRONLY);
 	if (fd < 0)
 		return -1;
 	len = snprintf(buff, SMALL_BUFF_LEN, "%llu", rng->from);
 	write(fd, buff, len + 1);
 	close(fd);
 
-	snprintf(path, ELPHEL_PATH_MAX, "%s%s", name, lba_end);
-	fd = open(path, O_WRONLY);
+	fd = open(SYSFS_AHCI_LBA_END, O_WRONLY);
 	if (fd < 0)
 		return -1;
 	len = snprintf(buff, SMALL_BUFF_LEN, "%llu", rng->to);
