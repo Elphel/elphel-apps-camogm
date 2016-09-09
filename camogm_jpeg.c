@@ -81,9 +81,10 @@ int camogm_start_jpeg(camogm_state *state)
 					state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w));
 			lseek64(state->rawdev.rawdev_fd, state->rawdev.curr_pos_w, SEEK_SET);
 
-			state->rawdev.sysfs_fd = open(sysfs_fname, O_WRONLY);
+			state->rawdev.sysfs_fd = open(SYSFS_AHCI_WRITE, O_WRONLY);
+			fprintf(debug_file, "Open sysfs file: %s\n", SYSFS_AHCI_WRITE);
 			if (state->rawdev.sysfs_fd < 0) {
-				D0(fprintf(debug_file, "Error opening sysfs file: %s\n", sysfs_fname));
+				D0(fprintf(debug_file, "Error opening sysfs file: %s\n", SYSFS_AHCI_WRITE));
 				return -CAMOGM_FRAME_FILE_ERR;
 			}
 		}
@@ -101,15 +102,10 @@ int camogm_start_jpeg(camogm_state *state)
  */
 int camogm_frame_jpeg(camogm_state *state)
 {
-	int i, j, k, split_index;
-	int chunks_used = state->chunk_index - 1;
+	int i, j;
 	ssize_t iovlen, l = 0;
 	struct iovec chunks_iovec[8];
-	unsigned char *split_ptr = NULL;
-	long split_cntr = 0;
 	int port = state->port_num;
-	uint32_t start_time, end_time;
-	off_t free_space;
 	struct frame_data fdata = {0};
 
 	if (!state->rawdev_op) {
@@ -176,7 +172,7 @@ int camogm_end_jpeg(camogm_state *state)
 		if (write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data)) < 0) {
 			D0(fprintf(debug_file, "Error sending 'finish' command to driver\n"));
 		}
-		D0(fprintf(debug_file, "Closing sysfs file %s\n", sysfs_fname));
+		D0(fprintf(debug_file, "Closing sysfs file %s\n", SYSFS_AHCI_WRITE));
 		ret = close(state->rawdev.sysfs_fd);
 		if (ret == -1)
 			D0(fprintf(debug_file, "Error: %s\n", strerror(errno)));
