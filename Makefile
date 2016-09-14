@@ -3,9 +3,9 @@ PHPFILES   = camogmstate.php
 CONFIGS    = qt_source
 
 SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c camogm_read.c index_list.c
-OBJS = camogm.o camogm_ogm.o camogm_jpeg.o camogm_mov.o camogm_kml.o camogm_read.o index_list.o
+OBJS = $(SRCS:.c=.o)
 
-CFLAGS    += -Wall -I$(STAGING_KERNEL_DIR)/include/elphel
+CFLAGS    += -Wall -I$(STAGING_KERNEL_DIR)/include/elphel -I$(STAGING_DIR_HOST)/usr/include-uapi
 LDLIBS    += -logg -pthread -lm
 
 SYSCONFDIR = /etc/

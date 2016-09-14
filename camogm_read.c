@@ -61,8 +61,6 @@
 #define CMD_DELIMITER             "/?"
 /** @brief The length of a buffer for command string */
 #define CMD_BUFF_LEN              1024
-/** @brief The length of a buffer for string formatting */
-#define SMALL_BUFF_LEN            32
 /** @brief 64 bit mask to align offsets to 4 kb page boundary */
 #define PAGE_BOUNDARY_MASK        0xffffffffffffe000
 /** @brief The size of read buffer in bytes. The data will be read from disk in blocks of this size */
