@@ -38,7 +38,7 @@
 
 /** @brief Default debug level */
 #define DEFAULT_DEBUG_LVL         6
-/** @brief JPEG trailer syze in bytes */
+/** @brief JPEG trailer size in bytes */
 #define TRAILER_SIZE              0x02
 /** @brief Default segment duration in seconds */
 #define DEFAULT_DURATION          600
@@ -64,19 +64,35 @@
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 
-const char *exifFileNames[] = {	"/dev/exif_exif0", "/dev/exif_exif1",
-								"/dev/exif_exif2", "/dev/exif_exif3"
+#if 0
+const char *exifFileNames[] = { "/dev/exif_exif0", "/dev/exif_exif1",
+                                "/dev/exif_exif2", "/dev/exif_exif3"
 };
 
-const char *headFileNames[] = {	"/dev/jpeghead0", "/dev/jpeghead1",
-								"/dev/jpeghead2", "/dev/jpeghead3"
+const char *headFileNames[] = { "/dev/jpeghead0", "/dev/jpeghead1",
+                                "/dev/jpeghead2", "/dev/jpeghead3"
 };
 const char *ctlFileNames[] = {   "/dev/frameparsall0", "/dev/frameparsall1",
-								"/dev/frameparsall2", "/de/framepars3"
+                                "/dev/frameparsall2", "/de/framepars3"
 };
 const char *circbufFileNames[] = {"/dev/circbuf0", "/dev/circbuf1",
-								"/dev/circbuf2", "/dev/circbuf3"
+                                "/dev/circbuf2", "/dev/circbuf3"
 };
+#else
+const char *exifFileNames[] = { DEV393_PATH(DEV393_EXIF0), DEV393_PATH(DEV393_EXIF1),
+                                DEV393_PATH(DEV393_EXIF2), DEV393_PATH(DEV393_EXIF3)
+};
+
+const char *headFileNames[] = { DEV393_PATH(DEV393_JPEGHEAD0), DEV393_PATH(DEV393_JPEGHEAD1),
+                                DEV393_PATH(DEV393_JPEGHEAD2), DEV393_PATH(DEV393_JPEGHEAD3)
+};
+const char *ctlFileNames[] = {  DEV393_PATH(DEV393_FRAMEPARS0), DEV393_PATH(DEV393_FRAMEPARS1),
+                                DEV393_PATH(DEV393_FRAMEPARS2), DEV393_PATH(DEV393_FRAMEPARS3)
+};
+const char *circbufFileNames[] = {DEV393_PATH(DEV393_CIRCBUF0), DEV393_PATH(DEV393_CIRCBUF1),
+                                  DEV393_PATH(DEV393_CIRCBUF2), DEV393_PATH(DEV393_CIRCBUF3)
+};
+#endif
 
 int lastDaemonBit[SENSOR_PORTS] = {DAEMON_BIT_CAMOGM};
 struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
