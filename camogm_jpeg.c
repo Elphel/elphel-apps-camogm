@@ -71,16 +71,6 @@ int camogm_start_jpeg(camogm_state *state)
 		}
 	} else {
 		if (state->rawdev_op) {
-			state->rawdev.rawdev_fd = open(state->rawdev.rawdev_path, O_RDWR);
-			if (state->rawdev.rawdev_fd < 0) {
-				D0(perror(__func__));
-				D0(fprintf(debug_file, "Error opening raw device %s\n", state->rawdev.rawdev_path));
-				return -CAMOGM_FRAME_FILE_ERR;
-			}
-			D3(fprintf(debug_file, "Open raw device %s; start_pos = %llu, end_pos = %llu, curr_pos = %llu\n", state->rawdev.rawdev_path,
-					state->rawdev.start_pos, state->rawdev.end_pos, state->rawdev.curr_pos_w));
-			lseek64(state->rawdev.rawdev_fd, state->rawdev.curr_pos_w, SEEK_SET);
-
 			state->rawdev.sysfs_fd = open(SYSFS_AHCI_WRITE, O_WRONLY);
 			fprintf(debug_file, "Open sysfs file: %s\n", SYSFS_AHCI_WRITE);
 			if (state->rawdev.sysfs_fd < 0) {
@@ -163,11 +153,6 @@ int camogm_end_jpeg(camogm_state *state)
 	struct frame_data fdata = {0};
 
 	if (state->rawdev_op) {
-		D0(fprintf(debug_file, "Closing raw device %s\n", state->rawdev.rawdev_path));
-		ret = close(state->rawdev.rawdev_fd);
-		if (ret == -1)
-			D0(fprintf(debug_file, "Error: %s\n", strerror(errno)));
-
 		fdata.cmd = DRV_CMD_FINISH;
 		if (write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data)) < 0) {
 			D0(fprintf(debug_file, "Error sending 'finish' command to driver\n"));
