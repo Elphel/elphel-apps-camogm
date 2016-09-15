@@ -27,7 +27,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <string.h>
-#include <c313a.h>
+#include <elphel/c313a.h>
 #include <elphel/ahci_cmd.h>
 
 #include "camogm_jpeg.h"

@@ -1,36 +1,27 @@
-PROGS      = camogm
-PHPSCRIPTS = camogmstate.php
-CONFIGS    = qt_source
+# Runs 'make', 'make install', and 'make clean' in specified subdirectories
+SUBDIRS := src
+INSTALLDIRS = $(SUBDIRS:%=install-%)
+CLEANDIRS =   $(SUBDIRS:%=clean-%)
 
-SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c camogm_read.c index_list.c
-OBJS = $(SRCS:.c=.o)
+#TARGETDIR=$(DESTDIR)/www/pages
 
-CFLAGS    += -Wall -I$(STAGING_KERNEL_DIR)/include/elphel -I$(STAGING_DIR_HOST)/usr/include-uapi
-LDLIBS    += -logg -pthread -lm
+all: $(SUBDIRS)
+	@echo "make all top"
 
-INSTALL    = install
-INSTMODE   = 0755
-INSTDOCS   = 0644
-OWN        = -o root -g root
+$(SUBDIRS):
+	$(MAKE) -C $@
 
-SYSCONFDIR = /etc/
-BINDIR     = /usr/bin/
-WWW_PAGES  = /www/pages
+install: $(INSTALLDIRS)
+	@echo "make install top"
 
-all: $(PROGS)
+$(INSTALLDIRS): 
+	$(MAKE) -C $(@:install-%=%) install
 
-$(PROGS): $(OBJS)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
+clean: $(CLEANDIRS)
+	@echo "make clean top"
 
-install: $(PROGS) $(PHPSCRIPTS) $(CONFIGS)
-	$(INSTALL) $(OWN) -d $(DESTDIR)$(BINDIR)
-	$(INSTALL) $(OWN) -m $(INSTMODE) $(PROGS)      $(DESTDIR)$(BINDIR)
-	$(INSTALL) $(OWN) -d $(DESTDIR)$(SYSCONFDIR)
-	$(INSTALL) $(OWN) -m $(INSTDOCS) $(CONFIGS)    $(DESTDIR)$(SYSCONFDIR)
-	$(INSTALL) $(OWN) -d $(DESTDIR)$(WWW_PAGES)
-	$(INSTALL) $(OWN) -m $(INSTMODE) $(PHPSCRIPTS) $(DESTDIR)$(WWW_PAGES)
+$(CLEANDIRS): 
+	$(MAKE) -C $(@:clean-%=%) clean
 
-clean:
-	rm -rf $(PROGS) *.o *~
-#TODO: implement automatic dependencies!
-camogm.c:$(STAGING_DIR_HOST)/usr/include-uapi/elphel/x393_devices.h
+.PHONY: all install clean $(SUBDIRS) $(INSTALLDIRS) $(CLEANDIRS)
+
