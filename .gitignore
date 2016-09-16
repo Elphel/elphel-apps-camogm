@@ -10,3 +10,4 @@ attic/*
 generated*
 sysroots
 bitbake-logs
+camogm
