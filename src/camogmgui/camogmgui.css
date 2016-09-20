@@ -1,0 +1,241 @@
+html {
+	font-family: Helvetica, Arial, sans-serif;
+	font-size: 12px;
+	font-style: normal;
+	text-decoration: none;
+	border: 0px;
+	background-color:#f9fcfc;
+}
+table td {
+	font-size: 12px;
+}
+body {
+	margin:10px;
+}
+a {
+	color:#09284a;
+}
+a:hover {
+	color:#09708a;
+}
+#help_link a{
+	float:right;
+	display:inline;
+	text-transform:capitalize;
+	letter-spacing:3px;
+	color:#000066;
+	margin-right:8px;
+	text-decoration:none;
+	font-weight:bold;
+}
+#sitecoloumn {
+	background-color:#F4F4F2;
+	border:1px solid #AFACAC;
+	margin-left:auto;
+	margin-right:auto;
+	position:relative;
+	padding-bottom:5px;
+	top:5px;
+	width:950px;
+	height:auto;
+}
+#header {
+	font-size:14px;
+	font-weight:bold;
+	color:#000;
+	margin:3px;
+	text-align:center;
+}
+.small {
+	font-size:10px;
+	color:#888;
+}
+img {
+	border:0;
+}
+#live-image {
+	text-align:center;
+	padding:2px;
+	margin:3px;
+}
+#live-image-header {
+	background-color:#efece7;
+	border:solid 1px #eee;
+	font-size:9px;
+	border-bottom:solid 1px #aaa;
+}
+#live-image-header td {
+	font-size:9px;
+}
+#live-image-header a {
+	color:#000;
+	text-decoration:none;
+	font-size:9px;
+}
+#live-image-header a:hover {
+	color:#000;
+	font-size:9px;
+	background-image:url(images/png_white_30.png);
+	background-repeat:repeat;
+	padding:2px;
+	left:-3px;
+	position:relative;
+	border:solid 1px #3A3A3A;
+	text-decoration:none;
+}
+#files {
+	border:1px;
+	border-style: solid;
+	padding:0px;
+	width:500px;
+	left:5px;
+	height:372px;
+	position:relative;
+	background-color:#f2f7fd;
+}
+#filelist {
+	width:500px;
+	top:26px;
+	height:320px;
+	position:absolute;
+	overflow:auto;
+}
+#files_header {
+	background-image:url(images/filebrowser-01.gif);
+	background-repeat:repeat-x;
+	height:25px;
+	color:#FFFFFF;
+	padding:3px;
+}
+#files_footer {
+	padding:5px;
+	height:25px;
+	bottom:-10px;
+	position:absolute;
+	width:490px;
+	color:#ffffff;
+	background-image:url(images/filebrowser-bottom-01.gif);
+	background-repeat:repeat-x;
+}
+#files_current_folder {
+	color:#ffffff;
+	right:10px;
+	position:absolute;
+}
+.file_row_even {
+	background-color:#EAEDF2;
+}
+.file_row_odd {
+	background-color:#D8DBE2;
+}
+#file_browser_commands {
+	position:absolute;
+	padding:2px;
+	right:-120px;
+	top:0px;
+	width:430px;
+	height:30px;
+}
+#file_browser_commands a {
+	color:#FFFFFF;
+	text-decoration:none;
+}
+#file_browser_commands a:hover {
+	color:#000;
+	background-image:url(images/png_white_30.png);
+	background-repeat:repeat;
+	padding:2px;
+	left:-3px;
+	position:relative;
+	border:solid 1px #3A3A3A;
+	text-decoration:none;
+}
+#TabbedPanels1 {
+	width:422px;
+}
+#record a{
+	position:absolute;
+	width:410px;
+	text-decoration:none;
+	font-weight:bold;
+	height:30px;
+	background:#b50000;
+	color:#FFFFFF;
+	text-align:center;
+	padding:5px;
+	border:2px outset #fff;
+}
+#record a:hover{
+	background:#980000;
+}
+.alert {
+	color: red;
+}
+.green {
+	color:#009900;
+}
+table.state_table {
+	color:#999999;
+	width:380px;
+	margin: 0px;
+	padding: 0px;
+	border-width: 0px;
+	border-spacing: 0px;
+	border-style: solid solid solid solid;
+	border-color: gray gray gray gray;
+	border-collapse:collapse;
+}
+table.state_table td {
+	border-width: 0px;
+	padding: 2px 2px 2px 2px;
+	border-style: solid solid solid solid;
+	border-color: black black black black;
+	-moz-border-radius: 0px 0px 0px 0px;
+}
+#advanced_name_panel {
+
+}
+#buffer_toggle {
+	position:absolute;
+	right:30px;
+	padding-right:40px;
+}
+#buffer_bar {
+	right:50px;
+	margin-right:8px;
+	width:340px;
+	height:15px;
+	border:1px solid #0066FF;
+	position:absolute;
+	padding:1px;
+}
+#buffer_free {
+	background-color:#009900;
+	margin-left:5px;
+	height:15px;
+	position:absolute;
+	width:260px;
+	display:inline;
+	float:left;
+	text-align:center;
+	color:#FFFFFF;
+	letter-spacing:3px;	
+}
+#buffer_used {
+	background-color:#CC0000;
+	height:15px;
+	position:absolute;
+	width:40px;
+	display:inline;
+	float:right;
+	right:1px;
+	text-align:center;
+	color:#FFFFFF;
+	letter-spacing:3px;
+}
+#ajax_devices {
+	border:solid 1px #444;
+	background-color:white;
+}
+
+
