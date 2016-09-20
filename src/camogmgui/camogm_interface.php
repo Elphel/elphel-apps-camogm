@@ -70,6 +70,9 @@
 $cmd = $_GET['cmd'];
 $debug = $_GET['debug'];
 $debuglev = $_GET['debuglev'];
+$cmd_pipe = "/var/state/camogm_cmd";
+$cmd_port = "3456";
+$start_str = "camogm -n " . $cmd_pipe . " -p " . $cmd_port;
 
 if ($cmd == "run_camogm")
 {
@@ -83,7 +86,7 @@ if ($cmd == "run_camogm")
 	$p = (array_filter($arr, "low_daemon"));
 	$check = implode("<br />",$p);
 	
-	if (strstr($check, "camogm /var/state/camogm_cmd"))
+	if (strstr($check, $start_str))
 		$camogm_running = true;
 	else
 		$camogm_running = false;
@@ -91,8 +94,8 @@ if ($cmd == "run_camogm")
 
 		exec("rm /var/state/camogm.state");
 
-		if (!$debug) exec('camogm /var/state/camogm_cmd > /dev/null 2>&1 &'); // "> /dev/null 2>&1 &" makes sure it is really really run as a background job that does not wait for input
-		else         exec('camogm /var/state/camogm_cmd > '.$debug.' 2>&1 &');
+		if (!$debug) exec($start_str.' > /dev/null 2>&1 &'); // "> /dev/null 2>&1 &" makes sure it is really really run as a background job that does not wait for input
+		else         exec($start_str.$debug.' 2>&1 &');
 
 		for($i=0;$i<5;$i++) {
 		      if (is_file("/var/state/camogm.state")) break;
@@ -100,7 +103,7 @@ if ($cmd == "run_camogm")
 		}
 
 		if ($debug) {
-		    $cmd_pipe = "/var/state/camogm_cmd";
+// 		    $cmd_pipe = "/var/state/camogm_cmd";
 		    $fcmd = fopen($cmd_pipe, "w");
 		    fprintf($fcmd,"debuglev=$debuglev");
 		}
@@ -109,7 +112,7 @@ if ($cmd == "run_camogm")
 else if ($cmd == "status")
 {
 	$pipe="/var/state/camogm.state";
-	$cmd_pipe="/var/state/camogm_cmd";
+// 	$cmd_pipe="/var/state/camogm_cmd";
 	$mode=0777;
 	if(!file_exists($pipe)) {
 		umask(0);
@@ -139,7 +142,7 @@ else if ($cmd == "run_status")
 	$p = (array_filter($arr, "low_daemon"));
 	$check = implode("<br />",$p);
 	
-	if (strstr($check, "camogm /var/state/camogm_cmd"))
+	if (strstr($check, $start_str))
 		$camogm_running = "on";
 	else
 		$camogm_running = "off";
@@ -290,7 +293,7 @@ else if ($cmd=="list") {
 else
 {
 	
-	$cmd_pipe = "/var/state/camogm_cmd";
+// 	$cmd_pipe = "/var/state/camogm_cmd";
 	$fcmd = fopen($cmd_pipe, "w");
 	
 	xml_header();

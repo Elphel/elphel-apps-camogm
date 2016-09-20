@@ -53,6 +53,8 @@
 	
 	$pipe = "/var/state/camogm.state";
 	$cmd_pipe = "/var/state/camogm_cmd";
+	$cmd_port = "3456";
+	$start_str = "camogm -n " . $cmd_pipe . " -p " . $cmd_port;
 	$mode = 0777;
    
 	if(!file_exists($pipe)) {
@@ -78,7 +80,7 @@
 	$p = (array_filter($arr, "low_daemon"));
 	$check = implode("<br />",$p);
 	
-	if (strstr($check, "camogm /var/state/camogm_cmd"))
+	if (strstr($check, $start_str))
 		$camogm_running = true;
 	else
 		$camogm_running = false;

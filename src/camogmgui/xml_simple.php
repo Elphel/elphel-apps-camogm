@@ -39,7 +39,7 @@ class xml_simple {
     // Create the XML parser that will read XML data formatted with the specified encoding
     function xml_simple($encoding = 'UTF-8') {
         $this->parser = xml_parser_create($encoding);
-        xml_set_object($this->parser, &$this);
+        xml_set_object($this->parser, $this);
         xml_parser_set_option($this->parser, XML_OPTION_CASE_FOLDING, 0);
         xml_parser_set_option($this->parser, XML_OPTION_SKIP_WHITE, 1);
         xml_parser_set_option($this->parser, XML_OPTION_TARGET_ENCODING, 'UTF-8');
