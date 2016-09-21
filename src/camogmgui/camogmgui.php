@@ -57,6 +57,7 @@
 	$start_str = "camogm -n " . $cmd_pipe . " -p " . $cmd_port;
 	$mode = 0777;
 	$sensor_ports = elphel_num_sensors();
+	$default_imgsrv_port = 2323;
    
 	// check if any compressor is in running state
 	function check_compressors($states)
@@ -343,11 +344,26 @@
 	                    <td width="245px"></td>
                         <td width="100px"><a href="#" onClick="update_live_image();">Update</a></td>
                         <td width="100px">Size: <a href="#" onClick="size_up_image()">+</a> | <a href="#" onClick="size_down_image()">-</a></td>
-                        <td width="300px"><input type="checkbox" onChange="live_image_auto_update_changed();" id="live_image_auto_update" value="yes" name="live_image_auto_update" style="top:3px; position:relative;"> Auto Update every: <input id="live_image_auto_update_frequency" type="text" name="live_image_auto_update_frequency" value="5.0" size="3" onChange="validate_update_freq();" style=" top:1px; position:relative; height:18px; font-size:7px; margin:0px; padding:0px;"> seconds</td> 
+                        <td width="200px">
+                        	<div class="sensor_ports">
+                        	<input id="live_image_auto_update" type="checkbox" onChange="live_image_auto_update_changed();" name="live_image_auto_update"> Auto Update every: 
+                        	<input id="live_image_auto_update_frequency" type="text" name="live_image_auto_update_frequency" value="5.0" size="3" onChange="validate_update_freq();"> seconds
+                        	</div>
+                        </td>
+                        <?php
+                        for ($i = 0; $i < $sensor_ports; $i++) {
+                        	if ($i == 0)
+								echo "<td>" . "<div class=\"sensor_ports\">" . "<input type=\"radio\" name=\"selected_sensor_port\" value=\"$i\" checked=\"true\" onchange=\"update_live_image();\">" .
+								"Port " . $i . "</div>" . "</td>";
+                        	else
+								echo "<td>" . "<div class=\"sensor_ports\">" . "<input type=\"radio\" name=\"selected_sensor_port\" value=\"$i\" onchange=\"update_live_image();\">" .
+                        	"Port " . $i . "</div>" . "</td>";
+                        }
+                        ?>
                     </tr>
                 </table>
         	</div>
-        	<img id="live-picture" style="border:solid 1px #000; margin:3px;" src="http://<? echo $_SERVER['SERVER_NAME']; ?>:8081/bimg" width="400" height="300"><br />
+        	<img id="live-picture" style="border:solid 1px #000; margin:3px;" src="http://<? echo $_SERVER['SERVER_NAME'] . ":" . $default_imgsrv_port; ?>/bimg" width="400" height="300"><br />
 		  </div>
         </div>
     </div>

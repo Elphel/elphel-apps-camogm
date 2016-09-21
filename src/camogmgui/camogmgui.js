@@ -415,7 +415,15 @@ function update_fps_reduce(parent) {
 	}
 }
 function update_live_image() {
-	document.getElementById('live-picture').src = "http://" + location.host + ":8081/bimg?" + Math.random()*99999999999;
+	var imgsrv_port = 2323;
+	var radios = document.getElementsByName("selected_sensor_port");
+	for (var i = 0; i < radios.length; i++) {
+		if (radios[i].checked) {
+			imgsrv_port = imgsrv_port + i;
+			break;
+		}
+	}
+	document.getElementById('live-picture').src = "http://" + location.host + ":" + imgsrv_port + "/bimg?" + Math.random()*99999999999;
 }
 function size_up_image() {
 	document.getElementById('live-picture').width += 40;
@@ -561,7 +569,7 @@ function lower(target) {
 	update_name_scheme();
 }
 function live_image_auto_update_changed() {
-	if (document.getElementById('live_image_auto_update').value == "yes") {
+	if (document.getElementById('live_image_auto_update').checked == true) {
 		validate_update_freq();
 		update_live_image_loop();
 	}
@@ -573,7 +581,7 @@ function validate_update_freq() {
 		document.getElementById('live_image_auto_update_frequency').value = 1;
 }
 function update_live_image_loop() {
-	if (document.getElementById('live_image_auto_update').value == "yes") {
+	if (document.getElementById('live_image_auto_update').checked == true) {
 		update_live_image();
 		setTimeout('update_live_image_loop()', document.getElementById('live_image_auto_update_frequency').value*1000);
 	}
@@ -650,4 +658,3 @@ function toggle_buffer() {
 		document.getElementById('buffer_toggle_link').style.display = "block";
 	}
 }
-

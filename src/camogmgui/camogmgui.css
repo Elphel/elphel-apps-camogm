@@ -238,4 +238,22 @@ table.state_table td {
 	background-color:white;
 }
 
+.sensor_ports * {
+	vertical-align: middle;
+	margin-left: 5px;
+	margin-right: 5px;
+	margin-top: 0px;
+	margin-bottom: 0px;
+}
 
+#live_image_auto_update_frequency {
+	height: 18px;
+	font-size: 9px;
+	margin: 0px;
+	padding: 0px;
+}
+
+#live_image_auto_update {
+	margin: 0px;
+	padding: 0px;
+}
