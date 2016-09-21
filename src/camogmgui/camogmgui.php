@@ -56,7 +56,21 @@
 	$cmd_port = "3456";
 	$start_str = "camogm -n " . $cmd_pipe . " -p " . $cmd_port;
 	$mode = 0777;
+	$sensor_ports = elphel_num_sensors();
    
+	// check if any compressor is in running state
+	function check_compressors($states)
+	{
+		global $sensor_ports;
+		$ret_val = 0;
+		
+		for ($i = 0; $i < $sensor_ports; $i++) {
+			if ($states[$i] == "running")
+				$ret_val = 1;
+		}
+		return $ret_val;
+	}
+	
 	if(!file_exists($pipe)) {
 		// create the pipe
 		umask(0);
@@ -242,7 +256,6 @@
 		$xml_format = substr($logdata[0]['format'], 1, strlen($logdata[0]['format'])-2);
 		$xml_state = substr($logdata[0]['state'], 1, strlen($logdata[0]['state'])-2);
 		$xml_directory = substr($logdata[0]['prefix'], 1, strlen($logdata[0]['prefix'])-2);
-		$xml_compressor_state = substr($logdata[0]['compressor_state'], 1, strlen($logdata[0]['compressor_state'])-2);
 		$xml_file_length = substr($logdata[0]['file_length'], 0, strlen($logdata[0]['file_length'])); // file size in bytes
 		$xml_file_duration = substr($logdata[0]['file_duration'], 0, strlen($logdata[0]['file_duration']));
 		$xml_frame_number = substr($logdata[0]['frame_number'], 0, strlen($logdata[0]['frame_number']));
@@ -280,7 +293,11 @@
 		$xml_audio_volume = substr($logdata[0]['audio_volume'], 1, strlen($logdata[0]['audio_volume'])-2);
 		$xml_audio_syncmode = substr($logdata[0]['allow_sync'], 1, strlen($logdata[0]['allow_sync'])-2);
 
-
+		// Get per sensor port parameters
+		$xml_compressor_state = array();
+		for ($i = 0; $i < $sensor_ports; $i++) {
+			$xml_compressor_state[$i] = substr($logdata[$i]['compressor_state'], 1, strlen($logdata[$i]['compressor_state'])-2);
+		}
 
 		if ($camogm_running) {
 			if (($xml_directory == "\"\"") || ($xml_directory == "")) 
@@ -367,7 +384,7 @@
         <div id="TabbedPanels1" class="TabbedPanels">
           <ul class="TabbedPanelsTabGroup">
 			  <? 
-			  if (($xml_compressor_state != "running") || (!$camogm_running))
+			  if ((check_compressors($xml_compressor_state) != 1) || (!$camogm_running))
                 echo  "<li class=\"TabbedPanelsTabAlert\" tabindex=\"0\">Status</li>";
               else
               	echo "<li class=\"TabbedPanelsTab\" tabindex=\"0\">Status</li>";
@@ -382,45 +399,97 @@
           <div class="TabbedPanelsContentGroup">
             <div class="TabbedPanelsContent">
             <!-- Status -->
-            <?
-			echo "Sensor: ";
-			if (elphel_get_state() == 0)
-			{
-				echo "<span class=\"alert\">not initialized!</span>";
-				echo " <a href=\"#\" onClick=\"help('sensor');\"><img src=\"images/help.png\"></a>";
-			}
-			else
-				echo "<span class=\"green\"> working</span>";
-			
-			echo "<br />";
-			echo "Compressor: ";
-			if ($xml_compressor_state != "running") {
-				echo "<span class=\"alert\">not running!</span>";
-				echo " <a href=\"#\" OnClick=\"start_compressor(this); window.location.reload();\">start compressor</a>";	
-			}
-			else
-				echo "<span class=\"green\"> running</span>";
-			echo "<br />";
-			
-			echo "Camogm: ";
-			if (!$camogm_running) {
-				echo "<span class=\"alert\">NOT running!</span>";
-				echo " <input name=\"camogm_start\" type=\"button\" value=\"start camogm\" >";	
-			}
-			else
-				echo "<span class=\"green\"> running</span>";
-			?>
+            <table class="state_table" border="0px" cellpadding="opx" cellspacing="0px">
+            	<!-- Table header -->
+            	<tr><td width="120px"></td>
+            		<?php
+					for ($i = 0; $i < $sensor_ports; $i++) {
+						echo "<td>Port " . $i . "</td>";
+					}
+            		?>
+            	</tr>
+            	<!-- Sensor port status -->
+            	<tr><td>Sensor</td>
+            	<?php 
+				for ($i = 0; $i < $sensor_ports; $i++) {
+					echo "<td>";
+					if (elphel_get_state($i) == 0)
+					{
+						echo "<span class=\"alert\">not initialized!</span>";
+						echo " <a href=\"#\" onClick=\"help('sensor');\"><img src=\"images/help.png\"></a>";
+					}
+					else
+						echo "<span class=\"green\"> working</span>";
+					
+					echo "</td>";
+				}
+            	?>
+            	</tr>
+            	<!-- Compressor status -->
+            	<tr><td>Compressor</td>
+            	<?php 
+				for ($i = 0; $i < $sensor_ports; $i++) {
+					echo "<td>";
+					if ($xml_compressor_state[$i] != "running") {
+						echo "<span class=\"alert\">not running!</span>";
+						echo " <a href=\"#\" OnClick=\"start_compressor(this, $i); window.location.reload();\">start compressor</a>";	
+					}
+					else
+						echo "<span class=\"green\"> running</span>";
+					echo "</td>";
+				}
+            	?>
+            	</tr>
+            	<!-- Image resolution on each port -->
+            	<tr><td>Image resolution</td>
+            	<?php 
+            	for ($i = 0; $i < $sensor_ports; $i++) {
+            		echo "<td id=\"ajax_res\">";
+					echo elphel_get_P_value($i, ELPHEL_ACTUAL_WIDTH) . " x " . elphel_get_P_value($i, ELPHEL_ACTUAL_HEIGHT);
+					echo "</td>";
+            	}
+            	?>
+            	</tr>
+            	<!-- JPEG quality on each port -->
+            	<tr><td>JPEG quality</td>
+            	<?php 
+            	for ($i = 0; $i < $sensor_ports; $i++) {
+            		echo "<td id=\"ajax_qual\">";
+					echo elphel_get_P_value($i, ELPHEL_QUALITY) . " %";
+					echo "</td>";
+            	}
+            	?>
+            	</tr>
+            	<!-- Frame rate on each port -->
+            	<tr><td>Framerate</td>
+            	<?php 
+            	for ($i = 0; $i < $sensor_ports; $i++) {
+            		echo "<td id=\"ajax_fps\">";
+					echo elphel_get_P_value($i, ELPHEL_FP1000S) / 1000 . " fps";
+					echo "</td>";
+            	}
+            	?>
+            	</tr>
+            </table>
 			<br />
 			<br />
-            Recording: <span id="ajax_state"><? echo $xml_state; ?></span><br />
-            Audio Recording: <span id="ajax_audio_recording">loading...</span><br />
-            Geo-Tagging: <span id="ajax_geotag_enabled"><? if($xml_geotagging_enabled == "yes") echo "enabled"; else echo "disabled"; ?></span><br />
-            <br />
             <table class="state_table" border="0px" cellpadding="0px" cellspacing="0px">
-                <tr><td width="120px">Filename:</td><td id="ajax_file_name">-</td></tr>
-                <tr><td>Image Resolution:</td><td id="ajax_res"><? echo elphel_get_P_value(ELPHEL_ACTUAL_WIDTH)." x ".elphel_get_P_value(ELPHEL_ACTUAL_HEIGHT); ?></td></tr>        
-                <tr><td>JPEG Quality</td><td id="ajax_qual"><? echo elphel_get_P_value(ELPHEL_QUALITY)." %";?></td></tr>        
-                <tr><td>Framerate:</td><td id="ajax_fps"><? echo elphel_get_P_value(ELPHEL_FP1000S)/1000 ." fps";?></td></tr>
+            	<tr><td width="120px">Camogm:</td>
+					<td>
+					<?php
+					if (!$camogm_running) {
+						echo "<span class=\"alert\">NOT running!</span>";
+						echo " <input name=\"camogm_start\" type=\"button\" value=\"start camogm\" >";	
+					}
+					else
+						echo "<span class=\"green\"> running</span>";
+					?>
+					</td>				
+            	</tr>
+				<tr><td>Recording:</td><td id="ajax_state"><? echo $xml_state; ?></td></tr>
+				<tr><td>Audio Recording:</td><td id="ajax_audio_recording">loading...</td></tr>				
+				<tr><td>Geo-Tagging:</td><td id="ajax_geotag_enabled"><? if($xml_geotagging_enabled == "yes") echo "enabled"; else echo "disabled"; ?></td></tr>
+                <tr><td>Filename:</td><td id="ajax_file_name">-</td></tr>
                 <tr><td>Record Time:</td><td id="ajax_file_duration">-</td></tr>
                 <tr><td>File Size:</td><td id="ajax_file_length">-</td></tr>
                 <tr><td>Data Rate:</td><td id="ajax_data_rate">-</td></tr>  

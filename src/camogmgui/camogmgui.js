@@ -221,8 +221,8 @@ function process_list_file(xmldoc) {
 		document.getElementById('filelist').innerHTML = response;
 	}
 }
-function start_compressor(parent) {
-	makeRequest('camogm_interface.php', '?cmd=init_compressor');
+function start_compressor(parent, port) {
+	makeRequest('camogm_interface.php', '?cmd=init_compressor', '&sensor_port=' + port);
 	parent.style.display = 'none';
 }
 function update_audio_form(thisform) {

@@ -1053,7 +1053,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <ignore_fps>\"%s\"</ignore_fps>\n" \
 			"  <raw_device_path>\"%s\"</raw_device_path>\n" \
 			"  <raw_device_overruns>%d</raw_device_overruns>\n" \
-			"  <raw_device_pos_write>0x%llx</raw_dev_pos_write>\n" \
+			"  <raw_device_pos_write>0x%llx</raw_device_pos_write>\n" \
 			"  <raw_device_pos_read>0x%llx (%d%% done)</raw_device_pos_read>\n",
 			_state,  state->path, state->frameno, state->start_after_timestamp, _dur, _udur, _len, \
 			_frames_skip, _sec_skip, \
@@ -1226,11 +1226,9 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 	if (!cmd) return 0;  // nothing in the pipe
 	D2(fprintf(debug_file, "Got command: '%s'\n", cmd));
 
-#ifdef DISABLE_CODE
 // Acknowledge received command by copying frame number to per-daemon parameter
 //	GLOBALPARS(state->port_num, G_DAEMON_ERR + lastDaemonBit[state->port_num]) = GLOBALPARS(state->port_num, G_THIS_FRAME);
 	setGValue(state->port_num, G_DAEMON_ERR + lastDaemonBit[state->port_num], getGPValue(state->port_num, G_THIS_FRAME));
-#endif /* DISABLE_CODE */
 	args = strpbrk(cmd, "= \t");
 // is it just a single word command or does it have parameters?
 	if (args) {
@@ -1831,7 +1829,6 @@ int open_files(camogm_state *state)
 		}
 
 		// now open/mmap file to read sensor/compressor parameters (currently - just free memory in circbuf and compressor state)
-#ifdef DISABLE_CODE
 		state->fd_fparmsall[port] = open(ctlFileNames[port], O_RDWR);
 		if (state->fd_fparmsall[port] < 0) { // check control OK
 			D0(fprintf(debug_file, "%s:%d:%s: Error opening %s\n", __FILE__, __LINE__, __FUNCTION__, ctlFileNames[port]));
@@ -1849,7 +1846,6 @@ int open_files(camogm_state *state)
 		}
 		framePars[port] = frameParsAll[port]->framePars;
 		aglobalPars[port] = frameParsAll[port]->globalPars;
-#endif /* DISABLE_CODE */
 	}
 
 	return ret;
@@ -1928,12 +1924,9 @@ int main(int argc, char *argv[])
  */
 unsigned long getGPValue(unsigned int port, unsigned long GPNumber)
 {
-#ifdef DISABLE_CODE
 	return (GPNumber >= FRAMEPAR_GLOBALS) ?
 	       GLOBALPARS(port, GPNumber) :
 	       framePars[port][GLOBALPARS(port, G_THIS_FRAME) & PARS_FRAMES_MASK].pars[GPNumber];
-#endif /* DESABLE_CODE */
-	return 0;
 }
 
 /**

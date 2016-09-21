@@ -103,7 +103,6 @@ if ($cmd == "run_camogm")
 		}
 
 		if ($debug) {
-// 		    $cmd_pipe = "/var/state/camogm_cmd";
 		    $fcmd = fopen($cmd_pipe, "w");
 		    fprintf($fcmd,"debuglev=$debuglev");
 		}
@@ -112,7 +111,6 @@ if ($cmd == "run_camogm")
 else if ($cmd == "status")
 {
 	$pipe="/var/state/camogm.state";
-// 	$cmd_pipe="/var/state/camogm_cmd";
 	$mode=0777;
 	if(!file_exists($pipe)) {
 		umask(0);
@@ -292,8 +290,6 @@ else if ($cmd=="list") {
 }
 else
 {
-	
-// 	$cmd_pipe = "/var/state/camogm_cmd";
 	$fcmd = fopen($cmd_pipe, "w");
 	
 	xml_header();
@@ -538,7 +534,8 @@ else
 			fprintf($fcmd, "timelapse=%s;\n", $timelapse_value);
 			break;
 		case "init_compressor":
-			elphel_compressor_run();
+			$sensor_port = $_GET['sensor_port'];
+			elphel_compressor_run($sensor_port);
 			break;
 		case "check_audio_hardware":
 			exec('arecord -l', $arr1);
