@@ -669,3 +669,14 @@ function toggle_buffer() {
 		document.getElementById('buffer_toggle_link').style.display = "block";
 	}
 }
+
+// enable fast recording through disk driver
+function fast_rec_changed(parent)
+{
+	if (parent.checked) {
+		document.getElementById('radioJpg').checked = true;
+		document.getElementById('directory').disabled = true;
+	} else {
+		document.getElementById('directory').disabled = false;
+	}
+}

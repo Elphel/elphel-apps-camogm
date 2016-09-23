@@ -561,18 +561,20 @@
                     <b>Format:</b><br />
                     <?
                     if ($xml_format == "ogm")
-                    	echo "<input type=\"radio\" style=\"top:3px; position:relative;\" name=\"container\" value=\"ogm\" onChange=\"format_changed(this);\" checked> Ogg Media Stream<br />";
+                    	echo "<input type=\"radio\" id=\"radioOgm\" style=\"top:3px; position:relative;\" name=\"container\" value=\"ogm\" onChange=\"format_changed(this);\" checked> Ogg Media Stream<br />";
                     else
-                    	echo "<input type=\"radio\" style=\"top:3px; position:relative;\" name=\"container\" value=\"ogm\" onChange=\"format_changed(this);\"> Ogg Media Stream<br />";
+                    	echo "<input type=\"radio\" id=\"radioOgm\" style=\"top:3px; position:relative;\" name=\"container\" value=\"ogm\" onChange=\"format_changed(this);\"> Ogg Media Stream<br />";
                     if ($xml_format == "mov")
-                   		echo "<input type=\"radio\" style=\"top:3px; position:relative;\" name=\"container\" value=\"mov\" onChange=\"format_changed(this);\" checked> Apple Quicktime Movie<br />";
+                   		echo "<input type=\"radio\" id=\"radioMov\" style=\"top:3px; position:relative;\" name=\"container\" value=\"mov\" onChange=\"format_changed(this);\" checked> Apple Quicktime Movie<br />";
                     else
-                    	echo "<input type=\"radio\" style=\"top:3px; position:relative;\" name=\"container\" value=\"mov\" onChange=\"format_changed(this);\">  Apple Quicktime Movie<br />";
+                    	echo "<input type=\"radio\" id=\"radioMov\" style=\"top:3px; position:relative;\" name=\"container\" value=\"mov\" onChange=\"format_changed(this);\">  Apple Quicktime Movie<br />";
                     if ($xml_format == "jpeg")
-                    	echo "<input type=\"radio\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\" checked> JPEG Sequence<br />";
+                    	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\" checked> JPEG Sequence<br />";
                     else
-                    	echo "<input type=\"radio\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\"> JPEG Sequence<br />";
+                    	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\"> JPEG Sequence<br />";
                     ?>
+                    <input id="fast_rec" type="checkbox" style="left:1px; top:3px; position:relative;" name="" value="" onChange="fast_rec_changed(this)"> Use fast recording 
+                    <a href="#" onClick="help('fast_rec');"><img src="images/help.png"></a><br />
                     <br />
                     
                     Directory: <input id="directory" type="text" onChange="DirectoryChanged();" name="prefix" value="<? echo $xml_directory; ?>"><br />
