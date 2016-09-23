@@ -29,8 +29,8 @@ function reload() {
 	makeRequest('camogm_interface.php', '?cmd=run_camogm');
 	setTimeout('makeRequest("camogm_interface.php", "?cmd=setmov")', 500); // set MOV as default container format
 }
-function mount_hdd() {
-	makeRequest('camogm_interface.php', '?cmd=mount');
+function mount_hdd(callback) {
+	makeRequest('camogm_interface.php','?cmd=mount',callback);
 	document.getElementById('directory').value = "/var/hdd/";
 	document.getElementById('mount_hdd_button').style.display = "none";
 }
@@ -40,7 +40,7 @@ function process_mount_hdd(xmldoc) {
 	if (response == "done")
 	{
 		//setTimeout('is_hdd_mounted()', 500);
-                //is_mounted(,"scan_devices()");
+                scan_devices("is_mounted(selected_device)");
                 console.log("mounted");
 	}
 }
@@ -54,7 +54,7 @@ function mount_custom_partition(partition) {
 function unmount_custom_partition(mountpoint) {
 	if (mountpoint != "") {
                 //calling back scan_devices()
-		makeRequest('camogm_interface.php','?cmd=umount&mountpoint='+mountpoint,"scan_devices()");
+		makeRequest('camogm_interface.php','?cmd=umount&mountpoint='+mountpoint,"scan_devices(list_files(\"\"))");
 	}
 }
 
@@ -213,6 +213,7 @@ function list_files(dir) {
 function process_list_file(xmldoc) {
 	var can_continue = true;
 	if (xmldoc.getElementsByTagName('list_files').length > 0) {
+            if (xmldoc.getElementsByTagName('list_files')[0].firstChild!=null){
 		if (xmldoc.getElementsByTagName('list_files')[0].firstChild.data != null) {
 			if (xmldoc.getElementsByTagName('list_files')[0].firstChild.data == "no webshare found") {
                                 console.log("webshare not found");
@@ -224,6 +225,7 @@ function process_list_file(xmldoc) {
 				create_webshare();
 			}
 		}
+            }
 	}
 	if (can_continue){
                 console.log("Processing file list");
@@ -284,7 +286,9 @@ function process_list_file(xmldoc) {
 		}
 		response += "</table><br>";
 		document.getElementById('filelist').innerHTML = response;
-	}
+	}else{
+            
+        }
 }
 function start_compressor(parent, port) {
 	makeRequest('camogm_interface.php', '?cmd=init_compressor', '&sensor_port=' + port);
