@@ -157,7 +157,7 @@ else if ($cmd=="get_hdd_space"){
 	if (isset($_GET['mountpoint']))
 		$mountpoint = $_GET['mountpoint'];
 	else
-		$mountpoint = '/mnt/0';
+		$mountpoint = '/mnt/sda1';
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
@@ -170,12 +170,13 @@ else if ($cmd=="mount") { // mount media like HDD
 	if (isset($_GET['partition']))
 		$partition = $_GET['partition'];
 	else 
-		$partition = '/dev/hda1';
+                $partition = '/dev/sda1';
+		//$partition = '/dev/hda1';
 
 	if (isset($_GET['mountpoint']))
 		$mountpoint = $_GET['mountpoint'];
 	else
-		$mountpoint = '/var/hdd';	
+		$mountpoint = '/var/hdd';
 	
 	exec('mkdir '.$mountpoint);
 	//exec('mkdir /var/hdd');
@@ -353,7 +354,7 @@ else
 			$i = 2;
 			while($i < count($arr1)) {
 				// skip flash and RAM disk partitions
-				if(!strpos($arr1[$i], "mtdblock") && !strpos($arr1[$i], "ram")) {
+				if (!strpos($arr1[$i], "mtdblock") && !strpos($arr1[$i], "ram")) {
 					$temp = $arr1[$i];
 					while(strstr($temp, "  ")) {
 						$temp = str_replace(chr(9), " ", $temp); 
@@ -415,7 +416,8 @@ else
 			if (isset($_GET['partition']))
 				$partition = $_GET['partition'];
 			else 
-				$partition = '/dev/hda1';
+                                $partition = '/dev/sda1';
+				//$partition = '/dev/hda1';
 
 			exec('mount', $arr);
 
@@ -426,7 +428,13 @@ else
 				echo "no HDD mounted";
 			break;
 		case "create_symlink":
-			exec('ln -s /var/hdd /mnt/flash/html/hdd');
+			//exec('ln -s /var/hdd /mnt/flash/html/hdd');
+			
+			if (isset($_GET['mountpoint'])) $mountpoint = $_GET['mountpoint'];
+			else                            $mountpoint = "/mnt/sda1";
+			
+			exec("rm /www/pages/hdd");
+			exec("ln -sf $mountpoint /www/pages/hdd");
 			break;
 // 		case "list":
 // 			if (isset($_GET['path'])) $path = $_GET['path'];
@@ -447,7 +455,7 @@ else
 // 
 // 			break;
 		case "list_files":
-			if (!file_exists('/mnt/flash/html/hdd')) {
+			if (!file_exists('/www/pages/hdd')) {
 				echo "no webshare found";
 			break;
 			}
@@ -473,32 +481,34 @@ else
 				echo "</file>";
 			}
 			
-			if ($handle = opendir('/mnt/flash/html/hdd'.$dir)) 
-			{
+			if ($handle = opendir('/www/pages/hdd/'.$dir)) {
 				while ($file = readdir($handle))
 				{
 					if ($file != "." && $file != "..")
 					{	
 						echo "<file>";
 						echo "<type>";
-						if (is_dir("/var/hdd/".$dir.$file))
+						if (is_dir("/www/pages/hdd/".$dir.$file))
 							echo "dir";
 						else
 							echo $extension = substr($file, strrpos($file, '.')+1, strlen($file)); 
 						echo "</type>";
 						echo "<name>".$file."</name>";
 						echo "<path>".substr($dir, 1).$file."</path>";
-						$size = filesize("/var/hdd/".$dir.$file);
+						$size = filesize("/www/pages/hdd/".$dir.$file);
 						echo "<size>".$size."</size>";
-						$date = date ("d M Y H:i:s", filectime("/var/hdd/".$dir.$file));
+                                                if(!ini_get('date.timezone')){
+                                                    date_default_timezone_set('GMT');
+                                                }
+						$date = date ("d M Y H:i:s", filectime("/www/pages/hdd/".$dir.$file));
 						echo "<date>".$date."</date>";
 						echo "</file>";
 					}
 				}
 				closedir($handle);
-			}
-			else
+			}else{
 				echo "no webshare found<br>";
+                        }
 			break;
 		case "set_prefix":
 			$prefix = $_GET['prefix'];

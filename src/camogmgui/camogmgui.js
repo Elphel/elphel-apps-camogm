@@ -1,16 +1,31 @@
+function timer_functions(){
+    list_files(getCookie("current_dir"));
+    update_state();
+    is_hdd_mounted();
+}
+
+var global_timer;
+
 function init() {
-	setTimeout('is_hdd_mounted()', 300);
-	if (document.format.container[2].checked)
-		setTimeout('format_changed(document.format.container[2])', 600);
-	setTimeout('update_name_scheme()', 900);
-	setTimeout('check_audio_hardware()', 1200);
-	setTimeout('update_audio_form(document.getElementById("audioform"))', 1500);
-	setTimeout('list_files(getCookie("current_dir"))', 2000);
-	setTimeout('calc_split_size()', 2300);
-	setTimeout('scan_devices()', 3000);
+	//setTimeout('is_hdd_mounted()', 300);
+	if (document.format.container[2].checked){
+            //setTimeout('format_changed(document.format.container[2])', 600);
+            format_changed(document.format.container[2]);
+        }
+	//setTimeout('update_name_scheme()', 900);
+	//setTimeout('check_audio_hardware()', 1200);
+	//setTimeout('update_audio_form(document.getElementById("audioform"))', 1500);
+	//setTimeout('calc_split_size()', 2300);
+	//setTimeout('scan_devices()', 3000);
+        update_name_scheme();
+        check_audio_hardware();
+        update_audio_form(document.getElementById("audioform"));
+        calc_split_size();
+        scan_devices();
+        //global_timer = setInterval(timer_functions,2000);
 }
 function reload() {
-	makeRequest('camogm_interface.php', '?cmd=run_camogm');	
+	makeRequest('camogm_interface.php', '?cmd=run_camogm');
 	setTimeout('makeRequest("camogm_interface.php", "?cmd=setmov")', 500); // set MOV as default container format
 }
 function mount_hdd() {
@@ -18,84 +33,126 @@ function mount_hdd() {
 	document.getElementById('directory').value = "/var/hdd/";
 	document.getElementById('mount_hdd_button').style.display = "none";
 }
+
+function process_mount_hdd(xmldoc) {
+	var response = xmldoc.getElementsByTagName('mount')[0].firstChild.data;
+	if (response == "done")
+	{
+		//setTimeout('is_hdd_mounted()', 500);
+                is_hdd_mounted();
+		setTimeout('scan_devices()', 800);
+	}
+}
 function mount_custom_partition(partition) {
 	if (document.getElementById("mount_point").value != "") {
 		makeRequest('camogm_interface.php', '?cmd=mount&partition=' + partition + '&mountpoint=' + document.getElementById("mount_point").value);
 		document.getElementById('directory').value = "/var/hdd/";
 		document.getElementById('mount_hdd_button').style.display = "none";
-
 		setTimeout('scan_devices()', 700);
 	}
 }
 function unmount_custom_partition(mountpoint) {
 	if (mountpoint != "") {
-		makeRequest('camogm_interface.php', '?cmd=umount&mountpoint=' + mountpoint);
+		makeRequest('camogm_interface.php','?cmd=umount&mountpoint='+mountpoint);
 		setTimeout('scan_devices()', 700);
+                //scan_devices();
 	}
 }
-function process_mount_hdd(xmldoc) {
-	var response = xmldoc.getElementsByTagName('mount')[0].firstChild.data;
-	if (response == "done")
-	{
-		setTimeout('is_hdd_mounted()', 500);
-		setTimeout('scan_devices()', 800);
-	}
-}
+
 function is_hdd_mounted() {
-	makeRequest('camogm_interface.php', '?cmd=is_hdd_mounted');	
+	makeRequest('camogm_interface.php', '?cmd=is_hdd_mounted');
 }
-function process_is_hdd_mounted(xmldoc) {			
+
+function is_mounted(dev){
+    makeRequest('camogm_interface.php', '?cmd=is_hdd_mounted&partition='+dev);
+}
+
+function nothing_is_mounted_hide(){
+    document.getElementById('mounted_devices').innerHTML = "no devices found";
+    document.getElementById('refresh_file_list').style.display = "none"; // hide "reload" button
+    document.getElementById('create_webshare_button').style.display = "none"; // hide "create webshare" button
+    document.getElementById('create_folder').style.display = "none"; // hide "create folder" button
+    document.getElementById('set_rec_dir').style.display = "none"; // hide "set record directory" button
+    document.getElementById('mount_hdd_button').style.display = 'none';
+}
+
+function process_is_hdd_mounted(xmldoc) {
 	var response = xmldoc.getElementsByTagName('is_hdd_mounted')[0].firstChild.data;
 	if (response == "no HDD mounted")
 	{
-		document.getElementById('mounted_devices').innerHTML = "no devices found";
-		document.getElementById('refresh_file_list').style.display = "none"; // hide "reload" button
-		document.getElementById('create_webshare_button').style.display = "none"; // hide "create webshare" button
-		document.getElementById('create_folder').style.display = "none"; // hide "create folder" button
-		document.getElementById('set_rec_dir').style.display = "none"; // hide "set record directory" button
-
+                nothing_is_mounted_hide();
 		// Ignore all odds and just mount it
-		setTimeout('mount_hdd()', 1000);
+		//setTimeout('mount_hdd()', 1000);
+                mount_hdd();
 	}
 	else // we have a hdd mounted
 	{
 		document.getElementById('mount_hdd_button').style.display = 'none'; // hide mount button
 		document.getElementById('refresh_file_list').style.display = "inline"; // show "reload" button
 		document.getElementById('create_webshare_button').style.display = "inline"; // show "create webshare" button
-			document.getElementById('create_folder').style.display = "inline"; // show "create folder" button
+		document.getElementById('create_folder').style.display = "inline"; // show "create folder" button
 		document.getElementById('set_rec_dir').style.display = "inline"; // show "set record directory" button
 		document.getElementById('mounted_devices').innerHTML = response;
-		setTimeout('get_hdd_space()', 300);
-		setTimeout('list_files("")', 600);
+                mountpoint = response.substring(response.indexOf(" on ")+4);
+                console.log("mountpoint is "+mountpoint);
+                selected_mountpoint = mountpoint;
+                get_space(selected_mountpoint);
+                list_files("");
+		//setTimeout('get_hdd_space()', 300);
+		//setTimeout('list_files("")', 600);
 	}
 }
+
 function scan_devices() {
 	makeRequest('camogm_interface.php', '?cmd=listdevices');	
 }
-function process_scan_devices(xmldoc) {			
+
+var devices = Array();
+var selected_device = "";
+var selected_mountpoint = "";
+
+function process_scan_devices(xmldoc) {
+        devices = Array();
 	if (xmldoc.getElementsByTagName('listdevices').length > 0) {
 		var content = "";
 		content += "<table cellpadding='5' cellspacing='0' cellmargin='0'>";
 		content += "<tr><td></td><td><b>Partition</b></td><td><b>Mountpoint</b></td><td><b>Size</b></td><td><b>Filesystem</b></td><td></td></tr>";
 		for (var i=0; i < xmldoc.getElementsByTagName('item').length; i++) {
 			if (xmldoc.getElementsByTagName('item')[i].firstChild.firstChild.data != null) {
+                                partition = xmldoc.getElementsByTagName('partition')[i].firstChild.data;
 				if (xmldoc.getElementsByTagName('item')[i].getElementsByTagName('mountpoint')[0].firstChild.data == "none") {
-					content += "<tr><td></td><td>" + xmldoc.getElementsByTagName('partition')[i].firstChild.data + "</td><td><input id='mount_point' size='8' type='text'";
-					if(xmldoc.getElementsByTagName('partition')[i].firstChild.data == "/dev/hda1")
+					content += "<tr><td></td><td>"+partition+"</td><td><input id='mount_point' size='8' type='text'";
+					//if (partition=="/dev/hda1"){
+                                        if (partition=="/dev/sda1"){
 						content += " value='/var/hdd'";
-					content += "></td><td>" + xmldoc.getElementsByTagName('size')[i].firstChild.data + "</td><td>" + '</td><td><a href="#" onClick="mount_custom_partition(\'' + xmldoc.getElementsByTagName('partition')[i].firstChild.data + '\');">mount</a></td></tr>';
+                                        }
+					content += "></td><td>" + xmldoc.getElementsByTagName('size')[i].firstChild.data + "</td><td>" + '</td><td><a href="#" onClick="mount_custom_partition(\''+partition+'\');">mount</a></td></tr>';
 				} else { 
-					content += "<tr><td><img alt=\"HDD\" src=\"images/hdd.png\"></td><td>" + xmldoc.getElementsByTagName('partition')[i].firstChild.data;
-					content += "</td><td>" + xmldoc.getElementsByTagName('mountpoint')[i].firstChild.data + "</td><td>";
+                                        var mountpoint = xmldoc.getElementsByTagName('mountpoint')[i].firstChild.data;
+					content += "<tr><td><img alt=\"HDD\" src=\"images/hdd.png\"></td><td>"+partition;
+					content += "</td><td>"+ mountpoint+"</td><td>";
 					content += xmldoc.getElementsByTagName('size')[i].firstChild.data + "</td><td>" + xmldoc.getElementsByTagName('filesystem')[i].firstChild.data;
-					content += '</td><td><a href="#" onClick="unmount_custom_partition(\' ' + xmldoc.getElementsByTagName('mountpoint')[i].firstChild.data + '\');">unmount</a></td></tr>';	
+					content += '</td><td><a href="#" onClick="unmount_custom_partition(\''+mountpoint+'\');">unmount</a></td></tr>';
 				}
+				devices.push(partition);
 			}
 		}
 		content += "</table>";
 		document.getElementById('ajax_devices').innerHTML = content;
 	}
+	if (devices.length>0){
+            nothing_is_mounted_hide();
+            for(var i=0;i<devices.length;i++){
+                if (devices[i]=="/dev/hda1") selected_device = devices[i];
+                if (devices[i]=="/dev/sda1") selected_device = devices[i];
+                break;
+            }
+            is_mounted(selected_device);
+        }else{
+            nothing_is_mounted_hide();
+        }
 }
+
 function create_folder() {
 	var name_prompt = prompt("Folder Name:");
 	if (name_prompt != null)
@@ -105,63 +162,75 @@ function process_mkdir(xmldoc) {
 	var sucess = xmldoc.getElementsByTagName('mkdir')[0].firstChild.data;
 	if (sucess == "done")
 	{
-		setTimeout("list_files(getCookie('current_dir'))", 500);
+                console.log("mkdir");
+		//setTimeout("list_files(getCookie('current_dir'))", 500);
 	}
 	else
 		alert("error creating folder");
 }
+
 function get_hdd_space() {
-	makeRequest('camogm_interface.php', '?cmd=get_hdd_space');
+    makeRequest('camogm_interface.php', '?cmd=get_hdd_space');
 }
+
+function get_space(mountpoint){
+    console.log("getting space");
+    makeRequest('camogm_interface.php','?cmd=get_hdd_space&mountpoint='+mountpoint);
+}
+
 function process_hdd_space(xmldoc) {
 	var response = xmldoc.getElementsByTagName('get_hdd_space')[0].firstChild.data;
+        console.log("space is "+response);
 	document.getElementById('hdd_rem').innerHTML = Math.round(response/1024/1024/1024*100)/100 + " GB";
+        //list_files("");
 }
+
 function create_webshare() {
-	makeRequest('camogm_interface.php', '?cmd=create_symlink');
+	makeRequest('camogm_interface.php','?cmd=create_symlink&mountpoint='+selected_mountpoint);
 	document.getElementById('create_webshare_button').style.display = "none";
-	setTimeout('list_files("")', 500);
+	//setTimeout('list_files("")', 500);
 }
+
 function set_rec_dir() {
 	// Show Format Tab
 	setCookie('tab', 2, 365);
 	TabbedPanels1.showPanel(2);
 	
-	document.getElementById('directory').value = "/var/hdd" + getCookie('current_dir');
+	document.getElementById('directory').value = selected_mountpoint + getCookie('current_dir');
 	
-	makeRequest('camogm_interface.php', '?cmd=set_prefix&prefix=' + "/var/hdd" + getCookie('current_dir'));
+	makeRequest('camogm_interface.php', '?cmd=set_prefix&prefix=' + selected_mountpoint + getCookie('current_dir'));
 	
 	
 }
+
 function list_files(dir) {
-	if (dir == "")
-	{
+	if (dir == ""){
 		makeRequest('camogm_interface.php', '?cmd=list_files');
 		setCookie("current_dir", "/", 365);
-	}
-	else
-	{
+	}else{
 		makeRequest('camogm_interface.php', '?cmd=list_files&dir=' + dir);
 		setCookie("current_dir", dir, 365);
-	}	
-	document.getElementById('files_current_folder').innerHTML = "/var/hdd" + getCookie("current_dir");
+	}
+	document.getElementById('files_current_folder').innerHTML = selected_mountpoint + getCookie("current_dir");
 }
+
 function process_list_file(xmldoc) {
 	var can_continue = true;
 	if (xmldoc.getElementsByTagName('list_files').length > 0) {
 		if (xmldoc.getElementsByTagName('list_files')[0].firstChild.data != null) {
 			if (xmldoc.getElementsByTagName('list_files')[0].firstChild.data == "no webshare found") {
+                                console.log("webshare not found");
 				can_continue = false;
 				document.getElementById('create_webshare_button').style.display = "inline";
 				document.getElementById('filelist').innerHTML = "no webshare found<br>";
 				
 				// ingore all odds and just create the webshare
-				setTimeout('create_webshare()', 300);
+				create_webshare();
 			}
 		}
 	}
-	if (can_continue)
-	{
+	if (can_continue){
+                console.log("continued");
 		var count = xmldoc.getElementsByTagName('file').length;
 		var response = "<table cellspacing=\"0px\" cellpadding=\"3px\" width=\"100%\">";
 		response  += "<tr><td width=\"50%\"><b>File</b></td><td width=\"30%\"><b>Creation Date</b></td><td><b>Size</b></td></tr>";
@@ -244,8 +313,9 @@ function update_audio_form(thisform) {
 		}
 	}
 }
+
 function makeRequest(url, parameters) {
-	http_request = false;
+	var http_request = false;
 	if (window.XMLHttpRequest) { // Mozilla, Safari,...
 		http_request = new XMLHttpRequest();
 		if (http_request.overrideMimeType) {
@@ -264,57 +334,61 @@ function makeRequest(url, parameters) {
  		alert('Cannot create XMLHTTP instance');
  		return false;
 	}
-	http_request.onreadystatechange = process_request;
+	//http_request.onreadystatechange = process_request;
+	http_request.onload = function(e){
+            if (http_request.readyState == 4) {
+                if (http_request.status == 200) {
+                    if (http_request.responseXML != null) {
+                        process_request(http_request.responseXML);
+                    }
+                }
+            }
+        };
+        
 	http_request.open('GET', url + parameters, true);
 	http_request.send(null);
 }
 
-function process_request() {
-	if (http_request.readyState == 4) {
-		if (http_request.status == 200) {
-			console.log("process_request");
-			if(http_request.responseXML != null) {
-				var xmldoc = http_request.responseXML;
-				if (xmldoc.getElementsByTagName('camogm_state').length > 0) {
-					console.log(xmldoc.getElementsByTagName('state')[0].firstChild.data);
-					process_recording(xmldoc);
-				}
-				if (xmldoc.getElementsByTagName('command').length > 0) {
-					var command = xmldoc.getElementsByTagName('command')[0].firstChild.data;
-					switch (command)
-					{
-						case "is_hdd_mounted":
-							process_is_hdd_mounted(xmldoc);
-							break;
-						case "list_files":
-							process_list_file(xmldoc);
-							break;
-						case "file_rename":
-							process_rename_file(xmldoc);
-							break;
-						case "get_hdd_space":
-							process_hdd_space(xmldoc);
-							break;	
-						case "mount":
-							process_mount_hdd(xmldoc);
-							break;	
-						case "mkdir":
-							process_mkdir(xmldoc);
-							break;	
-						case "check_audio_hardware":
-							process_check_audio_hardware(xmldoc);
-							break;	
-						case "listdevices":
-							process_scan_devices(xmldoc);
-							break;
-						default:
-							break;
-					}
-				}
-			}
-		}
-	}
+function process_request(xmldoc) {
+    console.log("process_request");
+    if (xmldoc.getElementsByTagName('camogm_state').length > 0) {
+        console.log(xmldoc.getElementsByTagName('state')[0].firstChild.data);
+        process_recording(xmldoc);
+    }
+    if (xmldoc.getElementsByTagName('command').length > 0) {
+        var command = xmldoc.getElementsByTagName('command')[0].firstChild.data;
+        switch (command) {
+            case "is_hdd_mounted":
+                    process_is_hdd_mounted(xmldoc);
+                    break;
+            case "list_files":
+                    process_list_file(xmldoc);
+                    break;
+            case "file_rename":
+                    process_rename_file(xmldoc);
+                    break;
+            case "get_hdd_space":
+                    console.log("Got space responze");
+                    process_hdd_space(xmldoc);
+                    break;	
+            case "mount":
+                    process_mount_hdd(xmldoc);
+                    break;	
+            case "mkdir":
+                    process_mkdir(xmldoc);
+                    break;	
+            case "check_audio_hardware":
+                    process_check_audio_hardware(xmldoc);
+                    break;	
+            case "listdevices":
+                    process_scan_devices(xmldoc);
+                    break;
+            default:
+                    break;
+        }
+    }
 }
+
 function process_recording(xmldoc) {
 	var file_duration = xmldoc.getElementsByTagName('file_duration')[0].firstChild.data;
 	var state = xmldoc.getElementsByTagName('state')[0].firstChild.data;
@@ -382,7 +456,7 @@ function toggle_recording() {
 			rename_file(document.getElementById('ajax_file_name').innerHTML, document.getElementById('directory').value + document.filenames.result.value);
 		}
 		
-		setTimeout('list_files(getCookie("current_dir"))', 300);
+		//setTimeout('list_files(getCookie("current_dir"))', 300);
 		setTimeout('get_hdd_space()', 600);
 		//setTimeout(last_update, 900);
 	}
@@ -399,8 +473,8 @@ function toggle_recording() {
 		document.getElementById('record_text').innerHTML = "<img src=\"images/stop.gif\" style=\"position:relative; bottom:-5px;\"> STOP";
 		document.getElementById('sitecoloumn').style.backgroundColor = "#AF2020";
 		
-		clearInterval(update_intvl);
-		update_intvl = setInterval(update_state,1000);
+		//clearInterval(update_intvl);
+		//update_intvl = setInterval(update_state,1000);
 	}
 	//update_state();
 }
@@ -413,7 +487,7 @@ function process_rename_file(xmldoc) {
 	if (response != "done")
 		alert ("renaming failed: " + response);
 	
-	setTimeout('list_files(getCookie("current_dir"))', 300);	
+	//setTimeout('list_files(getCookie("current_dir"))', 300);	
 }
 function update_fps_reduce(parent) {
 	if (document.getElementById('fps_reduce_frameskip').checked) {
