@@ -75,7 +75,7 @@ function scan_devices() {
 function process_scan_devices(xmldoc) {			
 	if (xmldoc.getElementsByTagName('listdevices').length > 0) {
 		var content = "";
-		content += "<table cellpadding='10' cellspacing='0' cellmargin='0'>";
+		content += "<table cellpadding='5' cellspacing='0' cellmargin='0'>";
 		content += "<tr><td></td><td><b>Partition</b></td><td><b>Mountpoint</b></td><td><b>Size</b></td><td><b>Filesystem</b></td><td></td></tr>";
 		for (var i=0; i < xmldoc.getElementsByTagName('item').length; i++) {
 			if (xmldoc.getElementsByTagName('item')[i].firstChild.firstChild.data != null) {
@@ -85,7 +85,7 @@ function process_scan_devices(xmldoc) {
 						content += " value='/var/hdd'";
 					content += "></td><td>" + xmldoc.getElementsByTagName('size')[i].firstChild.data + "</td><td>" + '</td><td><a href="#" onClick="mount_custom_partition(\'' + xmldoc.getElementsByTagName('partition')[i].firstChild.data + '\');">mount</a></td></tr>';
 				} else { 
-					content += "<tr><td><img alt=\"HDD\" src=\"../camerasetup/images/hdd.png\"></td><td>" + xmldoc.getElementsByTagName('partition')[i].firstChild.data;
+					content += "<tr><td><img alt=\"HDD\" src=\"images/hdd.png\"></td><td>" + xmldoc.getElementsByTagName('partition')[i].firstChild.data;
 					content += "</td><td>" + xmldoc.getElementsByTagName('mountpoint')[i].firstChild.data + "</td><td>";
 					content += xmldoc.getElementsByTagName('size')[i].firstChild.data + "</td><td>" + xmldoc.getElementsByTagName('filesystem')[i].firstChild.data;
 					content += '</td><td><a href="#" onClick="unmount_custom_partition(\' ' + xmldoc.getElementsByTagName('mountpoint')[i].firstChild.data + '\');">unmount</a></td></tr>';	
@@ -272,9 +272,11 @@ function makeRequest(url, parameters) {
 function process_request() {
 	if (http_request.readyState == 4) {
 		if (http_request.status == 200) {
+			console.log("process_request");
 			if(http_request.responseXML != null) {
 				var xmldoc = http_request.responseXML;
 				if (xmldoc.getElementsByTagName('camogm_state').length > 0) {
+					console.log(xmldoc.getElementsByTagName('state')[0].firstChild.data);
 					process_recording(xmldoc);
 				}
 				if (xmldoc.getElementsByTagName('command').length > 0) {
@@ -319,7 +321,10 @@ function process_recording(xmldoc) {
 	var frame_number = xmldoc.getElementsByTagName('frame_number')[0].firstChild.data;
 	var file_length = xmldoc.getElementsByTagName('file_length')[0].firstChild.data;
 	var file_name = xmldoc.getElementsByTagName('file_name')[0].firstChild.data;
-									
+	
+	if (state=='"stopped"'){
+		clearInterval(update_intvl);
+	}
 	//Update HTML
 	document.getElementById('ajax_state').innerHTML = state.substring(1, state.length-1);
 	document.getElementById('ajax_file_duration').innerHTML = Math.round(file_duration*100)/100 + " seconds / " + frame_number + " frames";
@@ -345,11 +350,14 @@ function process_recording(xmldoc) {
 }
 recording = false;
 function update_state() {
-	if (recording) {
+	//if (recording) {
 		makeRequest('camogm_interface.php', '?cmd=status');
-		setTimeout('update_state()', 200);
-	}
+		//setTimeout('update_state()', 200);
+	//}
 }
+
+var update_intvl;
+
 function toggle_recording() {
 	if (recording) // Stop it
 	{
@@ -376,7 +384,7 @@ function toggle_recording() {
 		
 		setTimeout('list_files(getCookie("current_dir"))', 300);
 		setTimeout('get_hdd_space()', 600);
-		setTimeout("makeRequest('camogm_interface.php', '?cmd=status')", 900);
+		//setTimeout(last_update, 900);
 	}
 	else // Start it
 	{
@@ -390,8 +398,11 @@ function toggle_recording() {
 		// show we are recording
 		document.getElementById('record_text').innerHTML = "<img src=\"images/stop.gif\" style=\"position:relative; bottom:-5px;\"> STOP";
 		document.getElementById('sitecoloumn').style.backgroundColor = "#AF2020";
+		
+		clearInterval(update_intvl);
+		update_intvl = setInterval(update_state,1000);
 	}
-	update_state();
+	//update_state();
 }
 function rename_file(oldname, newname) {
 	makeRequest('camogm_interface.php', '?cmd=file_rename&file_old=' + oldname + '&file_new=' + newname);

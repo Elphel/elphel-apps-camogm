@@ -124,7 +124,7 @@ else if ($cmd == "status")
 	header("Content-Type: text/xml");
 	header("Content-Length: ".strlen($status)."\n");
 	header("Pragma: no-cache\n");
-	printf($status);
+	printf("%s", $status);
 }
 else if ($cmd == "run_status")
 {	
@@ -151,7 +151,7 @@ else if ($cmd == "run_status")
 	header("Content-Type: text/xml");
 	header("Content-Length: ".strlen($status)."\n");
 	header("Pragma: no-cache\n");
-	printf($status);
+	printf("%s", $status);
 }
 else if ($cmd=="get_hdd_space"){
 	if (isset($_GET['mountpoint']))
@@ -188,7 +188,7 @@ else if ($cmd=="mount") { // mount media like HDD
 	echo "</".$cmd.">";
 	xml_footer();
 }
-else if ($cmd=="unmount") { // unmount media like HDD
+else if (($cmd=="umount") || ($cmd=="unmount")) { // unmount media like HDD
 	$message = "";
 	if (isset($_GET['mountpoint'])) {
 		$mountpoint = $_GET['mountpoint'];
@@ -348,29 +348,36 @@ else
 		case "listdevices":
 			exec ("cat /proc/partitions", $arr1);
 			exec ("cat /proc/mounts", $arr2);
+			$j = 0;
+			// first two lines are header and empty  line separator, skip them
 			$i = 2;
 			while($i < count($arr1)) {
-				if(!strpos($arr1[$i], "mtdblock")) {
+				// skip flash and RAM disk partitions
+				if(!strpos($arr1[$i], "mtdblock") && !strpos($arr1[$i], "ram")) {
 					$temp = $arr1[$i];
 					while(strstr($temp, "  ")) {
 						$temp = str_replace(chr(9), " ", $temp); 
 						$temp = str_replace("  ", " ", $temp);
 					}
-					//echo $temp;
-					preg_match_all('/[a-z]{3,3}[0-9]{1,1}/', $temp, $available_partitons);
-					//preg_match_all('/[a-z]{3,3}/', $temp, $available_devices);
-					$parts = explode(" ", $temp);
-					$size = $parts[3];
+					if (preg_match_all('/ +[a-z]{3,3}[0-9]{1,1}$/', $temp, $available_partitons) > 0) {
+						// remove leading spaces
+						$partitions[$j] = preg_replace("/^ +/", "", $available_partitons[0][0]);
+						$parts = explode(" ", $temp);
+						$size[$j] = $parts[3];
+						$j++;
+					}
 				}
 				$i++;
 			}
-			foreach ($available_partitons as $device) {
+			$j = 0;
+			foreach ($partitions as $partition) {
 				echo "<item>";
-				echo "<partition>/dev/".$device[0]."</partition>";
-				echo "<size>".round($size/1024/1024, 2) ." GB</size>";
-				$i = 2;
+				echo "<partition>/dev/".$partition."</partition>";
+				echo "<size>".round($size[$j]/1024/1024, 2) ." GB</size>";
+				$j++;
+				$i = 0;
 				while($i < count($arr2)) {
-					if(strpos($arr2[$i], $device[0]))
+					if(strpos($arr2[$i], $partition))
 					{
 						$parts = explode(" ", $arr2[$i]);
 						$mountpoint = $parts[1];
@@ -378,17 +385,20 @@ else
 					}
 					$i++;
 				}
-				if ($mountpoint != "")
+				if ($mountpoint != "") {
 					echo "<mountpoint>".$mountpoint."</mountpoint>";
-				else
+					$mountpoint = "";
+				} else {
 					echo "<mountpoint>none</mountpoint>";
-				if ($filesystem != "")
+				}
+				if ($filesystem != "") {
 					echo "<filesystem>".$filesystem."</filesystem>";
-				else
+					$filesystem = "";
+				} else {
 					echo "<filesystem>none</filesystem>";					
+				}
 				echo "</item>";
 			}
-			
 
 			break;
 		case "mkdir":

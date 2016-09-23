@@ -7,7 +7,7 @@ CONFIGS    = qt_source
 IMAGES     = $(GUIDIR)/images/filebrowser-01.gif $(GUIDIR)/images/filebrowser-bottom-01.gif $(GUIDIR)/images/png_white_30.png \
              $(GUIDIR)/images/record.gif $(GUIDIR)/images/reload.png $(GUIDIR)/images/stop.gif $(GUIDIR)/images/create_folder.png \
              $(GUIDIR)/images/divider.png $(GUIDIR)/images/folder.gif $(GUIDIR)/images/help.png $(GUIDIR)/images/quicktime.png \
-             $(GUIDIR)/images/rec_folder.png $(GUIDIR)/images/up_folder.gif $(GUIDIR)/images/play_audio.png
+             $(GUIDIR)/images/rec_folder.png $(GUIDIR)/images/up_folder.gif $(GUIDIR)/images/play_audio.png $(GUIDIR)/images/hdd.png
 
 
 SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c camogm_read.c index_list.c
