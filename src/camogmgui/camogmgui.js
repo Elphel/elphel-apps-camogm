@@ -418,7 +418,8 @@ function process_recording(xmldoc) {
 	document.getElementById('buffer_free').style.width = Math.round(buffer_free / 19791872 * 300);
 	document.getElementById('buffer_used').style.width = Math.round(buffer_used / 19791872 * 300);
 
-	get_hdd_space();
+	//get_hdd_space();
+        get_space(selected_mountpoint);
 	
 	if (xmldoc.getElementsByTagName('buffer_overruns')[0].firstChild.data > 0)
 		alert ("Buffer overrun! current datarate exceeds max. write rate")
@@ -426,7 +427,7 @@ function process_recording(xmldoc) {
 recording = false;
 function update_state() {
 	//if (recording) {
-		makeRequest('camogm_interface.php', '?cmd=status');
+		makeRequest('camogm_interface.php','?cmd=status');
 		//setTimeout('update_state()', 200);
 	//}
 }
@@ -458,8 +459,9 @@ function toggle_recording() {
 		}
 		
 		//setTimeout('list_files(getCookie("current_dir"))', 300);
-		setTimeout('get_hdd_space()', 600);
+		//setTimeout('get_hdd_space()', 600);
 		//setTimeout(last_update, 900);
+		//get_space(selected_mountpoint);
 	}
 	else // Start it
 	{
@@ -474,8 +476,8 @@ function toggle_recording() {
 		document.getElementById('record_text').innerHTML = "<img src=\"images/stop.gif\" style=\"position:relative; bottom:-5px;\"> STOP";
 		document.getElementById('sitecoloumn').style.backgroundColor = "#AF2020";
 		
-		//clearInterval(update_intvl);
-		//update_intvl = setInterval(update_state,1000);
+		clearInterval(update_intvl);
+		update_intvl = setInterval(update_state,1000);
 	}
 	//update_state();
 }
