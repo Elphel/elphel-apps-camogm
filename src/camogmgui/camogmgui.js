@@ -1,3 +1,8 @@
+// store path to partition that camogm is currently using
+var rawdev_path = "";
+// shows if partition selection should be updated
+var update_dev_radio = false;
+
 function timer_functions(){
     list_files(getCookie("current_dir"));
     update_state();
@@ -17,13 +22,17 @@ function init() {
 	//setTimeout('update_audio_form(document.getElementById("audioform"))', 1500);
 	//setTimeout('calc_split_size()', 2300);
 	//setTimeout('scan_devices()', 3000);
-        update_name_scheme();
-        check_audio_hardware();
-        update_audio_form(document.getElementById("audioform"));
-        calc_split_size();
-        //calling "is_mounted" at response
-        scan_devices("is_mounted(selected_device)");
-        //global_timer = setInterval(timer_functions,2000);
+	update_name_scheme();
+	check_audio_hardware();
+	update_audio_form(document.getElementById("audioform"));
+	calc_split_size();
+	//calling "is_mounted" at response
+	//global_timer = setInterval(timer_functions,2000);
+	if (document.getElementById('fast_rec').checked) {
+		makeRequest('camogm_interface.php', '?cmd=list_raw_devices');
+	} else {
+		scan_devices("is_mounted(selected_device)");
+	}
 }
 function reload() {
 	makeRequest('camogm_interface.php', '?cmd=run_camogm');
@@ -104,7 +113,9 @@ function process_is_hdd_mounted(xmldoc) {
 
 //scan_devices() - fills the device list.
 function scan_devices(callback) {
-	makeRequest('camogm_interface.php','?cmd=listdevices',callback);
+	if (document.getElementById('fast_rec').checked == false) {
+		makeRequest('camogm_interface.php','?cmd=listdevices',callback);
+	}
 }
 
 var devices = Array();
@@ -425,6 +436,18 @@ function process_recording(xmldoc) {
 	
 	if (xmldoc.getElementsByTagName('buffer_overruns')[0].firstChild.data > 0)
 		alert ("Buffer overrun! current datarate exceeds max. write rate")
+
+	// update partition selection
+	if (update_dev_radio) {
+		var radios = document.getElementsByName('rawdev_path');
+		rawdev_path = xmldoc.getElementsByTagName('raw_device_path')[0].firstChild.data;
+		for (var i = 0; i < radios.length; i++) {
+			if (rawdev_path == '"' + radios[i].value + '"') {
+				radios[i].checked = true;
+			}
+		}
+		update_dev_radio = false;
+	}
 }
 recording = false;
 function update_state() {
@@ -806,8 +829,7 @@ function process_raw_dev_list(xmldoc)
 			"<td>" + partition.firstChild.nodeValue + "</td>" +
 			"<td></td><td>" + size.firstChild.nodeValue + " GB" + "</td>" +
 			"<td></td><td></td></tr>";
-		}		
-
+		}
 		content += "</table>";
 	} else {
 		content += "<p class=\"alert\">Device partitions without file system are not found. Fast recording can not be started. " +
@@ -815,4 +837,10 @@ function process_raw_dev_list(xmldoc)
 		document.getElementById('submit_button').disabled = true;
 	}
 	document.getElementById('ajax_devices').innerHTML = content;
+	
+	// get current partition if we have more than one available and update selection
+	if (items.length > 1) {
+		update_dev_radio = true;
+		makeRequest('camogm_interface.php', '?cmd=status');
+	}
 }
