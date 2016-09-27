@@ -573,7 +573,7 @@
                     else
                     	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\"> JPEG Sequence<br />";
                     ?>
-                    <input id="fast_rec" type="checkbox" style="left:1px; top:3px; position:relative;" name="" value="" onChange="fast_rec_changed(this)"> Use fast recording 
+                    <input id="fast_rec" type="checkbox" style="left:1px; top:3px; position:relative;" name="fastrec_checkbox" value="checked" onChange="fast_rec_changed(this)"> Use fast recording 
                     <a href="#" onClick="help('fast_rec');"><img src="images/help.png"></a><br />
                     <br />
                     
@@ -594,7 +594,7 @@
 				  </select> 
                   <a href="#" onClick="help('debug');"><img src="images/help.png"></a><br />
                     <br />
-                  <input name="settings_format" type="submit" value="OK">
+                  <input id="submit_button" name="settings_format" type="submit" value="OK">
 				</form>
             </div>
             <div class="TabbedPanelsContent">

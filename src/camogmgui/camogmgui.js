@@ -384,6 +384,8 @@ function process_request(xmldoc) {
             case "listdevices":
                     process_scan_devices(xmldoc);
                     break;
+            case "list_raw_devices":
+            		process_raw_dev_list(xmldoc);
             default:
                     break;
         }
@@ -535,7 +537,9 @@ function help(caller) {
 		case 'debug':
 			alert("The higher the debug-level the more information is written to the debug file (it may slow down camogm and cause it to drop frames even if it could handle it with no/lower debug-level output).")
 			break;
-		
+		case 'fast_rec':
+			alert("Enable or disable fast recoding feature. The disk drive should have at least one partition without file system or" +
+					"any data on it to enable this feature.");
 	}
 }
 function format_changed(parent) {
@@ -747,13 +751,68 @@ function toggle_buffer() {
 	}
 }
 
-// enable fast recording through disk driver
-function fast_rec_changed(parent)
+/** Enable or disable page controls in accordance to new state which cat be one of 'fast_rec' or 'standart_rec' */
+function set_controls_state(new_state)
 {
-	if (parent.checked) {
+	var radios = document.getElementsByName('container');
+
+	if (new_state == 'fast_rec') {
+		radios_disable = true;
 		document.getElementById('radioJpg').checked = true;
 		document.getElementById('directory').disabled = true;
 	} else {
+		radios_disable = false;
 		document.getElementById('directory').disabled = false;
+		if (document.getElementById('submit_button').disabled == true)
+			document.getElementById('submit_button').disabled = false;
 	}
+	for (var i = 0; i < radios.length; i++) {
+		radios[i].disabled = radios_disable;
+	}
+}
+
+/** Enable fast recording through disk driver */
+function fast_rec_changed(parent)
+{
+	if (parent.checked) {
+		makeRequest('camogm_interface.php', '?cmd=list_raw_devices');
+	} else {
+		scan_devices("is_mounted(selected_device)");
+		set_controls_state('standart_rec');
+	}
+}
+
+/** Show raw devices table and change the state of controls */
+function process_raw_dev_list(xmldoc)
+{
+	var content = "";
+	var items = xmldoc.getElementsByTagName('item');
+
+	content += "";
+	if (items.length > 0) {
+		set_controls_state('fast_rec');
+
+		content += "<table cellpadding='5' cellspacing='0' cellmargin='0'>";
+		content += "<tr><td></td><td><b>Partition</b></td><td><b></b></td><td><b>Size</b></td><td><b></b></td><td></td></tr>";
+		for (var i = 0; i < items.length; i++) {
+			var partition = items[i].childNodes[0];
+			var size = items[i].childNodes[1];
+			content += "<tr><td><input type=\"radio\" id=\"radio_dev_" + i + "\" class=\"radio_class\" name=\"rawdev_path\" value=\"" + 
+			partition.firstChild.nodeValue + "\" ";
+			if (i == 0) {
+				content += "checked ";
+			}
+			content += "/></td>" +
+			"<td>" + partition.firstChild.nodeValue + "</td>" +
+			"<td></td><td>" + size.firstChild.nodeValue + " GB" + "</td>" +
+			"<td></td><td></td></tr>";
+		}		
+
+		content += "</table>";
+	} else {
+		content += "<p class=\"alert\">Device partitions without file system are not found. Fast recording can not be started. " +
+				"Create a partition without file system on it and try again.</p>";
+		document.getElementById('submit_button').disabled = true;
+	}
+	document.getElementById('ajax_devices').innerHTML = content;
 }

@@ -403,8 +403,11 @@ else
 			break;
 		case "list_raw_devices":
 			$devices = get_raw_dev();
-			foreach ($devices as $device) {
+			foreach ($devices as $device => $size) {
+				echo "<item>";
 				echo "<raw_device>" . $device . "</raw_device>";
+				echo "<size>" . round($size / 1048576, 2) . "</size>";
+				echo "</item>";
 			}
 			break;
 		case "mkdir":
@@ -628,7 +631,7 @@ function get_mnt_dev()
 function get_raw_dev()
 {
 	$j = 0;
-	$regexp = '/sd[a-z0-9]+$/';
+	$regexp = '/([0-9]+) +(sd[a-z0-9]+$)/';
 	$names = array();
 	$ret = get_mnt_dev();
 	$devices = $ret["devices"]; 
@@ -640,7 +643,7 @@ function get_raw_dev()
 	for ($i = 2; $i < count($partitions); $i++) {
 		// select SATA devices only
 		if (preg_match($regexp, $partitions[$i], $name) == 1) {
-			$names[$j] = $name[0];
+			$names[$name[2]] = $name[1];
 			$j++;
 		}
 	}
@@ -648,7 +651,7 @@ function get_raw_dev()
 	// filter out partitions with file system 
 	$i = 0;
 	$raw_devices = array();
-	foreach ($names as $name) {
+	foreach ($names as $name => $size) {
 		$found = false;
 		foreach ($devices as $device) {
 			if (strpos($device, $name) !== false)
@@ -656,7 +659,7 @@ function get_raw_dev()
 		}
 		if ($found === false) {
 			// current partition is not found in the blkid list, add it to raw devices
-			$raw_devices[$i] = "/dev/" . $name;
+			$raw_devices["/dev/" . $name] = $size;
 			$i++;
 		}
 	}
