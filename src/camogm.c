@@ -213,6 +213,21 @@ void put_uint64(void *buf, u_int64_t val)
 }
 
 /**
+ * @brief Detect running compressors and update active channels mask. This function should be
+ * called right after all driver files are opened.
+ * @param   state   pointer to #camogm_state structure containing program state
+ * @return  none
+ */
+void check_compressors(camogm_state *state)
+{
+	for (int i = 0; i < SENSOR_PORTS; i++) {
+		if (getGPValue(i, P_COMPRESSOR_RUN) != COMPRESSOR_RUN_STOP) {
+			state->active_chn |= 1 << i;
+		}
+	}
+}
+
+/**
  * @brief Initialize the state of the program
  * @param[in]   state     pointer to #camogm_state structure containing program state
  * @param[in]   pipe_name pointer to command pipe name string
@@ -259,7 +274,7 @@ void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 	state->rawdev.end_pos = state->rawdev.start_pos;
 	state->rawdev.curr_pos_w = state->rawdev.start_pos;
 	state->rawdev.curr_pos_r = state->rawdev.start_pos;
-	state->active_chn = ALL_CHN_ACTIVE;
+	state->active_chn = ALL_CHN_INACTIVE;
 	state->rawdev.mmap_default_size = MMAP_CHUNK_SIZE;
 	state->sock_port = port_num;
 }
@@ -377,7 +392,6 @@ int camogm_start(camogm_state *state)
 
 			memcpy(&(state->frame_params[chn]), (unsigned long* )&ccam_dma_buf[chn][state->metadata_start >> 2], 32);
 			state->jpeg_len = state->frame_params[chn].frame_length; // frame_params.frame_length are now the length of bitstream
-
 
 			if (state->frame_params[chn].signffff != 0xffff) {
 				D0(fprintf(debug_file, "%s:%d: wrong signature - %d\r\n", __FILE__, __LINE__, (int)state->frame_params[chn].signffff));
@@ -928,7 +942,7 @@ void  camogm_set_start_after_timestamp(camogm_state *state, double d)
  */
 void  camogm_status(camogm_state *state, char * fn, int xml)
 {
-	int _len = 0;
+	int64_t _len = 0;
 	int _dur = 0, _udur = 0, _dur_raw, _udur_raw;
 	FILE* f;
 	char *_state, *_output_format, *_using_exif, *_using_global_pointer, *_compressor_state[SENSOR_PORTS];
@@ -985,8 +999,10 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			return;
 		}
 	}
-	if (state->vf) _len = ftell(state->vf);                                 // for ogm
-	else if ((state->ivf) >= 0) _len = lseek(state->ivf, 0, SEEK_CUR);      //for mov
+	if (state->rawdev_op)
+		_len = state->rawdev.total_rec_len;
+	else if (state->vf) _len = (int64_t)ftell(state->vf);                            // for ogm
+	else if ((state->ivf) >= 0) _len = (int64_t)lseek(state->ivf, 0, SEEK_CUR);      //for mov
 	switch (state->prog_state) {
 	case STATE_STOPPED:
 		_state = "stopped";
@@ -1022,7 +1038,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <frame_number>%d</frame_number>\n" \
 			"  <start_after_timestamp>%f</start_after_timestamp>\n"	\
 			"  <file_duration>%d.%06d</file_duration>\n" \
-			"  <file_length>%d</file_length>\n" \
+			"  <file_length>%" PRId64 "</file_length>\n" \
 			"  <frames_skip_left>%d</frames_skip_left>\n" \
 			"  <seconds_skip_left>%d</seconds_skip_left>\n"	\
 			"  <frame_width>%d</frame_width>\n" \
@@ -1104,7 +1120,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "frame              \t%d\n",        state->frameno);
 		fprintf(f, "start_after_timestamp \t%f\n",     state->start_after_timestamp);
 		fprintf(f, "file duration      \t%d.%06d sec\n", _dur, _udur);
-		fprintf(f, "file length        \t%d B\n",      _len);
+		fprintf(f, "file length        \t%" PRId64 " B\n", _len);
 		fprintf(f, "width              \t%d (0x%x)\n", state->width, state->width);
 		fprintf(f, "height             \t%d (0x%x)\n", state->height, state->height);
 		fprintf(f, "\n");
@@ -1902,6 +1918,7 @@ int main(int argc, char *argv[])
 	ret = open_files(&sstate);
 	if (ret < 0)
 		return ret;
+	check_compressors(&sstate);
 	if (pthread_create(&sstate.rawdev.tid, NULL, reader, &sstate) != 0 ||
 			pthread_detach(sstate.rawdev.tid) != 0) {
 		D0(fprintf(debug_file, "%s:line %d: Can not start reading thread in detached state\n", __FILE__, __LINE__));
@@ -1955,7 +1972,7 @@ int waitDaemonEnabled(unsigned int port, int daemonBit)   // <0 - use default
 	unsigned long this_frame = GLOBALPARS(port, G_THIS_FRAME);
 	// No semaphors, so it is possible to miss event and wait until the streamer will be re-enabled before sending message,
 	// but it seems not so terrible
-	lseek(state->fd_circ[state->port_num], LSEEK_DAEMON_CIRCBUF + lastDaemonBit[port], SEEK_END);
+	lseek(state->fd_circ[port], LSEEK_DAEMON_CIRCBUF + lastDaemonBit[port], SEEK_END);
 	if (this_frame == GLOBALPARS(port, G_THIS_FRAME)) return 1;
 	return 0;
 }

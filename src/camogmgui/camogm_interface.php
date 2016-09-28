@@ -349,6 +349,8 @@ else
 		case "listdevices":
 			exec ("cat /proc/partitions", $arr1);
 			exec ("cat /proc/mounts", $arr2);
+			$ret = get_mnt_dev();
+			$mnt_dev = $ret["devices"];
 			$j = 0;
 			// first two lines are header and empty  line separator, skip them
 			$i = 2;
@@ -372,35 +374,50 @@ else
 			}
 			$j = 0;
 			foreach ($partitions as $partition) {
-				echo "<item>";
-				echo "<partition>/dev/".$partition."</partition>";
-				echo "<size>".round($size[$j]/1024/1024, 2) ." GB</size>";
-				$j++;
-				$i = 0;
-				while($i < count($arr2)) {
-					if(strpos($arr2[$i], $partition))
-					{
-						$parts = explode(" ", $arr2[$i]);
-						$mountpoint = $parts[1];
-						$filesystem = $parts[2];
+				$include = false;
+				foreach ($mnt_dev as $dev) {
+					if (strpos($dev, $partition))
+						$include = true;
+				}
+				if ($include) {
+					echo "<item>";
+					echo "<partition>/dev/".$partition."</partition>";
+					echo "<size>".round($size[$j]/1024/1024, 2) ." GB</size>";
+					$j++;
+					$i = 0;
+					while($i < count($arr2)) {
+						if(strpos($arr2[$i], $partition))
+						{
+							$parts = explode(" ", $arr2[$i]);
+							$mountpoint = $parts[1];
+							$filesystem = $parts[2];
+						}
+						$i++;
 					}
-					$i++;
+					if ($mountpoint != "") {
+						echo "<mountpoint>".$mountpoint."</mountpoint>";
+						$mountpoint = "";
+					} else {
+						echo "<mountpoint>none</mountpoint>";
+					}
+					if ($filesystem != "") {
+						echo "<filesystem>".$filesystem."</filesystem>";
+						$filesystem = "";
+					} else {
+						echo "<filesystem>none</filesystem>";					
+					}
+					echo "</item>";
 				}
-				if ($mountpoint != "") {
-					echo "<mountpoint>".$mountpoint."</mountpoint>";
-					$mountpoint = "";
-				} else {
-					echo "<mountpoint>none</mountpoint>";
-				}
-				if ($filesystem != "") {
-					echo "<filesystem>".$filesystem."</filesystem>";
-					$filesystem = "";
-				} else {
-					echo "<filesystem>none</filesystem>";					
-				}
+			}
+			break;
+		case "list_raw_devices":
+			$devices = get_raw_dev();
+			foreach ($devices as $device => $size) {
+				echo "<item>";
+				echo "<raw_device>" . $device . "</raw_device>";
+				echo "<size>" . round($size / 1048576, 2) . "</size>";
 				echo "</item>";
 			}
-
 			break;
 		case "mkdir":
 			$dir_name = $_GET['name'];
@@ -601,6 +618,63 @@ function xml_footer() {
 	echo "</camogm_interface>\n";
 }
 
+/** Get a list of disk devices which have file system and can be mounted. This function
+ *  uses 'blkid' command from busybox.
+*/ 
+function get_mnt_dev()
+{
+	exec("blkid", $ids);
+	$i = 0;
+	foreach ($ids as $id) {
+		$devices[$i] = preg_replace('/: +.*/', "", $id);
+		if (preg_match('/(?<=TYPE=")[a-z0-9]+(?=")/', $id, $fs) == 1)
+			$fs_types[$i] = $fs[0];
+		else
+			$fs_types[$i] = "none";
+		$i++;
+	}
+	return array("devices" => $devices, "types" => $fs_types);
+}
+
+/** Get a list of devices whithout file system which can be used for raw disk storage from camogm. */
+function get_raw_dev()
+{
+	$j = 0;
+	$regexp = '/([0-9]+) +(sd[a-z0-9]+$)/';
+	$names = array();
+	$ret = get_mnt_dev();
+	$devices = $ret["devices"]; 
+	$types = $ret["types"];
+	exec("cat /proc/partitions", $partitions);
+
+	// get a list of all suitable partitions	
+	// the first two elements of an array are table header and empty line delimiter, skip them
+	for ($i = 2; $i < count($partitions); $i++) {
+		// select SATA devices only
+		if (preg_match($regexp, $partitions[$i], $name) == 1) {
+			$names[$name[2]] = $name[1];
+			$j++;
+		}
+	}
+	
+	// filter out partitions with file system 
+	$i = 0;
+	$raw_devices = array();
+	foreach ($names as $name => $size) {
+		$found = false;
+		foreach ($devices as $device) {
+			if (strpos($device, $name) !== false)
+				$found = true;
+		}
+		if ($found === false) {
+			// current partition is not found in the blkid list, add it to raw devices
+			$raw_devices["/dev/" . $name] = $size;
+			$i++;
+		}
+	}
+	
+	return $raw_devices;
+}
 ?>
 
 

@@ -41,6 +41,18 @@ void camogm_free_jpeg(void)
 {
 }
 
+/** Calculate the total length of current frame */
+int64_t camogm_get_jpeg_size(camogm_state *state)
+{
+	int64_t len = 0;
+
+	for (int i = 0; i < state->chunk_index - 1; i++) {
+		len += state->packetchunks[i + 1].bytes;
+	}
+
+	return len;
+}
+
 /**
  * @brief Called every time the JPEG files recording is started.
  *
@@ -135,6 +147,8 @@ int camogm_frame_jpeg(camogm_state *state)
 			D0(fprintf(debug_file, "Can not pass IO vector to driver: %s\n", strerror(errno)));
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
+		// update statistics
+		state->rawdev.total_rec_len += camogm_get_jpeg_size(state);
 	}
 
 	return 0;

@@ -117,28 +117,38 @@
 	 	
 	// format tab submit
 	if (isset($_POST['settings_format'])){
-		switch($_POST['container']){
-			case'ogm':
-				$container = $_POST['container'];
-				break;
-			case'jpg':
-				$container = $_POST['container'];
-				break;
-			case'mov':
-				$container = $_POST['container'];
-				break;
-			default:
-				$container = "mov";
-				break;
+		if (!isset($_POST['fastrec_checkbox'])) {
+			switch($_POST['container']){
+				case'ogm':
+					$container = $_POST['container'];
+					break;
+				case'jpg':
+					$container = $_POST['container'];
+					break;
+				case'mov':
+					$container = $_POST['container'];
+					break;
+				default:
+					$container = "mov";
+					break;
+			}
+			$rawdev_path = "";
+			$prefix = $_POST['prefix'];
+		} else {
+			// fast recording supports jpeg format only
+			$container = "jpeg";
+			$rawdev_path = $_POST['rawdev_path'];
+			$prefix = "";			
 		}
 		if ($camogm_running) {
 			// set format
 			fprintf($fcmd, "format=%s;\n", $container);
 
 			// set record directory
-			$prefix = $_POST['prefix'];
-			fprintf($fcmd, "prefix=%s;\n", $prefix);
-			setcookie("directory", $prefix); // save as cookie so we can get prefered record directory even after camera reboot
+			if ($prefix != "") {
+				fprintf($fcmd, "prefix=%s;\n", $prefix);
+				setcookie("directory", $prefix); // save as cookie so we can get prefered record directory even after camera reboot
+			}
 			
 			//set debug file
 			$debug = $_POST['debug'];
@@ -150,6 +160,11 @@
 			}	
 			else	
 				fprintf($fcmd, "debug;\ndebuglev=1;\n");
+			
+			if ($rawdev_path != "")
+				fprintf($fcmd, "rawdev_path=%s;\n", $rawdev_path);
+			else
+				fprintf($fcmd, "rawdev_path;\n");
 		}
 	}
 	
@@ -573,7 +588,7 @@
                     else
                     	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\"> JPEG Sequence<br />";
                     ?>
-                    <input id="fast_rec" type="checkbox" style="left:1px; top:3px; position:relative;" name="" value="" onChange="fast_rec_changed(this)"> Use fast recording 
+                    <input id="fast_rec" type="checkbox" style="left:1px; top:3px; position:relative;" name="fastrec_checkbox" value="checked" onChange="fast_rec_changed(this)" checked="checked"> Use fast recording 
                     <a href="#" onClick="help('fast_rec');"><img src="images/help.png"></a><br />
                     <br />
                     
@@ -594,7 +609,7 @@
 				  </select> 
                   <a href="#" onClick="help('debug');"><img src="images/help.png"></a><br />
                     <br />
-                  <input name="settings_format" type="submit" value="OK">
+                  <input id="submit_button" name="settings_format" type="submit" value="OK">
 				</form>
             </div>
             <div class="TabbedPanelsContent">
