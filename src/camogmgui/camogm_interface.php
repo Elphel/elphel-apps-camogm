@@ -349,6 +349,8 @@ else
 		case "listdevices":
 			exec ("cat /proc/partitions", $arr1);
 			exec ("cat /proc/mounts", $arr2);
+			$ret = get_mnt_dev();
+			$mnt_dev = $ret["devices"];
 			$j = 0;
 			// first two lines are header and empty  line separator, skip them
 			$i = 2;
@@ -372,33 +374,40 @@ else
 			}
 			$j = 0;
 			foreach ($partitions as $partition) {
-				echo "<item>";
-				echo "<partition>/dev/".$partition."</partition>";
-				echo "<size>".round($size[$j]/1024/1024, 2) ." GB</size>";
-				$j++;
-				$i = 0;
-				while($i < count($arr2)) {
-					if(strpos($arr2[$i], $partition))
-					{
-						$parts = explode(" ", $arr2[$i]);
-						$mountpoint = $parts[1];
-						$filesystem = $parts[2];
+				$include = false;
+				foreach ($mnt_dev as $dev) {
+					if (strpos($dev, $partition))
+						$include = true;
+				}
+				if ($include) {
+					echo "<item>";
+					echo "<partition>/dev/".$partition."</partition>";
+					echo "<size>".round($size[$j]/1024/1024, 2) ." GB</size>";
+					$j++;
+					$i = 0;
+					while($i < count($arr2)) {
+						if(strpos($arr2[$i], $partition))
+						{
+							$parts = explode(" ", $arr2[$i]);
+							$mountpoint = $parts[1];
+							$filesystem = $parts[2];
+						}
+						$i++;
 					}
-					$i++;
+					if ($mountpoint != "") {
+						echo "<mountpoint>".$mountpoint."</mountpoint>";
+						$mountpoint = "";
+					} else {
+						echo "<mountpoint>none</mountpoint>";
+					}
+					if ($filesystem != "") {
+						echo "<filesystem>".$filesystem."</filesystem>";
+						$filesystem = "";
+					} else {
+						echo "<filesystem>none</filesystem>";					
+					}
+					echo "</item>";
 				}
-				if ($mountpoint != "") {
-					echo "<mountpoint>".$mountpoint."</mountpoint>";
-					$mountpoint = "";
-				} else {
-					echo "<mountpoint>none</mountpoint>";
-				}
-				if ($filesystem != "") {
-					echo "<filesystem>".$filesystem."</filesystem>";
-					$filesystem = "";
-				} else {
-					echo "<filesystem>none</filesystem>";					
-				}
-				echo "</item>";
 			}
 			break;
 		case "list_raw_devices":
