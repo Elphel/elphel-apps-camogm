@@ -123,6 +123,7 @@ typedef struct {
 	uint64_t mmap_current_size;
 	uint64_t mmap_offset;
 	uint64_t file_start;
+	int64_t total_rec_len;
 	pthread_t tid;
 	volatile int thread_state;
 	unsigned char *disk_mmap;

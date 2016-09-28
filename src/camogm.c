@@ -942,7 +942,7 @@ void  camogm_set_start_after_timestamp(camogm_state *state, double d)
  */
 void  camogm_status(camogm_state *state, char * fn, int xml)
 {
-	int _len = 0;
+	int64_t _len = 0;
 	int _dur = 0, _udur = 0, _dur_raw, _udur_raw;
 	FILE* f;
 	char *_state, *_output_format, *_using_exif, *_using_global_pointer, *_compressor_state[SENSOR_PORTS];
@@ -999,8 +999,10 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			return;
 		}
 	}
-	if (state->vf) _len = ftell(state->vf);                                 // for ogm
-	else if ((state->ivf) >= 0) _len = lseek(state->ivf, 0, SEEK_CUR);      //for mov
+	if (state->rawdev_op)
+		_len = state->rawdev.total_rec_len;
+	else if (state->vf) _len = (int64_t)ftell(state->vf);                            // for ogm
+	else if ((state->ivf) >= 0) _len = (int64_t)lseek(state->ivf, 0, SEEK_CUR);      //for mov
 	switch (state->prog_state) {
 	case STATE_STOPPED:
 		_state = "stopped";
@@ -1036,7 +1038,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <frame_number>%d</frame_number>\n" \
 			"  <start_after_timestamp>%f</start_after_timestamp>\n"	\
 			"  <file_duration>%d.%06d</file_duration>\n" \
-			"  <file_length>%d</file_length>\n" \
+			"  <file_length>%" PRId64 "</file_length>\n" \
 			"  <frames_skip_left>%d</frames_skip_left>\n" \
 			"  <seconds_skip_left>%d</seconds_skip_left>\n"	\
 			"  <frame_width>%d</frame_width>\n" \
@@ -1118,7 +1120,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "frame              \t%d\n",        state->frameno);
 		fprintf(f, "start_after_timestamp \t%f\n",     state->start_after_timestamp);
 		fprintf(f, "file duration      \t%d.%06d sec\n", _dur, _udur);
-		fprintf(f, "file length        \t%d B\n",      _len);
+		fprintf(f, "file length        \t%" PRId64 " B\n", _len);
 		fprintf(f, "width              \t%d (0x%x)\n", state->width, state->width);
 		fprintf(f, "height             \t%d (0x%x)\n", state->height, state->height);
 		fprintf(f, "\n");
