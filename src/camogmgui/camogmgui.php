@@ -277,6 +277,7 @@
 		$xml_frame_number = substr($logdata[0]['frame_number'], 0, strlen($logdata[0]['frame_number']));
 		$xml_res_x = substr($logdata[0]['frame_width'], 0, strlen($logdata[0]['frame_width']));
 		$xml_res_y = substr($logdata[0]['frame_height'], 0, strlen($logdata[0]['frame_height']));
+		$xml_rawdev_path = substr($logdata[0]['raw_device_path'], 1, strlen($logdata[0]['raw_device_path']) - 2);
 		
 		// Advanced Settings
 		$xml_timescale = substr($logdata[0]['timescale'], 0, strlen($logdata[0]['timescale']));
@@ -587,8 +588,13 @@
                     	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\" checked> JPEG Sequence<br />";
                     else
                     	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\"> JPEG Sequence<br />";
+                    if ($xml_rawdev_path != "") {
+                    	$fastrec_checked = "checked=\"checked\"";
+                    } else {
+                    	$fastrec_checked = "";
+                    }
                     ?>
-                    <input id="fast_rec" type="checkbox" style="left:1px; top:3px; position:relative;" name="fastrec_checkbox" value="checked" onChange="fast_rec_changed(this)" checked="checked"> Use fast recording 
+                    <input id="fast_rec" type="checkbox" style="left:1px; top:3px; position:relative;" name="fastrec_checkbox" value="checked" onChange="fast_rec_changed(this)" <?php echo $fastrec_checked; ?>> Use fast recording 
                     <a href="#" onClick="help('fast_rec');"><img src="images/help.png"></a><br />
                     <br />
                     
