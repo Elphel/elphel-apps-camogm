@@ -128,6 +128,7 @@ typedef struct {
 	volatile int thread_state;
 	unsigned char *disk_mmap;
 	int sysfs_fd;
+	char state_path[ELPHEL_PATH_MAX];
 } rawdev_buffer;
 
 /**

@@ -31,6 +31,134 @@
 #include <elphel/ahci_cmd.h>
 
 #include "camogm_jpeg.h"
+#include "camogm_read.h"
+
+/** State file record format. It includes device path in /dev, starting, current and ending LBAs */
+#define STATE_FILE_FORMAT         "%s\t%llu\t%llu\t%llu\n"
+
+/** Get starting and endign LBAs of the partition specified as raw device buffer */
+static int get_disk_range(struct range *range)
+{
+	FILE *f;
+
+	// get raw device buffer starting postion on disk
+	f = fopen(SYSFS_AHCI_LBA_START, "r");
+	if (f == NULL) {
+		return -1;
+	}
+	fscanf(f, "%llu\n", &range->from);
+	fclose(f);
+
+	// get raw device buffer ending postion on disk
+	f = fopen(SYSFS_AHCI_LBA_END, "r");
+	if (f == NULL) {
+		return -1;
+	}
+	fscanf(f, "%llu\n", &range->to);
+	fclose(f);
+
+	return 0;
+}
+
+/** Get write pointer from a file. This functions check not only the name of a partition, but
+ * its geometry as well */
+static int find_state(FILE *f, uint64_t *pos, const rawdev_buffer *rawdev)
+{
+	size_t len;
+	uint64_t start_pos, curr_pos, end_pos;
+	struct range range;
+	char buff[ELPHEL_PATH_MAX];
+	char dev_name[ELPHEL_PATH_MAX];
+
+	if (f == NULL || pos == NULL)
+		return -1;
+	if (get_disk_range(&range) != 0) {
+		return -1;
+	}
+
+	// skip first line containing file header
+	fgets(buff, ELPHEL_PATH_MAX, f);
+	while (fgets(buff, ELPHEL_PATH_MAX, f) != NULL) {
+		sscanf(buff, STATE_FILE_FORMAT, dev_name, &start_pos, &curr_pos, &end_pos);
+		len = strlen(dev_name);
+		if (strncmp(rawdev->rawdev_path, dev_name, len) == 0 &&
+				range.from == start_pos &&
+				range.to == end_pos) {
+			*pos = curr_pos;
+			break;
+		}
+	}
+
+	return 0;
+}
+
+/** Read state from file and restore disk write pointer */
+static int open_state_file(const rawdev_buffer *rawdev)
+{
+	int fd, len;
+	FILE *f;
+	int ret = 0;
+	uint64_t curr_pos;
+	char buff[SMALL_BUFF_LEN] = {0};
+
+	if (strlen(rawdev->state_path) == 0) {
+		return ret;
+	}
+
+	f = fopen(rawdev->state_path, "r");
+	if (f != NULL) {
+		if (find_state(f, &curr_pos, rawdev) != -1) {
+			fd = open(SYSFS_AHCI_LBA_CURRENT, O_WRONLY);
+			if (fd >= 0) {
+				len = snprintf(buff, SMALL_BUFF_LEN, "%llu", curr_pos);
+				write(fd, buff, len + 1);
+				close(fd);
+			} else {
+				ret = -1;
+			}
+		}
+		fclose(f);
+	} else {
+		ret = -1;
+	}
+
+	return ret;
+}
+
+/** Save current position of the disk write pointer */
+static int save_state_file(const rawdev_buffer *rawdev)
+{
+	int ret = 0;
+	FILE *f;
+	struct range range;
+	uint64_t curr_pos;
+
+	if (strlen(rawdev->state_path) == 0) {
+		return ret;
+	}
+	if (get_disk_range(&range) != 0) {
+		return -1;
+	}
+
+	// get raw device buffer current postion on disk, this position indicates where recording has stopped
+	f = fopen(SYSFS_AHCI_LBA_CURRENT, "r");
+	if (f == NULL) {
+		return -1;
+	}
+	fscanf(f, "%llu\n", &curr_pos);
+	fclose(f);
+
+	// save pointers to a regular file
+	f = fopen(rawdev->state_path, "w");
+	if (f == NULL) {
+		return -1;
+	}
+	fprintf(f, "Device\t\tStart LBA\tCurrent LBA\tEnd LBA\n");
+	fprintf(f, STATE_FILE_FORMAT, rawdev->rawdev_path, range.from, curr_pos, range.to);
+	fclose(f);
+
+	return ret;
+}
 
 int camogm_init_jpeg(camogm_state *state)
 {
@@ -82,13 +210,15 @@ int camogm_start_jpeg(camogm_state *state)
 			}
 		}
 	} else {
-		if (state->rawdev_op) {
-			state->rawdev.sysfs_fd = open(SYSFS_AHCI_WRITE, O_WRONLY);
-			fprintf(debug_file, "Open sysfs file: %s\n", SYSFS_AHCI_WRITE);
-			if (state->rawdev.sysfs_fd < 0) {
-				D0(fprintf(debug_file, "Error opening sysfs file: %s\n", SYSFS_AHCI_WRITE));
-				return -CAMOGM_FRAME_FILE_ERR;
-			}
+		if (open_state_file(&state->rawdev) != 0) {
+			D0(fprintf(debug_file, "Could not set write pointer via sysfs, recording will start from the beginning of partition: "
+					"%s\n", state->rawdev.rawdev_path));
+		}
+		state->rawdev.sysfs_fd = open(SYSFS_AHCI_WRITE, O_WRONLY);
+		D6(fprintf(debug_file, "Open sysfs file: %s\n", SYSFS_AHCI_WRITE));
+		if (state->rawdev.sysfs_fd < 0) {
+			D0(fprintf(debug_file, "Error opening sysfs file: %s\n", SYSFS_AHCI_WRITE));
+			return -CAMOGM_FRAME_FILE_ERR;
 		}
 	}
 
@@ -171,10 +301,12 @@ int camogm_end_jpeg(camogm_state *state)
 		if (write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data)) < 0) {
 			D0(fprintf(debug_file, "Error sending 'finish' command to driver\n"));
 		}
-		D0(fprintf(debug_file, "Closing sysfs file %s\n", SYSFS_AHCI_WRITE));
+		D6(fprintf(debug_file, "Closing sysfs file %s\n", SYSFS_AHCI_WRITE));
 		ret = close(state->rawdev.sysfs_fd);
 		if (ret == -1)
 			D0(fprintf(debug_file, "Error: %s\n", strerror(errno)));
+
+		save_state_file(&state->rawdev);
 	}
 	return ret;
 }

@@ -1872,9 +1872,9 @@ int main(int argc, char *argv[])
 	const char usage[] =   "This program allows recording of the video/images acquired by Elphel camera to the storage media.\n" \
 			     "It is designed to run in the background and accept commands through a named pipe or a socket.\n\n" \
 			     "Usage:\n\n" \
-			     "%s -n <named_pipe_name> -p <port_number>\n\n"	\
+			     "%s -n <named_pipe_name> -p <port_number> [-s state_file_name]\n\n"	\
 			     "i.e.:\n\n" \
-			     "%s -n /var/state/camogm_cmd -p 1234\n\n" \
+			     "%s -n /var/state/camogm_cmd -p 1234 -s /mnt/sda1/write_pos\n\n" \
 			     "When the program is running you may send commands by writing strings to the command file\n" \
 			     "(/var/state/camogm_cmd in the example above) or to the socket. The complete list of available commands is available\n" \
 			     "on Elphel Wiki (http://wiki.elphel.com/index.php?title=Camogm), here is the example of usage\n" \
@@ -1890,13 +1890,15 @@ int main(int argc, char *argv[])
 	int ret;
 	int opt;
 	uint16_t port_num = 0;
+	size_t str_len;
 	char pipe_name_str[ELPHEL_PATH_MAX] = {0};
+	char state_name_str[ELPHEL_PATH_MAX] = {0};
 
 	if ((argc < 5) || (argv[1][1] == '-')) {
 		printf(usage, argv[0], argv[0]);
 		return EXIT_SUCCESS;
 	}
-	while ((opt = getopt(argc, argv, "n:p:h")) != -1) {
+	while ((opt = getopt(argc, argv, "n:p:s:h")) != -1) {
 		switch (opt) {
 		case 'n':
 			strncpy(pipe_name_str, (const char *)optarg, ELPHEL_PATH_MAX - 1);
@@ -1907,6 +1909,9 @@ int main(int argc, char *argv[])
 		case 'h':
 			printf(usage, argv[0], argv[0]);
 			return EXIT_SUCCESS;
+		case 's':
+			strncpy(state_name_str, (const char *)optarg, ELPHEL_PATH_MAX - 1);
+			break;
 		}
 	}
 
@@ -1926,6 +1931,10 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 	sstate.rawdev.thread_state = STATE_RUNNING;
+	str_len = strlen(state_name_str);
+	if (str_len > 0) {
+		strncpy(&sstate.rawdev.state_path, state_name_str, str_len + 1);
+	}
 
 	ret = listener_loop(&sstate);
 
