@@ -618,36 +618,15 @@ function xml_footer() {
 	echo "</camogm_interface>\n";
 }
 
-/** Get a list of disk devices which have file system and can be mounted. This function
- *  uses 'blkid' command from busybox.
-*/ 
-function get_mnt_dev()
+/** Get a list of suitable partitions. The list will contain SATA devices only and
+ * will have the following format: "name" => "size_in_blocks".
+ */
+function get_partitions()
 {
-	exec("blkid", $ids);
-	$i = 0;
-	foreach ($ids as $id) {
-		$devices[$i] = preg_replace('/: +.*/', "", $id);
-		if (preg_match('/(?<=TYPE=")[a-z0-9]+(?=")/', $id, $fs) == 1)
-			$fs_types[$i] = $fs[0];
-		else
-			$fs_types[$i] = "none";
-		$i++;
-	}
-	return array("devices" => $devices, "types" => $fs_types);
-}
-
-/** Get a list of devices whithout file system which can be used for raw disk storage from camogm. */
-function get_raw_dev()
-{
-	$j = 0;
-	$regexp = '/([0-9]+) +(sd[a-z0-9]+$)/';
 	$names = array();
-	$ret = get_mnt_dev();
-	$devices = $ret["devices"]; 
-	$types = $ret["types"];
+	$regexp = '/([0-9]+) +(sd[a-z0-9]+$)/';
 	exec("cat /proc/partitions", $partitions);
 
-	// get a list of all suitable partitions	
 	// the first two elements of an array are table header and empty line delimiter, skip them
 	for ($i = 2; $i < count($partitions); $i++) {
 		// select SATA devices only
@@ -656,6 +635,41 @@ function get_raw_dev()
 			$j++;
 		}
 	}
+	return $names;
+}
+
+/** Get a list of disk devices which have file system and can be mounted. This function
+ *  uses 'blkid' command from busybox.
+ */ 
+function get_mnt_dev()
+{
+	$partitions = get_partitions();
+	foreach ($partitions as $partition => $size) {
+		$res = array();
+		$dev = "/dev/" . $partition;
+		exec("blkid " . $dev, $res);
+		if (!empty($res)) {
+			$devices[$i] = preg_replace('/: +.*/', "", $res[0]);
+			if (preg_match('/(?<=TYPE=")[a-z0-9]+(?=")/', $res[0], $fs) == 1)
+				$fs_types[$i] = $fs[0];
+			else
+				$fs_types[$i] = "none";
+			$i++;
+		}
+	}
+	
+	return array("devices" => $devices, "types" => $fs_types);
+}
+
+/** Get a list of devices whithout file system which can be used for raw disk storage from camogm. */
+function get_raw_dev()
+{
+	$j = 0;
+	$ret = get_mnt_dev();
+	$devices = $ret["devices"]; 
+	$types = $ret["types"];
+
+	$names = get_partitions();
 	
 	// filter out partitions with file system 
 	$i = 0;
