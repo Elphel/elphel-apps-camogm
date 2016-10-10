@@ -35,8 +35,8 @@ function init() {
 	}
 }
 function reload() {
+	// this will set fast recording mode or revert to 'mov' format mode if no suitable partitions available
 	makeRequest('camogm_interface.php', '?cmd=run_camogm');
-	setTimeout('makeRequest("camogm_interface.php", "?cmd=setmov")', 500); // set MOV as default container format
 }
 function mount_hdd(callback) {
 	makeRequest('camogm_interface.php','?cmd=mount',callback);
@@ -561,8 +561,8 @@ function help(caller) {
 			alert("The higher the debug-level the more information is written to the debug file (it may slow down camogm and cause it to drop frames even if it could handle it with no/lower debug-level output).")
 			break;
 		case 'fast_rec':
-			alert("Enable or disable fast recoding feature. The disk drive should have at least one partition without file system or" +
-					"any data on it to enable this feature.");
+			alert("Enable or disable fast recoding feature. The disk drive should have at least one partition without file system or " +
+					"any data on it to enable this feature. All subsequent data will be recorded to this partition with faster speed.");
 	}
 }
 function format_changed(parent) {

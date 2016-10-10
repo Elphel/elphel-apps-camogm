@@ -71,7 +71,9 @@ $cmd = $_GET['cmd'];
 $debug = $_GET['debug'];
 $debuglev = $_GET['debuglev'];
 $cmd_pipe = "/var/state/camogm_cmd";
+$cmd_state = "/var/state/camogm.state";
 $cmd_port = "3456";
+$default_state = "/home/root/camogm.disk";
 $start_str = "camogm -n " . $cmd_pipe . " -p " . $cmd_port;
 
 if ($cmd == "run_camogm")
@@ -86,25 +88,40 @@ if ($cmd == "run_camogm")
 	$p = (array_filter($arr, "low_daemon"));
 	$check = implode("<br />",$p);
 	
+	$state_file = get_state_path();
+	$start_str = $start_str . " -s " . $state_file;
 	if (strstr($check, $start_str))
 		$camogm_running = true;
 	else
 		$camogm_running = false;
 	if(!$camogm_running) {
-
-		exec("rm /var/state/camogm.state");
+		exec("rm " . $cmd_pipe);
+		exec("rm " . $cmd_state);
 
 		if (!$debug) exec($start_str.' > /dev/null 2>&1 &'); // "> /dev/null 2>&1 &" makes sure it is really really run as a background job that does not wait for input
 		else         exec($start_str.$debug.' 2>&1 &');
 
 		for($i=0;$i<5;$i++) {
-		      if (is_file("/var/state/camogm.state")) break;
-		      sleep(1);
+			if (file_exists($cmd_pipe))
+				break;
+			sleep(1);
 		}
 
 		if ($debug) {
 		    $fcmd = fopen($cmd_pipe, "w");
 		    fprintf($fcmd,"debuglev=$debuglev");
+		    fclose($fcmd);
+		}
+		
+		// set fast recording mode if there is at least one suitable partition or revert to legacy 'mov' mode
+		$partitions = get_raw_dev();
+		if (!empty($partitions)) {
+			reset($partitions);
+			$cmd_str = 'format=jpeg;' . 'rawdev_path=' . key($partitions) . ';';
+			write_cmd_pipe($cmd_str);
+		} else {
+			$cmd_str = 'format=mov;save_gp=1;';
+			write_cmd_pipe($cmd_str);
 		}
 	}
 }
@@ -689,6 +706,34 @@ function get_raw_dev()
 	
 	return $raw_devices;
 }
+
+/** Check if camera was booted from NAND or SD card and modify the path where camogm will save
+ * disk write pointer. */
+function get_state_path()
+{
+	global $default_state;
+	$prefix = '/tmp/rootfs.ro';
+	
+	if (file_exists($prefix)) {
+		$ret = $prefix . $default_state;
+	} else {
+		$ret = $default_state;
+	}
+
+	return $ret;
+}
+
+/** Write command to camogm command pipe */
+function write_cmd_pipe($cmd_str)
+{
+	global $cmd_pipe;
+	
+	$fcmd = fopen($cmd_pipe, 'w');
+	if ($fcmd !== false) {
+		fprintf($fcmd, $cmd_str);
+		fflush($fcmd);
+		fclose($fcmd);
+	}
+}
+
 ?>
-
-

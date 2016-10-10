@@ -589,7 +589,7 @@
                     else
                     	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\"> JPEG Sequence<br />";
                     if ($xml_rawdev_path != "") {
-                    	$fastrec_checked = "checked=\"checked\"";
+                    	$fastrec_checked = "checked";
                     } else {
                     	$fastrec_checked = "";
                     }
