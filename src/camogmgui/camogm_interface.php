@@ -306,6 +306,24 @@ else if ($cmd=="list") {
 	echo "</".$cmd.">";
 	xml_footer();
 }
+else if ($cmd=="list_raw_devices"){
+        $devices = get_raw_dev();
+        foreach ($devices as $device => $size) {
+                echo "<item>";
+                echo "<raw_device>" . $device . "</raw_device>";
+                echo "<size>" . round($size / 1048576, 2) . "</size>";
+                echo "</item>";
+        }
+}
+else if ($cmd=="list_partitions"){
+        $partitions = get_partitions();
+        foreach ($partitions as $device=>$size) {
+                echo "<item>";
+                echo "  <device>" . $device . "</device>";
+                echo "  <size>" . round($size / 1048576, 2) . "</size>";
+                echo "</item>";
+        }
+}
 else
 {
 	$fcmd = fopen($cmd_pipe, "w");
@@ -425,15 +443,6 @@ else
 					}
 					echo "</item>";
 				}
-			}
-			break;
-		case "list_raw_devices":
-			$devices = get_raw_dev();
-			foreach ($devices as $device => $size) {
-				echo "<item>";
-				echo "<raw_device>" . $device . "</raw_device>";
-				echo "<size>" . round($size / 1048576, 2) . "</size>";
-				echo "</item>";
 			}
 			break;
 		case "mkdir":
