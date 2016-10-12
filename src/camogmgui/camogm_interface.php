@@ -225,57 +225,62 @@ else if (($cmd=="umount") || ($cmd=="unmount")) { // unmount media like HDD
 }
 else if ($cmd=="set_quality") {
 	$quality = $_GET['quality'];
+	$sensor_port = $_GET['sensor_port'];
 
-	$thisFrameNumber=elphel_get_frame();
-	elphel_set_P_value(ELPHEL_QUALITY,$quality+0,$thisFrameNumber);
+	$thisFrameNumber=elphel_get_frame($sensor_port);
+	elphel_set_P_value($sensor_port,ELPHEL_QUALITY,$quality+0,$thisFrameNumber);
 
 	//$thisFrameNumber=elphel_get_frame();
 	//elphel_wait_frame_abs($thisFrameNumber+3);
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
-	echo elphel_get_P_value(ELPHEL_QUALITY);
+	echo elphel_get_P_value($sensor_port,ELPHEL_QUALITY);
 	echo "</".$cmd.">";
 	xml_footer();
 	
 }
 else if ($cmd=="get_quality") {
+        $sensor_port = $_GET['sensor_port'];
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
-	echo elphel_get_P_value(ELPHEL_QUALITY);
+	echo elphel_get_P_value($sensor_port,ELPHEL_QUALITY);
 	echo "</".$cmd.">";
 	xml_footer();
 }
 else if ($cmd=="set_parameter") {
 	$pname  = $_GET['pname'];
 	$pvalue = $_GET['pvalue'];
+	$sensor_port = $_GET['sensor_port'];
 
-	$thisFrameNumber=elphel_get_frame();
+	$thisFrameNumber=elphel_get_frame($sensor_port);
 
 	$constant=constant("ELPHEL_$pname");
-	elphel_set_P_value($constant,$pvalue+0,$thisFrameNumber);
+	elphel_set_P_value($sensor_port,$constant,$pvalue+0,$thisFrameNumber);
 
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
-	echo elphel_get_P_value($constant);
+	echo elphel_get_P_value($sensor_port,$constant);
 	echo "</".$cmd.">";
 	xml_footer();
 }
 else if ($cmd=="get_parameter") {
 	$pname  = $_GET['pname'];
+	$sensor_port = $_GET['sensor_port'];
 	$constant=constant("ELPHEL_$pname");
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
-	echo elphel_get_P_value($constant);
+	echo elphel_get_P_value($sensor_port,$constant);
 	echo "</".$cmd.">";
 	xml_footer();
 }
 else if ($cmd=="set_skip") {
 	$skipping_mask = $_GET['skip_mask'];
-	exec("fpcf -w 4d $skipping_mask");
+	//!!!sub!!!
+	//exec("fpcf -w 4d $skipping_mask");
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
