@@ -710,8 +710,7 @@ function get_raw_dev()
 	// filter out partitions with file system 
 	$i = 0;
 	$raw_devices = array();
-	print_r($names);
-	print_r($devices);
+
 	foreach ($names as $name => $size) {
 		$found = false;
 		foreach ($devices as $device) {
@@ -733,9 +732,6 @@ function get_raw_dev()
                 }
             }
 	}
-	
-	print_r($raw_devices);
-	
 	return $raw_devices;
 }
 
