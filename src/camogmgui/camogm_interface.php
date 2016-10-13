@@ -678,6 +678,8 @@ function get_partitions()
 function get_mnt_dev()
 {
 	$partitions = get_partitions();
+	$devices = array();
+	$fs_types = array();
 	foreach ($partitions as $partition => $size) {
 		$res = array();
 		$dev = "/dev/" . $partition;
@@ -708,6 +710,8 @@ function get_raw_dev()
 	// filter out partitions with file system 
 	$i = 0;
 	$raw_devices = array();
+	print_r($names);
+	print_r($devices);
 	foreach ($names as $name => $size) {
 		$found = false;
 		foreach ($devices as $device) {
@@ -720,6 +724,17 @@ function get_raw_dev()
 			$i++;
 		}
 	}
+	
+	//special case
+	if (count($raw_devices)>1) {
+            foreach($raw_devices as $k=>$v){
+                if (preg_match('/sd[a-z][0-9]/',$k)==0) {
+                    unset($raw_devices[$k]);
+                }
+            }
+	}
+	
+	print_r($raw_devices);
 	
 	return $raw_devices;
 }
