@@ -629,6 +629,9 @@ else
 			exec('echo "format=jpg;" > /var/state/camogm_cmd'); // Set quicktime *.mov as default format after startup.
 			exec('echo "save_gp=1;\n" > /var/state/camogm_cmd'); // enable calculation of free/used buffer space
 			break;
+                case "setrawdevpath":
+                        $rawdev_path = $_GET['path'];
+                        exec('echo "rawdev_path='.$rawdev_path.';" > /var/state/camogm_cmd');
 		case "gettime":
 			echo elphel_get_fpga_time();
 			break;
