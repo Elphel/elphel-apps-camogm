@@ -175,10 +175,14 @@ else if ($cmd=="get_hdd_space"){
 		$mountpoint = $_GET['mountpoint'];
 	else
 		$mountpoint = '/mnt/sda1';
+		
+        if (is_dir($mountpoint)) $res = disk_free_space($mountpoint);
+        else                     $res = 0;
+		
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
-	echo disk_free_space($mountpoint);
+	echo $res;
 	echo "</".$cmd.">";
 	xml_footer();
 
