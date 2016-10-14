@@ -90,16 +90,18 @@ if ($cmd == "run_camogm")
 	
 	$state_file = get_state_path();
 	$start_str = $start_str . " -s " . $state_file;
+	
 	if (strstr($check, $start_str))
 		$camogm_running = true;
 	else
 		$camogm_running = false;
+		
 	if(!$camogm_running) {
 		exec("rm " . $cmd_pipe);
 		exec("rm " . $cmd_state);
 
 		if (!$debug) exec($start_str.' > /dev/null 2>&1 &'); // "> /dev/null 2>&1 &" makes sure it is really really run as a background job that does not wait for input
-		else         exec($start_str.$debug.' 2>&1 &');
+		else         exec($start_str.$debug.' > dev/null 2>&1 &');
 
 		for($i=0;$i<5;$i++) {
 			if (file_exists($cmd_pipe))
@@ -232,7 +234,7 @@ else if ($cmd=="set_quality") {
 	$sensor_port = $_GET['sensor_port'];
 
 	$thisFrameNumber=elphel_get_frame($sensor_port);
-	elphel_set_P_value($sensor_port,ELPHEL_QUALITY,$quality+0,$thisFrameNumber);
+	elphel_set_P_value($sensor_port,ELPHEL_QUALITY,$quality+0,$thisFrameNumber+3);
 
 	//$thisFrameNumber=elphel_get_frame();
 	//elphel_wait_frame_abs($thisFrameNumber+3);
@@ -258,10 +260,11 @@ else if ($cmd=="set_parameter") {
 	$pvalue = $_GET['pvalue'];
 	$sensor_port = $_GET['sensor_port'];
 
+	//elphel_skip_frames($sensor_port,1);
 	$thisFrameNumber=elphel_get_frame($sensor_port);
 
 	$constant=constant("ELPHEL_$pname");
-	elphel_set_P_value($sensor_port,$constant,$pvalue+0,$thisFrameNumber);
+	elphel_set_P_value($sensor_port,$constant,$pvalue+0,$thisFrameNumber+3);
 
 	xml_header();
 	echo "<command>".$cmd."</command>";
@@ -636,6 +639,7 @@ else
                 case "setrawdevpath":
                         $rawdev_path = $_GET['path'];
                         exec('echo "rawdev_path='.$rawdev_path.';" > /var/state/camogm_cmd');
+                        break;
 		case "gettime":
 			echo elphel_get_fpga_time();
 			break;
