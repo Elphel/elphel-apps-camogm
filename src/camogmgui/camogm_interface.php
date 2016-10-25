@@ -319,13 +319,19 @@ else if ($cmd=="list") {
 	xml_footer();
 }
 else if ($cmd=="list_raw_devices"){
-        $devices = get_raw_dev();
-        foreach ($devices as $device => $size) {
-                echo "<item>";
-                echo "<raw_device>" . $device . "</raw_device>";
-                echo "<size>" . round($size / 1048576, 2) . "</size>";
-                echo "</item>";
-        }
+	$devices = get_raw_dev();
+
+	xml_header();
+	echo "<command>".$cmd."</command>";
+	echo "<".$cmd.">";
+	foreach ($devices as $device => $size) {
+			echo "<item>";
+			echo "<raw_device>" . $device . "</raw_device>";
+			echo "<size>" . round($size / 1048576, 2) . "</size>";
+			echo "</item>";
+	}
+	echo "</".$cmd.">";
+	xml_footer();
 }
 else if ($cmd=="list_partitions"){
         $partitions = get_partitions();
