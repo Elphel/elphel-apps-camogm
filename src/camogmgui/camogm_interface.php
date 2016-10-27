@@ -262,9 +262,15 @@ else if ($cmd=="set_parameter") {
 
 	//elphel_skip_frames($sensor_port,1);
 	$thisFrameNumber=elphel_get_frame($sensor_port);
+	
+	if (isset($_GET['pframe'])) {
+		$pframe = intval($_GET['pframe']);
+	} else {
+		$pframe = 3;
+	}
 
 	$constant=constant("ELPHEL_$pname");
-	elphel_set_P_value($sensor_port,$constant,$pvalue+0,$thisFrameNumber+3);
+	elphel_set_P_value($sensor_port,$constant,$pvalue+0,$thisFrameNumber+$pframe);
 
 	xml_header();
 	echo "<command>".$cmd."</command>";
