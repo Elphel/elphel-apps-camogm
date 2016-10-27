@@ -155,6 +155,8 @@ static int save_state_file(const rawdev_buffer *rawdev)
 	}
 	fprintf(f, "Device\t\tStart LBA\tCurrent LBA\tEnd LBA\n");
 	fprintf(f, STATE_FILE_FORMAT, rawdev->rawdev_path, range.from, curr_pos, range.to);
+	fflush(f);
+	fsync(fileno(f));
 	fclose(f);
 
 	return ret;
