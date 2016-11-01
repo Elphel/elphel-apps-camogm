@@ -953,15 +953,19 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	int _sec_skip = 0;
 	char *_kml_enable, *_kml_used, *_kml_height_mode;
 	unsigned int _percent_done;
+	off_t save_p;
 
 	_kml_enable =      state->kml_enable ? "yes" : "no";
 	_kml_used =        state->kml_used ? "yes" : "no";
 	_kml_height_mode = state->kml_height_mode ? "GPS altitude" : "map ground level"; // 1 - actual, 0 - ground
 
 	for (int chn = 0; chn < SENSOR_PORTS; chn++) {
-		_b_free[chn] = getGPValue(chn, G_FREECIRCBUF);
-		_b_used[chn] = getGPValue(chn, G_CIRCBUFSIZE) - getGPValue(state->port_num, G_FREECIRCBUF);
 		_b_size[chn] = getGPValue(chn, G_FRAME_SIZE);
+		save_p = lseek(state->fd_circ[chn], 0, SEEK_CUR);
+		_b_free[chn] = lseek(state->fd_circ[chn], LSEEK_CIRC_FREE, SEEK_END);
+		lseek(state->fd_circ[chn], save_p, SEEK_SET);
+		_b_used[chn] = lseek(state->fd_circ[chn], LSEEK_CIRC_USED, SEEK_END);
+		lseek(state->fd_circ[chn], save_p, SEEK_SET);
 		_compressor_state[chn] = (getGPValue(chn, P_COMPRESSOR_RUN) == 2) ? "running" : "stopped";
 		if (state->frames_skip > 0)
 			_frames_remain[chn] = state->frames_skip_left[chn];
@@ -1097,6 +1101,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"\t\t<buffer_free>%d</buffer_free>\n" \
 			"\t\t<buffer_used>%d</buffer_used>\n" \
 			"\t\t<circbuf_rp>%d</circbuf_rp>\n" \
+			"\t\t<circbuf_size>%d</circbuf_size>\n" \
 			"\t</sensor_port_%d>\n",
 				chn,
 				_active,
@@ -1110,6 +1115,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 				_b_free[chn],
 				_b_used[chn],
 				state->cirbuf_rp[chn],
+				state->circ_buff_size[chn],
 				chn
 				);
 		}
@@ -1173,6 +1179,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			fprintf(f, "buffer free        \t%d\n",    _b_free[chn]);
 			fprintf(f, "buffer used        \t%d\n",    _b_used[chn]);
 			fprintf(f, "circbuf_rp         \t%d (0x%x)\n", state->cirbuf_rp[chn], state->cirbuf_rp[chn]);
+			fprintf(f, "circbuf_size       \t%d\n",    state->circ_buff_size[chn]);
 			fprintf(f, "\n");
 		}
 	}
@@ -1751,19 +1758,28 @@ unsigned int select_port(camogm_state *state)
 	off_t file_pos;
 	off_t min_sz = -1;
 
+	if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
+		D6(fprintf(debug_file, "Selecting sensor port, buffer free size: "));
 	for (int i = 0; i < SENSOR_PORTS; i++) {
 		if (is_chn_active(state, i)) {
 			file_pos = lseek(state->fd_circ[i], 0, SEEK_CUR);
 			if (file_pos != -EINVAL) {
 				free_sz = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
 				lseek(state->fd_circ[i], file_pos, SEEK_SET);
+				if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
+					D6(fprintf(debug_file, "port %i = %i, ", i, free_sz));
 				if ((free_sz < min_sz && free_sz >= 0) || min_sz == -1) {
 					min_sz = free_sz;
 					chn = i;
 				}
 			}
+		} else {
+			if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
+				D6(fprintf(debug_file, "port %i is inactive, ", i));
 		}
 	}
+	if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
+		D6(fprintf(debug_file, "selected port: %i\n", chn));
 
 	return chn;
 }
