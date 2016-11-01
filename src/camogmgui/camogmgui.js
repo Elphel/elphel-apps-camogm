@@ -422,14 +422,33 @@ function process_recording(xmldoc) {
 	//document.getElementById('ajax_fps').innerHTML = Math.round(frame_number/file_duration*100)/100 + " fps";	
 	document.getElementById('ajax_file_name').innerHTML = file_name.substring(1, file_name.length-1);	
 	
-	//Update Buffer Bar
-	var buffer_free = xmldoc.getElementsByTagName('buffer_free')[0].firstChild.data;
-	var buffer_used = xmldoc.getElementsByTagName('buffer_used')[0].firstChild.data;
-	//var buffer_rp = xmldoc.getElementsByTagName('circbuf_rp')[0].firstChild.data; // buffer read pointer
-	
-	//var buffer_filled = buffer_used - buffer_rp;
-	document.getElementById('buffer_free').style.width = Math.round(buffer_free / 19791872 * 300);
-	document.getElementById('buffer_used').style.width = Math.round(buffer_used / 19791872 * 300);
+	// update buffer size bars
+	var element;
+	var free_sz, used_sz, width;
+	var min_text_width = 40;
+	var buffers_free = xmldoc.getElementsByTagName('buffer_free');
+	var buffers_used = xmldoc.getElementsByTagName('buffer_used');
+	var buffer_size;
+	// this variable is injected into web page from camogmgui.php
+	var sensor_ports = parseInt(document.getElementById('sensor_ports').textContent, 10);
+	var max_bar_len = 370;
+	for (var i = 0; i < sensor_ports; i++) {
+		free_sz = buffers_free[i].firstChild.data;
+		used_sz = buffers_used[i].firstChild.data;
+		buffer_size = parseInt(free_sz, 10) + parseInt(used_sz, 10);
+		console.log('buffer_size: ' + buffer_size + ' free_size: ' + free_sz + ' used_size:' + used_sz);
+		id = "buffer_free_" + i.toString();
+		width = Math.round(free_sz / buffer_size * max_bar_len);
+		document.getElementById(id).style.width = width;
+		element = document.getElementById('buffer_free_text_' + i.toString());
+		set_text_visibility(element, width, min_text_width);
+		
+		id = "buffer_used_" + i.toString();
+		width = Math.round(used_sz / buffer_size * max_bar_len);
+		document.getElementById(id).style.width = width;
+		element = document.getElementById('buffer_used_text_' + i.toString());
+		set_text_visibility(element, width, min_text_width);
+	}
 
 	//get_hdd_space();
         get_space(selected_mountpoint);
@@ -764,17 +783,26 @@ function calc_split_size() {
 	document.getElementById('split_size_calculation').innerHTML = " = " + result;
 }
 function toggle_buffer() {
-	if (document.getElementById('buffer_bar').style.display == "none") {
-		document.getElementById('buffer_bar').style.display = "inline";
+	var new_state;
+	var buffer_name;
+	// this variable is injected into web page from camogmgui.php
+	var sensor_ports = parseInt(document.getElementById('sensor_ports').textContent, 10);
+	
+	if (document.getElementById('buffer_toggle_link').style.display != "none") {
+		new_state = "inline";
 		document.getElementById('buffer_toggle_link').style.display = "none";
 	}
 	else {
-		document.getElementById('buffer_bar').style.display = "none";
+		new_state = "none";
 		document.getElementById('buffer_toggle_link').style.display = "block";
+	}
+	for (var i = 0; i < sensor_ports; i++) {
+		buffer_name = "buffer_bar_" + i.toString();
+		document.getElementById(buffer_name).style.display = new_state;
 	}
 }
 
-/** Enable or disable page controls in accordance to new state which cat be one of 'fast_rec' or 'standart_rec' */
+/** Enable or disable page controls in accordance to new state which can be one of 'fast_rec' or 'standart_rec' */
 function set_controls_state(new_state)
 {
 	var radios = document.getElementsByName('container');
@@ -842,5 +870,17 @@ function process_raw_dev_list(xmldoc)
 	if (items.length > 1) {
 		update_dev_radio = true;
 		makeRequest('camogm_interface.php', '?cmd=status');
+	}
+}
+
+/** Change text element visibility. This function is used to change buffer bars presentation */
+function set_text_visibility(element, width, min_text_width)
+{
+	if (width < min_text_width) {
+		element.style.display = 'none';
+	} else {
+		if (element.style.display == 'none') {
+			element.style.display = 'inline';
+		}
 	}
 }

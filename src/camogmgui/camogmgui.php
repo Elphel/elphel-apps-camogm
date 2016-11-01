@@ -58,7 +58,25 @@
 	$mode = 0777;
 	$sensor_ports = elphel_num_sensors();
 	$default_imgsrv_port = 2323;
-   
+
+	/** Draw single buffer usage bar */
+	function draw_buffer_bar($port, $ports_num)
+	{
+		echo "<div id=\"buffer_bar_" . $port . "\" class=\"buffer_bar\" " .
+			"onclick=\"toggle_buffer();\" style=\"display:none;\">Buffer " . $port . ": " .
+		"<span id=\"buffer_free_" . $port . "\" class=\"buffer_free\"><div id=\"buffer_free_text_" . $port . "\">free</div></span>" . 
+		"<span id=\"buffer_used_". $port .	"\" class=\"buffer_used\"><div id=\"buffer_used_text_" . $port . "\">used</div></span>" .
+		"</div>";
+	}
+	
+	/** Inject a parameter into web page that may be needed in JavaScript */
+	function inject_param($name, $val)
+	{
+		echo "<div id=\"" . $name . "\" style=\"display:none;\">";
+		echo htmlspecialchars($val);
+		echo "</div>";
+	}
+	
 	// check if any compressor is in running state
 	function check_compressors($states)
 	{
@@ -349,6 +367,9 @@
 
 	</head>
 	<body onLoad="init();">
+	<?php
+	inject_param('sensor_ports', $sensor_ports);
+	?>
     <div id="sitecoloumn">
       <div id="live-image">
         <div id="CollapsiblePanel1" class="CollapsiblePanel">
@@ -385,8 +406,18 @@
     </div>
        	
         <div id="header">HDD / CF Recorder</div>
-        <div id="buffer_toggle"><a id="buffer_toggle_link" onclick="toggle_buffer();" href="#">Show Buffer</a></div>
-	<div id="buffer_bar" onclick="toggle_buffer();" style="display:none;">Buffer: <span id="buffer_free">free</span><span id="buffer_used">used</span></div>
+        <div id="buffer_toggle"><a id="buffer_toggle_link" onclick="toggle_buffer();" href="#">
+        <?php if ($sensor_ports > 1) { echo "Show buffers"; } else { echo "Show buffer";}?></a>
+        </div>
+        <ul>
+		<?php
+		for ($i = 0; $i < $sensor_ports; $i++) {
+			echo "<li class=\"buffer_bars_li\">";
+			draw_buffer_bar($i, $sensor_ports);
+			echo "</li>";
+		}
+		?>
+		</ul>
         <div id="help_link"><a target="_blank" href="http://wiki.elphel.com/index.php?title=Camogmgui">HELP</a></div>
         <table border="0" cellpadding="2" cellspacing="5">
         <tr><td>

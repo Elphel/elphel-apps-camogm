@@ -200,32 +200,36 @@ table.state_table td {
 	right:30px;
 	padding-right:40px;
 }
-#buffer_bar {
+.buffer_bars_li {
+	list-style-type: none;
+	overflow: hidden;
+	margin: 0;
+	padding: 0;
+}
+.buffer_bar {
+	float: right;
 	right:50px;
-	margin-right:8px;
-	width:340px;
+	margin: 5px 10px 5px 10px;
+	width:420px;
 	height:15px;
 	border:1px solid #0066FF;
-	position:absolute;
 	padding:1px;
 }
-#buffer_free {
+.buffer_free {
 	background-color:#009900;
 	margin-left:5px;
 	height:15px;
 	position:absolute;
-	width:260px;
+	width:320px;
 	display:inline;
-	float:left;
 	text-align:center;
 	color:#FFFFFF;
 	letter-spacing:3px;	
 }
-#buffer_used {
+.buffer_used {
 	background-color:#CC0000;
 	height:15px;
-	position:absolute;
-	width:40px;
+	width:50px;
 	display:inline;
 	float:right;
 	right:1px;

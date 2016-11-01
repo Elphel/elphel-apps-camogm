@@ -1101,7 +1101,6 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"\t\t<buffer_free>%d</buffer_free>\n" \
 			"\t\t<buffer_used>%d</buffer_used>\n" \
 			"\t\t<circbuf_rp>%d</circbuf_rp>\n" \
-			"\t\t<circbuf_size>%d</circbuf_size>\n" \
 			"\t</sensor_port_%d>\n",
 				chn,
 				_active,
@@ -1115,7 +1114,6 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 				_b_free[chn],
 				_b_used[chn],
 				state->cirbuf_rp[chn],
-				state->circ_buff_size[chn],
 				chn
 				);
 		}
@@ -1179,7 +1177,6 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			fprintf(f, "buffer free        \t%d\n",    _b_free[chn]);
 			fprintf(f, "buffer used        \t%d\n",    _b_used[chn]);
 			fprintf(f, "circbuf_rp         \t%d (0x%x)\n", state->cirbuf_rp[chn], state->cirbuf_rp[chn]);
-			fprintf(f, "circbuf_size       \t%d\n",    state->circ_buff_size[chn]);
 			fprintf(f, "\n");
 		}
 	}

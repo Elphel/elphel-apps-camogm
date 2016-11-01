@@ -263,7 +263,7 @@ int camogm_frame_jpeg(camogm_state *state)
 		}
 		close(state->ivf);
 	} else {
-		D6(fprintf(debug_file, "dump iovect array\n"));
+		D6(fprintf(debug_file, "\ndump iovect array for port %u\n", state->port_num));
 		for (int i = 0; i < state->chunk_index - 1; i++) {
 			D6(fprintf(debug_file, "ptr: %p, length: %ld\n", state->packetchunks[i + 1].chunk, state->packetchunks[i + 1].bytes));
 		}
