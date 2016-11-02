@@ -436,7 +436,6 @@ function process_recording(xmldoc) {
 		free_sz = buffers_free[i].firstChild.data;
 		used_sz = buffers_used[i].firstChild.data;
 		buffer_size = parseInt(free_sz, 10) + parseInt(used_sz, 10);
-		console.log('buffer_size: ' + buffer_size + ' free_size: ' + free_sz + ' used_size:' + used_sz);
 		id = "buffer_free_" + i.toString();
 		width = Math.round(free_sz / buffer_size * max_bar_len);
 		document.getElementById(id).style.width = width;
