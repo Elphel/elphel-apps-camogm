@@ -129,17 +129,39 @@ if ($cmd == "run_camogm")
 }
 else if ($cmd == "status")
 {
-	$pipe="/var/state/camogm.state";
-	$mode=0777;
-	if(!file_exists($pipe)) {
-		umask(0);
-		posix_mkfifo($pipe,$mode);
+	// is camogm running
+	$camogm_running = "not running";
+	
+	exec('ps | grep "camogm"', $arr);
+	function low_daemon($v)
+	{
+		return (substr($v, -1) != ']');
 	}
-	$fcmd=fopen($cmd_pipe,"w");
-	fprintf($fcmd, "xstatus=%s\n",$pipe);
-	fclose($fcmd);
-
-	$status=file_get_contents($pipe);
+	
+	$p = (array_filter($arr, "low_daemon"));
+	$check = implode("<br />",$p);
+	
+	if (strstr($check, $start_str))
+		$camogm_running = "on";
+	else
+		$camogm_running = "off";
+		
+	if ($camogm_running=="on"){
+		$pipe="/var/state/camogm.state";
+		$mode=0777;
+		if(!file_exists($pipe)) {
+			umask(0);
+			posix_mkfifo($pipe,$mode);
+		}
+		$fcmd=fopen($cmd_pipe,"w");
+		fprintf($fcmd, "xstatus=%s\n",$pipe);
+		fclose($fcmd);
+	
+		$status=file_get_contents($pipe);
+	}else{
+		$status = "<?xml version='1.0'?><camogm_state>\n<state>".$camogm_running."</state>\n</camogm_state>";
+	}
+		
 	header("Content-Type: text/xml");
 	header("Content-Length: ".strlen($status)."\n");
 	header("Pragma: no-cache\n");
