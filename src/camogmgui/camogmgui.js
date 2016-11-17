@@ -115,6 +115,8 @@ function process_is_hdd_mounted(xmldoc) {
 function scan_devices(callback) {
 	if (document.getElementById('fast_rec').checked == false) {
 		makeRequest('camogm_interface.php','?cmd=listdevices',callback);
+	} else {
+		makeRequest('camogm_interface.php', '?cmd=list_raw_devices');
 	}
 }
 
