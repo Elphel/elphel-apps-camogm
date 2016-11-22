@@ -1760,7 +1760,7 @@ unsigned int select_port(camogm_state *state)
 	for (int i = 0; i < SENSOR_PORTS; i++) {
 		if (is_chn_active(state, i)) {
 			file_pos = lseek(state->fd_circ[i], 0, SEEK_CUR);
-			if (file_pos != -EINVAL) {
+			if (file_pos != -1) {
 				free_sz = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
 				lseek(state->fd_circ[i], file_pos, SEEK_SET);
 				if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
