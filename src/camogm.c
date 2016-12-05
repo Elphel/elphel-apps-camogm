@@ -1755,6 +1755,14 @@ unsigned int select_port(camogm_state *state)
 	off_t file_pos;
 	off_t min_sz = -1;
 
+	// define first active channel in case not all of them are active
+	for (int i = 0; i < SENSOR_PORTS; i++) {
+		if (is_chn_active(state, i)) {
+			chn = i;
+			break;
+		}
+	}
+
 	if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
 		D6(fprintf(debug_file, "Selecting sensor port, buffer free size: "));
 	for (int i = 0; i < SENSOR_PORTS; i++) {
