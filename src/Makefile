@@ -1,5 +1,6 @@
 GUIDIR     = camogmgui
 PROGS      = camogm
+TEST_PROG  = camogm_test
 PHPSCRIPTS = camogmstate.php $(GUIDIR)/camogmgui.php $(GUIDIR)/camogmgui.css $(GUIDIR)/camogmgui.js $(GUIDIR)/camogm_interface.php \
              $(GUIDIR)/SpryTabbedPanels.css $(GUIDIR)/SpryTabbedPanels.js $(GUIDIR)/xml_simple.php $(GUIDIR)/SpryCollapsiblePanel.css \
              $(GUIDIR)/SpryCollapsiblePanel.js
@@ -11,6 +12,7 @@ IMAGES     = $(GUIDIR)/images/filebrowser-01.gif $(GUIDIR)/images/filebrowser-bo
 
 
 SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c camogm_read.c index_list.c
+TEST_SRC = camogm_test.c
 OBJS = $(SRCS:.c=.o)
 
 CFLAGS    += -Wall -I$(STAGING_DIR_HOST)/usr/include-uapi
@@ -26,14 +28,17 @@ BINDIR     = /usr/bin/
 WWW_PAGES  = /www/pages
 IMAGEDIR   = $(WWW_PAGES)/images
 
-all: $(PROGS)
+all: $(PROGS) $(TEST_PROG)
 
 $(PROGS): $(OBJS)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
+$(TEST_PROG): $(TEST_SRC:.c=.o)
+
 install: $(PROGS) $(PHPSCRIPTS) $(CONFIGS)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(BINDIR)
 	$(INSTALL) $(OWN) -m $(INSTMODE) $(PROGS)      $(DESTDIR)$(BINDIR)
+	$(INSTALL) $(OWN) -m $(INSTMODE) $(TEST_PROG)  $(DESTDIR)$(BINDIR)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(SYSCONFDIR)
 	$(INSTALL) $(OWN) -m $(INSTDOCS) $(CONFIGS)    $(DESTDIR)$(SYSCONFDIR)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(WWW_PAGES)
@@ -47,7 +52,7 @@ clean:
 	
 depend: .depend
 
-.depend: $(SRCS)
+.depend: $(SRCS) $(TEST_SRCS)
 	rm -f ./.depend
 	$(CC) $(CFLAGS) -MM $^ > ./.depend;
 
