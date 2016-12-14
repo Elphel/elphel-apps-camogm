@@ -49,8 +49,9 @@
 
 struct dd_params {
 	uint64_t pos_start;
-	unsigned long int block_size;
-	unsigned long int block_count;
+	unsigned long block_size;
+	unsigned long block_count;
+	unsigned long block_count_init;
 };
 
 enum sysfs_path_type {
@@ -88,6 +89,7 @@ static int find_state(FILE *f, uint64_t *pos, const rawdev_buffer *rawdev);
 static int open_state_file(const rawdev_buffer *rawdev);
 static int save_state_file(const rawdev_buffer *rawdev);
 static int get_disk_range_from_driver(struct range *range);
+static void read_stat(void);
 
 void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 {
@@ -166,6 +168,7 @@ int open_files(camogm_state *state)
 
 int sendImageFrame(camogm_state *state)
 {
+	int ret;
 	struct frame_data fdata = {0};
 
 	if (state->rawdev_op) {
@@ -177,9 +180,10 @@ int sendImageFrame(camogm_state *state)
 			fdata.cmd |= DRV_CMD_EXIF;
 		}
 		fdata.cmd |= DRV_CMD_WRITE_TEST;
-		if (write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data)) < 0) {
-			D0(fprintf(debug_file, "Can not pass IO vector to driver: %s\n", strerror(errno)));
-			return -CAMOGM_FRAME_FILE_ERR;
+		ret = write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data));
+		if (ret < 0) {
+//			D0(fprintf(debug_file, "Can not pass IO vector to driver (driver may be busy): %s\r", strerror(errno)));
+			return ret;
 		}
 	}
 
@@ -474,6 +478,15 @@ static int save_state_file(const rawdev_buffer *rawdev)
 
 	return ret;
 }
+
+/** Read recent statistics from sysfs */
+static void read_stat(void)
+{
+	int fd;
+	const char *stat_delay_name = "stat_irq_delay";
+
+}
+
 unsigned int select_port(camogm_state *state)
 {
 	// do not process commands
@@ -531,6 +544,7 @@ int listener_loop(camogm_state *state, struct dd_params *dd_params)
 	int curr_port = 0;
 	int retry_cntr = 0;
 	int ret = 0;
+	unsigned long mb_written;
 
 	// enter main processing loop
 	while (process) {
@@ -547,16 +561,21 @@ int listener_loop(camogm_state *state, struct dd_params *dd_params)
 					// file sent OK
 					dd_params->block_count--;
 					break;
-				case CAMOGM_FRAME_FILE_ERR:
+				case EAGAIN:
 					// we need to wait as the driver queue is full
-					usleep(COMMAND_LOOP_DELAY);
+//					usleep(COMMAND_LOOP_DELAY);
+					break;
+				case EIO:
+					// new statistics sample is ready, read it
+					read_stat();
 					break;
 				default:
 					D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
 					clean_up(state);
 					exit(-1);
 				} // switch sendImageFrame()
-				D0(fprintf(debug_file, "Number of counts left: %lu\n", dd_params->block_count));
+				mb_written = ((uint64_t)dd_params->block_size * ((uint64_t)dd_params->block_count_init - (uint64_t)dd_params->block_count)) / (uint64_t)1048576;
+				D0(fprintf(debug_file, "\r%lu MiB written, number of counts left: %04lu", mb_written, dd_params->block_count));
 			} else {
 				process = 0;
 			}
@@ -564,6 +583,7 @@ int listener_loop(camogm_state *state, struct dd_params *dd_params)
 			usleep(COMMAND_LOOP_DELAY);     // make it longer but interruptible by signals?
 		}
 	} // while (process)
+	D0(fprintf(debug_file, "\n"));
 
 	return ret;
 }
@@ -627,6 +647,7 @@ int main(int argc, char *argv[])
 			break;
 		case 'c':
 			dd_params.block_count = strtoul((const char *)optarg, (char **)NULL, 10);
+			dd_params.block_count_init = dd_params.block_count;
 			if (errno != 0) {
 				printf("error parsing block size value: %s\n", strerror(errno));
 				return EXIT_FAILURE;
