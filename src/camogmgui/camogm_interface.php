@@ -221,12 +221,12 @@ else if ($cmd=="mount") { // mount media like HDD
 	if (isset($_GET['mountpoint']))
 		$mountpoint = $_GET['mountpoint'];
 	else
-		$mountpoint = '/var/hdd';
+		$mountpoint = '/mnt/sda1';
 	
 	exec('mkdir '.$mountpoint);
-	//exec('mkdir /var/hdd');
+	//exec('mkdir /mnt/sda1');
 	exec('mount '.$partition." ".$mountpoint);
-	//exec('mount /dev/hda1 /var/hdd');
+	//exec('mount /dev/hda1 /mnt/sda1');
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
@@ -392,7 +392,7 @@ else
 			exec('sync');
 			break;
 		case "file_rename":
-			// Now requires full path (like "/var/hdd/test1.mov") for file_old
+			// Now requires full path (like "/mnt/sda1/test1.mov") for file_old
 			// and either a full path or just a filename for file_new 
 			if ((!isset($_GET['file_old'])) || (!isset($_GET['file_new']))) {
 				echo "wrong arguments";
@@ -495,7 +495,7 @@ else
 			$dir_name = $_GET['name'];
 			if (isset($dir_name) && (($dir_name != "") || ($dir_name != " ")))
 			{
-				exec('mkdir /var/hdd/'.$dir_name);
+				exec('mkdir /mnt/sda1/'.$dir_name);
 				echo "done";
 				break;
 			}
@@ -517,7 +517,7 @@ else
 				echo "no HDD mounted";
 			break;
 		case "create_symlink":
-			//exec('ln -s /var/hdd /mnt/flash/html/hdd');
+			//exec('ln -s /mnt/sda1 /mnt/flash/html/hdd');
 			
 			if (isset($_GET['mountpoint'])) $mountpoint = $_GET['mountpoint'];
 			else                            $mountpoint = "/mnt/sda1";
