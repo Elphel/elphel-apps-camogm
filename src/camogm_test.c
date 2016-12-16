@@ -1,6 +1,7 @@
 /** @brief This define is needed to use lseek64 and should be set before includes */
 #define _LARGEFILE64_SOURCE
 
+#include <stdbool.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +28,12 @@
 #define SMALL_BUFF_LEN            32
 /** State file record format. It includes device path in /dev, starting, current and ending LBAs */
 #define STATE_FILE_FORMAT         "%s\t%llu\t%llu\t%llu\n"
+/** Block size in bytes and double words */
+#undef BLOCK_SIZE
+#define BLOCK_SIZE                512
+#define BLOCK_SIZE_DW             128
+/** Maximun number of consequent sectors with errors before counter is resynchronized */
+#define MAX_ERR_LBA               3
 
 
 // redefine debug macros define in camogm.h
@@ -90,6 +97,7 @@ static int open_state_file(const rawdev_buffer *rawdev);
 static int save_state_file(const rawdev_buffer *rawdev);
 static int get_disk_range_from_driver(struct range *range);
 static void read_stat(void);
+static void start_test(camogm_state *state, const unsigned long max_cntr, const struct range *range);
 
 void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 {
@@ -154,7 +162,8 @@ int open_files(camogm_state *state)
 		return -2;
 	}
 	state->circ_buff_size[port] = MMAP_BUFF_SIZE;
-	ccam_dma_buf[port] = (unsigned long*)mmap(0, state->circ_buff_size[port], PROT_READ | PROT_WRITE, MAP_SHARED, state->fd_circ[port], 0);
+	// PROT_EXEC flag is set to make __clear_cache() work properly (that was advised on the web)
+	ccam_dma_buf[port] = (unsigned long*)mmap(0, state->circ_buff_size[port], PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED, state->fd_circ[port], 0);
 	if ((int)ccam_dma_buf[port] == -1) {
 		D0(fprintf(debug_file, "Error in mmap of %s\n", circbufFileNames[port]));
 		clean_up(state);
@@ -183,7 +192,7 @@ int sendImageFrame(camogm_state *state)
 		ret = write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data));
 		if (ret < 0) {
 //			D0(fprintf(debug_file, "Can not pass IO vector to driver (driver may be busy): %s\r", strerror(errno)));
-			return ret;
+			return errno;
 		}
 	}
 
@@ -335,6 +344,7 @@ static int set_disk_range(const struct range *rng)
 	return ret;
 }
 
+/** Get full disk size in bytes */
 static uint64_t get_disk_size(const char *name)
 {
 	int fd;
@@ -498,6 +508,7 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 	return 0;
 }
 
+/** Open command file in sysfs */
 int start_recording(camogm_state *state)
 {
 	if (state->rawdev_op) {
@@ -516,6 +527,7 @@ int start_recording(camogm_state *state)
 	return 0;
 }
 
+/** Close command file in sysfs */
 int end_recording(camogm_state *state)
 {
 	int ret = 0;
@@ -536,13 +548,14 @@ int end_recording(camogm_state *state)
 	return ret;
 }
 
+/** Main processing loop in which all write commands are sent to driver. This function, as many other, was copied from camogm and
+ * contains some unrelated stuff */
 int listener_loop(camogm_state *state, struct dd_params *dd_params)
 {
 	FILE *cmd_file;
 	int rslt, cmd;
 	int process = 1;
 	int curr_port = 0;
-	int retry_cntr = 0;
 	int ret = 0;
 	unsigned long mb_written;
 
@@ -556,7 +569,7 @@ int listener_loop(camogm_state *state, struct dd_params *dd_params)
 			if (cmd < 0) D0(fprintf(debug_file, "Unrecognized command\n"));
 		} else if (state->prog_state == STATE_RUNNING) { // no commands in queue, started
 			if (dd_params->block_count != 0) {
-				switch ((rslt = -sendImageFrame(state))) {
+				switch ((rslt = sendImageFrame(state))) {
 				case 0:
 					// file sent OK
 					dd_params->block_count--;
@@ -568,6 +581,8 @@ int listener_loop(camogm_state *state, struct dd_params *dd_params)
 				case EIO:
 					// new statistics sample is ready, read it
 					read_stat();
+					break;
+				case EINVAL:
 					break;
 				default:
 					D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
@@ -597,17 +612,81 @@ void prep_data(camogm_state *state, struct dd_params *dd_params)
 		ccam_dma_buf[port][i] = j;
 		j++;
 	}
+//	printf("ccam_dma_buf ptr = %p\n", ccam_dma_buf[port]);
+//	if (msync(ccam_dma_buf[port], state->circ_buff_size[port], MS_SYNC) < 0) {
+//		D0(fprintf(debug_file, "msync returned with error: %s\n", strerror(errno)));
+//	}
+	__clear_cache((char *)ccam_dma_buf[port], (char *)ccam_dma_buf[port] + dd_params->block_size);
+}
+
+/** Start disk reading test. The range of LBAs to be tested is specified in 'range' */
+static void start_test(camogm_state *state, const unsigned long max_cntr, const struct range *range)
+{
+	int fd;
+	bool report_lba = true;
+	off64_t pos, current_lba, end_pos;
+	unsigned int cntr, error_lba_cntr;
+	unsigned int data[BLOCK_SIZE_DW] = {0};
+
+	fd = open(state->rawdev.rawdev_path, O_RDONLY);
+	if (fd < 0) {
+		D0(fprintf(debug_file, "Error opening file %s: %s\n", state->rawdev.rawdev_path, strerror(errno)));
+		return;
+	}
+
+	pos = 0;
+	cntr = 0;
+	error_lba_cntr = 0;
+	end_pos = (range->to - range->from) * BLOCK_SIZE;
+	D6(fprintf(debug_file, "testing disk from LBA %llu to LBA %llu\n", range->from, range->to));
+	while (pos < end_pos) {
+		current_lba = pos / BLOCK_SIZE + range->from;
+		D2(fprintf(debug_file, "\rcurrent LBA: %llu", current_lba));
+		lseek64(fd, pos, SEEK_SET);
+		read(fd, data, BLOCK_SIZE);
+		for (int i = 0; i < BLOCK_SIZE_DW; i++) {
+			if (data[i] != cntr &&
+					report_lba) {
+				D0(fprintf(debug_file, "\ncounter discontinuity detected, LBA: %llu, data: 0x%x, counter: 0x%x\n", current_lba, data[i], cntr));
+				report_lba = false;
+				error_lba_cntr++;
+			}
+			cntr++;
+			if (cntr >= max_cntr)
+				cntr = 0;
+		}
+		if (report_lba && error_lba_cntr) {
+			// current sector has no errors so reset erroneous sectors counter
+			error_lba_cntr = 0;
+		}
+		if (error_lba_cntr >= MAX_ERR_LBA) {
+			// several consequent sectors with errors were detected, this can be a result of new record so the counter should be
+			// resynchronized
+			cntr = data[BLOCK_SIZE_DW - 1] + 1;
+			error_lba_cntr = 0;
+			D0(fprintf(debug_file, "\nresynchronizing counter at LBA: %llu, new value: 0x%x\n", current_lba, cntr));
+		}
+		report_lba = true;
+		pos += BLOCK_SIZE;
+	}
+	D0(fprintf(debug_file, "\n"));
+	close(fd);
 }
 
 int main(int argc, char *argv[])
 {
 	const char usage[] =   "This program is intended for disk write tests\n" \
 			     "Usage:\n\n" \
-			     "%s -d <path_to_disk> [-s state_file_name -b block_size -c count]\n\n" \
+			     "%s -d <path_to_disk> [-s state_file_name -b block_size -c count -t -f from_lba -e to_lba]\n\n" \
 			     "i.e. write one sector:\n\n" \
-			     "%s -d /dev/sda2 -b 512 -c 1\n\n";
+			     "%s -d /dev/sda2 -b 512 -c 1\n\n" \
+				 "The -t parameter sets test mode in which the program reads data from disk and verifies that " \
+				 "the counter values are consistent. The LBAs with counter discontinuites are reported. Test starts " \
+				 "from the beginning of the disk and continues untill the end of disk is reached. '-b' parameter is " \
+				 "mandatory in this mode\n";
 	int ret;
 	int opt;
+	bool test_mode = false;
 	uint16_t port_num = 0;
 	size_t str_len;
 	camogm_state sstate;
@@ -615,12 +694,14 @@ int main(int argc, char *argv[])
 	char state_name_str[ELPHEL_PATH_MAX] = {0};
 	char disk_path[ELPHEL_PATH_MAX] = {0};
 	struct dd_params dd_params = {0};
+	struct range range;
+	struct range disk_range;
 
 	if ((argc < 2) || (argv[1][1] == '-')) {
 		printf(usage, argv[0], argv[0]);
 		return EXIT_SUCCESS;
 	}
-	while ((opt = getopt(argc, argv, "b:c:d:n:p:s:h")) != -1) {
+	while ((opt = getopt(argc, argv, "b:c:d:n:p:s:htf:e:t:")) != -1) {
 		switch (opt) {
 		case 'd':
 			strncpy(disk_path, (const char *)optarg, ELPHEL_PATH_MAX - 1);
@@ -654,33 +735,59 @@ int main(int argc, char *argv[])
 			}
 			printf("block count is set to %lu\n", dd_params.block_count);
 			break;
+		case 't':
+			test_mode = true;
+			break;
+		case 'f':
+			range.from = strtoull((const char *)optarg, (char **)NULL, 10);
+			break;
+		case 'e':
+			range.to = strtoull((const char *)optarg, (char **)NULL, 10);
+			break;
 		}
 	}
 
 	camogm_init(&sstate, pipe_name_str, port_num);
-	ret = open_files(&sstate);
-	if (ret < 0)
-		return ret;
-	str_len = strlen(state_name_str);
-	if (str_len > 0) {
-		strncpy(sstate.rawdev.state_path, state_name_str, str_len + 1);
-	}
-	camogm_set_prefix(&sstate, disk_path);
-	if (sstate.rawdev_op == 1) {
-		prep_data(&sstate, &dd_params);
-
-		ret = start_recording(&sstate);
-		if (ret == 0) {
-			sstate.prog_state = STATE_RUNNING;
-			ret = listener_loop(&sstate, &dd_params);
-			end_recording(&sstate);
+	if (!test_mode) {
+		ret = open_files(&sstate);
+		if (ret < 0)
+			return ret;
+		str_len = strlen(state_name_str);
+		if (str_len > 0) {
+			strncpy(sstate.rawdev.state_path, state_name_str, str_len + 1);
 		}
-	} else {
-		D0(fprintf(debug_file, "Unable to set %s as a disk path\n", disk_path));
+		camogm_set_prefix(&sstate, disk_path);
+		if (sstate.rawdev_op == 1) {
+			prep_data(&sstate, &dd_params);
+
+			ret = start_recording(&sstate);
+			if (ret == 0) {
+				sstate.prog_state = STATE_RUNNING;
+				ret = listener_loop(&sstate, &dd_params);
+				end_recording(&sstate);
+			}
+		} else {
+			D0(fprintf(debug_file, "Unable to set %s as a disk path\n", disk_path));
+			clean_up(&sstate);
+			ret = EXIT_FAILURE;
+		}
 		clean_up(&sstate);
-		ret = EXIT_FAILURE;
+	} else {
+		if (dd_params.block_size != 0) {
+			camogm_set_prefix(&sstate, disk_path);
+			if (sstate.rawdev_op == 1) {
+				get_disk_range(sstate.rawdev.rawdev_path, &disk_range);
+				if (range.from == 0)
+					range.from = disk_range.from;
+				if (range.to == 0)
+					range.to = disk_range.to;
+				// block_size is in bytes and we need if here in double words
+				start_test(&sstate, dd_params.block_size / 4, &range);
+			}
+		} else {
+			D0(fprintf(debug_file, "block size is not specified, restart the program with '-b' option\n"));
+		}
 	}
-	clean_up(&sstate);
 
 	return ret;
 }
