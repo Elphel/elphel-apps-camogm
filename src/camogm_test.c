@@ -756,11 +756,17 @@ int main(int argc, char *argv[])
 			     "%s -d <path_to_disk> [-s state_file_name -b block_size -c count -t -f from_lba -e to_lba -w file_name]\n\n" \
 			     "i.e. write one sector:\n\n" \
 			     "%s -d /dev/sda2 -b 512 -c 1\n\n" \
-				 "The -t parameter sets test mode in which the program reads data from disk and verifies that " \
+				 "-d specifies partition or disk name which is used for testing;\n" \
+				 "-b sets block size in bytes. The program writes data to disk in blocks of this size;\n" \
+				 "-c sets the number of repetitions. Total amount of data recorded to disk is equal to (count * block_size);\n" \
+				 "-f and -e parameters define starting and finishing LBAs of the disk during test mode. These parameters are " \
+				 "ineffective during recording.\n"
+				 "-t parameter sets test mode in which the program reads data from disk and verifies that " \
 				 "the counter values are consistent. The LBAs with counter discontinuities are reported. Test starts " \
 				 "from the beginning of the disk and continues until the end of disk is reached. '-b' parameter is " \
-				 "mandatory in this mode.\n" \
-				 "The -w parameter sets the file name were some statistics is saved during recording test.\n";
+				 "mandatory in this mode and its value must correspond to that used during recording.\n" \
+				 "-w parameter sets the file name were some statistics is saved during recording test.\n" \
+				 "-h prints this help message\n";
 	int ret = EXIT_SUCCESS;
 	int opt;
 	bool test_mode = false;
@@ -796,6 +802,7 @@ int main(int argc, char *argv[])
 			printf(usage, argv[0], argv[0]);
 			return EXIT_SUCCESS;
 		case 's':
+			// the name of state file
 			strncpy(state_name_str, (const char *)optarg, ELPHEL_PATH_MAX - 1);
 			break;
 		case 'b':
