@@ -15,6 +15,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <ctype.h>
+#include <signal.h>
 #include <elphel/ahci_cmd.h>
 
 #include "camogm.h"
@@ -32,7 +33,7 @@
 #undef BLOCK_SIZE
 #define BLOCK_SIZE                512
 #define BLOCK_SIZE_DW             128
-/** Maximun number of consequent sectors with errors before counter is resynchronized */
+/** Maximum number of consequent sectors with errors before counter is resynchronized */
 #define MAX_ERR_LBA               3
 
 
@@ -59,6 +60,14 @@ struct dd_params {
 	unsigned long block_size;
 	unsigned long block_count;
 	unsigned long block_count_init;
+	time_t start_time;
+};
+
+/** Statistics to be written to file */
+struct stat_data {
+	unsigned long irq_delay;      // IRQ delay, in ms
+	unsigned long mb_written;     // MB written since last delay
+	float time_diff;              // time since last delay
 };
 
 enum sysfs_path_type {
@@ -73,6 +82,7 @@ const char *circbufFileNames[] = {DEV393_PATH(DEV393_CIRCBUF0), DEV393_PATH(DEV3
 unsigned long *ccam_dma_buf[SENSOR_PORTS];
 int debug_level;
 FILE* debug_file;
+static volatile bool keep_running = true;
 
 int open_files(camogm_state *state);
 void clean_up(camogm_state *state);
@@ -96,8 +106,16 @@ static int find_state(FILE *f, uint64_t *pos, const rawdev_buffer *rawdev);
 static int open_state_file(const rawdev_buffer *rawdev);
 static int save_state_file(const rawdev_buffer *rawdev);
 static int get_disk_range_from_driver(struct range *range);
-static void read_stat(void);
+static void read_stat(unsigned long data_cntr, const char *stat_file);
 static void start_test(camogm_state *state, const unsigned long max_cntr, const struct range *range);
+static void save_stat(const char *stat_file, struct stat_data *data);
+static void int_handler(int data);
+
+/** Process SIGINT signal (Ctrl-C pressed) */
+static void int_handler(int data)
+{
+	keep_running = false;
+}
 
 void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 {
@@ -177,7 +195,7 @@ int open_files(camogm_state *state)
 
 int sendImageFrame(camogm_state *state)
 {
-	int ret;
+	int ret = 0;
 	struct frame_data fdata = {0};
 
 	if (state->rawdev_op) {
@@ -192,11 +210,13 @@ int sendImageFrame(camogm_state *state)
 		ret = write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data));
 		if (ret < 0) {
 //			D0(fprintf(debug_file, "Can not pass IO vector to driver (driver may be busy): %s\r", strerror(errno)));
-			return errno;
+			ret = errno;
+		} else {
+			ret = 0;
 		}
 	}
 
-	return 0;
+	return ret;
 }
 
 void  camogm_set_prefix(camogm_state *state, const char * p)
@@ -489,12 +509,64 @@ static int save_state_file(const rawdev_buffer *rawdev)
 	return ret;
 }
 
-/** Read recent statistics from sysfs */
-static void read_stat(void)
+/** Read recent statistics from sysfs and print it to debug file (or stdout).
+ * This function holds some data in static variables and thus is not reentrant. */
+static void read_stat(unsigned long data_cntr, const char *stat_file)
 {
-	int fd;
+	int fd, err;
 	const char *stat_delay_name = "stat_irq_delay";
+	char file_name[ELPHEL_PATH_MAX];
+	char data[SMALL_BUFF_LEN];
+	unsigned long val = 0;
+	ssize_t len;
+	clock_t time, time_diff;
+	struct stat_data stat_data = {0};
+	static clock_t prev_time;
+	static unsigned long prev_cntr;
 
+	len = strlen(SYSFS_AHCI_ENTRY);
+	strncpy(file_name, SYSFS_AHCI_ENTRY, ELPHEL_PATH_MAX - 1);
+	strncat(&file_name[len], stat_delay_name, ELPHEL_PATH_MAX - len - 1);
+	fd = open(file_name, O_RDWR);
+	if (fd >= 0) {
+		len = read(fd, data, SMALL_BUFF_LEN - 1);
+		if (len > 0) {
+			val = strtoul(data, NULL, 10);
+			// reset this statistics sample
+			write(fd, data, len);
+		}
+		close(fd);
+		if (val != 0) {
+			time = clock();
+			time_diff = time - prev_time;
+			prev_time = time;
+			stat_data.time_diff = (float)time_diff / CLOCKS_PER_SEC;
+			stat_data.irq_delay = val;
+			stat_data.mb_written = data_cntr - prev_cntr;
+			D0(fprintf(debug_file, "\nIRQ delay: %lu ms, %f s since last delay, %lu MB recorded since last delay\n",
+					val, stat_data.time_diff, stat_data.mb_written));
+			prev_cntr = data_cntr;
+			save_stat(stat_file, &stat_data);
+		}
+	} else {
+		err = errno;
+		D0(fprintf(debug_file, "\nerror opening %s: %s\n", file_name, strerror(err)));
+	}
+}
+
+/** Save recording statistics to file */
+static void save_stat(const char *stat_file, struct stat_data *data)
+{
+	FILE *fd;
+
+	if (strlen(stat_file) != 0) {
+		fd = fopen(stat_file, "a");
+		if (fd != NULL) {
+			fprintf(fd, "IRQ delay: %lu ms; %f s since last delay; %lu MB recorded since last delay\n",
+					data->irq_delay, data->time_diff, data->mb_written);
+			fclose(fd);
+		}
+	}
 }
 
 unsigned int select_port(camogm_state *state)
@@ -558,9 +630,13 @@ int listener_loop(camogm_state *state, struct dd_params *dd_params)
 	int curr_port = 0;
 	int ret = 0;
 	unsigned long mb_written;
+	unsigned int wr_speed = 0;
+	time_t now;
+	double seconds;
 
+	dd_params->start_time = time(NULL);
 	// enter main processing loop
-	while (process) {
+	while (process && keep_running) {
 		curr_port = select_port(state);
 		state->port_num = curr_port;
 		// look at command queue first
@@ -575,12 +651,8 @@ int listener_loop(camogm_state *state, struct dd_params *dd_params)
 					dd_params->block_count--;
 					break;
 				case EAGAIN:
-					// we need to wait as the driver queue is full
-//					usleep(COMMAND_LOOP_DELAY);
 					break;
 				case EIO:
-					// new statistics sample is ready, read it
-					read_stat();
 					break;
 				case EINVAL:
 					break;
@@ -589,8 +661,16 @@ int listener_loop(camogm_state *state, struct dd_params *dd_params)
 					clean_up(state);
 					exit(-1);
 				} // switch sendImageFrame()
+				if (rslt != 0 && rslt != EAGAIN)
+					fprintf(debug_file, "\ndriver returned %d\n", rslt);
 				mb_written = ((uint64_t)dd_params->block_size * ((uint64_t)dd_params->block_count_init - (uint64_t)dd_params->block_count)) / (uint64_t)1048576;
-				D0(fprintf(debug_file, "\r%lu MiB written, number of counts left: %04lu", mb_written, dd_params->block_count));
+				now = time(NULL);
+				seconds = difftime(now, dd_params->start_time);
+				if (seconds > 0)
+					wr_speed = mb_written / (unsigned long)seconds;
+				D0(fprintf(debug_file, "\r%lu MiB written, number of counts left: %04lu, average speed: %u MB/s",
+						mb_written, dd_params->block_count, wr_speed));
+				read_stat(mb_written, state->path);
 			} else {
 				process = 0;
 			}
@@ -612,10 +692,6 @@ void prep_data(camogm_state *state, struct dd_params *dd_params)
 		ccam_dma_buf[port][i] = j;
 		j++;
 	}
-//	printf("ccam_dma_buf ptr = %p\n", ccam_dma_buf[port]);
-//	if (msync(ccam_dma_buf[port], state->circ_buff_size[port], MS_SYNC) < 0) {
-//		D0(fprintf(debug_file, "msync returned with error: %s\n", strerror(errno)));
-//	}
 	__clear_cache((char *)ccam_dma_buf[port], (char *)ccam_dma_buf[port] + dd_params->block_size);
 }
 
@@ -677,14 +753,15 @@ int main(int argc, char *argv[])
 {
 	const char usage[] =   "This program is intended for disk write tests\n" \
 			     "Usage:\n\n" \
-			     "%s -d <path_to_disk> [-s state_file_name -b block_size -c count -t -f from_lba -e to_lba]\n\n" \
+			     "%s -d <path_to_disk> [-s state_file_name -b block_size -c count -t -f from_lba -e to_lba -w file_name]\n\n" \
 			     "i.e. write one sector:\n\n" \
 			     "%s -d /dev/sda2 -b 512 -c 1\n\n" \
 				 "The -t parameter sets test mode in which the program reads data from disk and verifies that " \
-				 "the counter values are consistent. The LBAs with counter discontinuites are reported. Test starts " \
-				 "from the beginning of the disk and continues untill the end of disk is reached. '-b' parameter is " \
-				 "mandatory in this mode\n";
-	int ret;
+				 "the counter values are consistent. The LBAs with counter discontinuities are reported. Test starts " \
+				 "from the beginning of the disk and continues until the end of disk is reached. '-b' parameter is " \
+				 "mandatory in this mode.\n" \
+				 "The -w parameter sets the file name were some statistics is saved during recording test.\n";
+	int ret = EXIT_SUCCESS;
 	int opt;
 	bool test_mode = false;
 	uint16_t port_num = 0;
@@ -693,6 +770,7 @@ int main(int argc, char *argv[])
 	char pipe_name_str[ELPHEL_PATH_MAX] = {0};
 	char state_name_str[ELPHEL_PATH_MAX] = {0};
 	char disk_path[ELPHEL_PATH_MAX] = {0};
+	char stat_file[ELPHEL_PATH_MAX] = {0};
 	struct dd_params dd_params = {0};
 	struct range range;
 	struct range disk_range;
@@ -701,9 +779,10 @@ int main(int argc, char *argv[])
 		printf(usage, argv[0], argv[0]);
 		return EXIT_SUCCESS;
 	}
-	while ((opt = getopt(argc, argv, "b:c:d:n:p:s:htf:e:t:")) != -1) {
+	while ((opt = getopt(argc, argv, "b:c:d:n:p:s:htf:e:t:w:")) != -1) {
 		switch (opt) {
 		case 'd':
+			// set path to disk under test
 			strncpy(disk_path, (const char *)optarg, ELPHEL_PATH_MAX - 1);
 			break;
 		case 'n':
@@ -713,12 +792,14 @@ int main(int argc, char *argv[])
 			port_num = (uint16_t)atoi((const char *)optarg);
 			break;
 		case 'h':
+			// print help message
 			printf(usage, argv[0], argv[0]);
 			return EXIT_SUCCESS;
 		case 's':
 			strncpy(state_name_str, (const char *)optarg, ELPHEL_PATH_MAX - 1);
 			break;
 		case 'b':
+			// set test block size
 			dd_params.block_size = strtoul((const char *)optarg, (char **)NULL, 10);
 			if (errno != 0) {
 				printf("error parsing block size value: %s\n", strerror(errno));
@@ -727,6 +808,7 @@ int main(int argc, char *argv[])
 			printf("block size is set to %lu\n", dd_params.block_size);
 			break;
 		case 'c':
+			// set the number of test blocks to write
 			dd_params.block_count = strtoul((const char *)optarg, (char **)NULL, 10);
 			dd_params.block_count_init = dd_params.block_count;
 			if (errno != 0) {
@@ -736,16 +818,24 @@ int main(int argc, char *argv[])
 			printf("block count is set to %lu\n", dd_params.block_count);
 			break;
 		case 't':
+			// switch to test mode
 			test_mode = true;
 			break;
 		case 'f':
+			// set initial LBA
 			range.from = strtoull((const char *)optarg, (char **)NULL, 10);
 			break;
 		case 'e':
+			// set last LBA
 			range.to = strtoull((const char *)optarg, (char **)NULL, 10);
 			break;
+		case 'w':
+			// set path file were recording statistics is saved
+			strncpy(stat_file, (const char *)optarg, ELPHEL_PATH_MAX - 1);
 		}
 	}
+
+	signal(SIGINT, int_handler);
 
 	camogm_init(&sstate, pipe_name_str, port_num);
 	if (!test_mode) {
@@ -757,6 +847,9 @@ int main(int argc, char *argv[])
 			strncpy(sstate.rawdev.state_path, state_name_str, str_len + 1);
 		}
 		camogm_set_prefix(&sstate, disk_path);
+		str_len = strlen(stat_file);
+		if (str_len > 0)
+			strncpy(sstate.path, stat_file, ELPHEL_PATH_MAX - 1);
 		if (sstate.rawdev_op == 1) {
 			prep_data(&sstate, &dd_params);
 
