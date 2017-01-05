@@ -523,7 +523,7 @@ int sendImageFrame(camogm_state *state)
 	int port = state->port_num;
 
 // This is probably needed only for Quicktime (not to exceed already allocated frame index)
-	if (state->frameno >= (state->max_frames)) {
+	if (!state->rawdev_op && (state->frameno >= (state->max_frames))) {
 		D3(fprintf(debug_file, "sendImageFrame:1: state->frameno(0x%x) >= state->max_frames(0x%x)\n", state->frameno, state->max_frames));
 		return -CAMOGM_FRAME_CHANGED;
 	}
