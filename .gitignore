@@ -12,4 +12,5 @@ generated*
 sysroots
 bitbake-logs
 camogm
+camogm_test
 image
