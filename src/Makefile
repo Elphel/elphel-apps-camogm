@@ -1,6 +1,7 @@
 GUIDIR     = camogmgui
 PROGS      = camogm
 TEST_PROG  = camogm_test
+EXESCRIPTS = format_disk/format_disk.py
 PHPSCRIPTS = camogmstate.php $(GUIDIR)/camogmgui.php $(GUIDIR)/camogmgui.css $(GUIDIR)/camogmgui.js $(GUIDIR)/camogm_interface.php \
              $(GUIDIR)/SpryTabbedPanels.css $(GUIDIR)/SpryTabbedPanels.js $(GUIDIR)/xml_simple.php $(GUIDIR)/SpryCollapsiblePanel.css \
              $(GUIDIR)/SpryCollapsiblePanel.js
@@ -22,6 +23,7 @@ INSTALL    = install
 INSTMODE   = 0755
 INSTDOCS   = 0644
 OWN        = -o root -g root
+LN         = ln -sf
 
 SYSCONFDIR = /etc/
 BINDIR     = /usr/bin/
@@ -35,10 +37,11 @@ $(PROGS): $(OBJS)
 
 $(TEST_PROG): $(TEST_SRC:.c=.o)
 
-install: $(PROGS) $(PHPSCRIPTS) $(CONFIGS)
+install: $(PROGS) $(PHPSCRIPTS) $(CONFIGS) $(EXESCRIPTS)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(BINDIR)
 	$(INSTALL) $(OWN) -m $(INSTMODE) $(PROGS)      $(DESTDIR)$(BINDIR)
 	$(INSTALL) $(OWN) -m $(INSTMODE) $(TEST_PROG)  $(DESTDIR)$(BINDIR)
+	$(INSTALL) $(OWN) -m $(INSTMODE) $(EXESCRIPTS) $(DESTDIR)$(BINDIR)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(SYSCONFDIR)
 	$(INSTALL) $(OWN) -m $(INSTDOCS) $(CONFIGS)    $(DESTDIR)$(SYSCONFDIR)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(WWW_PAGES)
