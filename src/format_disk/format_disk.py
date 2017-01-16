@@ -4,22 +4,33 @@ from __future__ import print_function
 from __future__ import division
 from subprocess import CalledProcessError
 
+''' 
+/**
+ * @file format_disk.py
+ * @brief Prepare and partition new disk for fast recording. This script creates two partitions on a disk: 
+ * one is formatted to ext4 and the other is left unformatted for fast recording from camogm.
+ * @copyright Copyright (C) 2017 Elphel Inc.
+ * @author Mikhail Karpenko <mikhail@elphel.com>
+ * @deffield updated: 
+ *
+ * @par <b>License</b>:
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
 '''
-# Copyright (C) 2017, Elphel.inc.
-# Prepare and partition new disk for fast recording.
-# This script creates two partitions on a disk: one is formatted to ext4 and the other
-# is left unformatted for fast recording from camogm.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-'''
+
 __author__ = "Elphel"
-__copyright__ = "Copyright 2017, Elphel, Inc."
+__copyright__ = "Copyright 2017 Elphel Inc."
 __license__ = "GPL"
 __version__ = "3.0+"
 __maintainer__ = "Mikhail Karpenko"
@@ -165,7 +176,7 @@ def get_disk_size(dev_path):
         disk_size = 0
     return disk_size
 
-def partition_disk(dev_path, sys_size, disk_size, dry_run = True):
+def partition_disk(dev_path, sys_size, disk_size, dry_run = True, force = False):
     """
     Create partitions on disk and format system partition.
     @param dev_path: path to device
@@ -178,17 +189,31 @@ def partition_disk(dev_path, sys_size, disk_size, dry_run = True):
             # create system partition
             start = 0
             end = sys_size
-            subprocess.check_call(['parted', dev_path, 'unit', 'GB', 'mkpart', 'primary', str(start), str(end)])
+            subprocess.check_output(['parted', '-s', dev_path, 'unit', 'GB',
+                                     'mklabel', 'msdos',
+                                     'mkpart', 'primary', str(start), str(end)], stderr = subprocess.STDOUT)
             # create raw partition
             start = sys_size
             end = disk_size
-            subprocess.check_call(['parted', dev_path, 'unit', 'GB', 'mkpart', 'primary', str(start), str(end)])
-            # make file system of first partition
+            subprocess.check_output(['parted', '-s', dev_path, 'unit', 'GB',
+                                     'mkpart', 'primary', str(start), str(end)], stderr = subprocess.STDOUT)
+            # make file system on first partition
             partition = dev_path + '1'
-            subprocess.check_call(['mkfs.ext4', partition])
+            if force:
+                f_param = '-FF'
+                # if system partition contained a file system then it will be mounted right after partitioning
+                # check this situation and unmount partition
+                mounted = subprocess.check_output(['mount'])
+                for item in mounted.splitlines():
+                    mount_point = re.search('^{0}'.format(partition), item)
+                    if mount_point:
+                        subprocess.check_output(['umount', partition])
+            else:
+                f_param = ''
+            subprocess.check_output(['mkfs.ext4', f_param, partition], stderr = subprocess.STDOUT)
         ret_str = ""
     except subprocess.CalledProcessError as e:
-        ret_str = str(e.returncode)
+        ret_str = e.output
     except OSError as e:
         ret_str = e.strerror
     return ret_str
@@ -206,15 +231,22 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description = "Prepare and partition new disk for fast recording from camogm")
     parser.add_argument('disk_path', nargs = '?', help = "path to a disk which should be partitioned, e.g /dev/sda")
-    parser.add_argument('-l', '--list', action = 'store_true', help = "list attached disk(s) suitable for partitioning")
+    parser.add_argument('-l', '--list', action = 'store_true', help = "list attached disk(s) suitable for partitioning along " + 
+    "with their totals sizes and possible system partition sizes separated by colon")
     parser.add_argument('-e', '--errno', nargs = 1, type = int, help = "convert error number returned by the script to error message")
     parser.add_argument('-d', '--dry_run', action = 'store_true', help = "execute the script but do not actually create partitions")
+    parser.add_argument('-f', '--force', action = 'store_true', help = "force 'mkfs' to create a file system")
     args = parser.parse_args()
 
     if args.list:
         disks = find_disks()
         for disk in disks:
-            print(disk)
+            total_size = get_disk_size(disk)
+            if total_size > 0:
+                sys_size = total_size * (SYS_PARTITION_RATIO / 100)
+            else:
+                sys_size = 0
+            print('{0}:{1} GB:{2} GB'.format(disk, total_size, sys_size))
     elif args.errno:
         ret = ErrCodes(args.errno[0])
         print(ret.err2str())
@@ -246,10 +278,14 @@ if __name__ == "__main__":
         total_size = get_disk_size(disk_path)
         if total_size > 0:
             sys_size = total_size * (SYS_PARTITION_RATIO / 100)
-            ret_str = partition_disk(disk_path, sys_size, total_size, args.dry_run)
+            if args.force:
+                force = args.force
+            else:
+                force = False
+            ret_str = partition_disk(disk_path, sys_size, total_size, args.dry_run, force)
             if ret_str:
                 ret_code = ErrCodes(ErrCodes.PART_FAILURE)
-                print(ret_code.err2str())
+                print('{0}: {1}'.format(ret_code.err2str(), ret_str))
                 sys.exit(ret_code.err_code)
     else:
         parser.print_help()
