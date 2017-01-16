@@ -1,5 +1,5 @@
 # Runs 'make', 'make install', and 'make clean' in specified subdirectories
-SUBDIRS := src
+SUBDIRS := src src/format_disk
 INSTALLDIRS = $(SUBDIRS:%=install-%)
 CLEANDIRS =   $(SUBDIRS:%=clean-%)
 
