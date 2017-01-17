@@ -47,6 +47,8 @@ function table_row_err($msg)
 
 function table_body($disks)
 {
+	global $parted_script;
+	
 	$ret_val = $disks["ret_val"];
 	$num = count($disks["disks"]);
 	if ($ret_val == 0 && $num > 0) {
@@ -55,8 +57,22 @@ function table_body($disks)
 			table_row($i, $data[0], $data[1], $data[2]);
 		}
 	} else if ($ret_val == 0 && $num == 0) {
-		$msg = "No disks suitable for partitioning";
-		table_row_err($msg);
+		exec($parted_script . " --partitions", $output, $ret);
+		if ($ret == 0) {
+			$msg = "Disk is already partitioned: ";
+			foreach ($output as $line) {
+				$plist = explode(':', $line);
+				foreach ($plist as $p) {
+					$msg = $msg . $p . " ";
+				}
+			}
+			$partition = substr($plist[0], 0, strpos($plist[0], '(') - 1);
+			$disk = substr($partition, 0, -1);
+			table_row(0, $disk, "", "", $msg);
+		} else {
+			$msg = "No disks suitable for partitioning";
+			table_row_err($msg);
+		}
 	} else {
 		table_row_err($disks["disks"][0]);
 	}

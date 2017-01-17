@@ -106,9 +106,11 @@ def check_prerequisites():
                 ret_str = tool[0]
     return ret_str
 
-def find_disks():
+def find_disks(partitioned = False):
     """
-    Find all attached and unpartitioned SCSI disks.
+    Find all attached and, by default, unpartitioned SCSI disks. If a key is specified
+    then a list of all attached disks is is returned.
+    @param partitioned: include partitioned disks
     Return: a list containing paths to disks
     """
     dlist = []
@@ -119,8 +121,11 @@ def find_disks():
             dev = re.search(' +(sd[a-z]$)', partition)
             if dev:
                 dev_path = '/dev/{0}'.format(dev.group(1))
-                plist = find_partitions(dev_path)
-                if not plist:
+                if not partitioned:
+                    plist = find_partitions(dev_path)
+                    if not plist:
+                        dlist.append(dev_path)
+                else:
                     dlist.append(dev_path)
     except:
         # something went wrong, clear list to prevent accidental data loss
@@ -136,12 +141,12 @@ def find_partitions(dev_path):
     plist = []
     try:
         partitions = subprocess.check_output(['cat', '/proc/partitions'])
-        search_str = ' +({0}[0-9]+$)'.format(dev_path.rpartition('/')[-1])
+        search_str = '([0-9]+) +({0}[0-9]+$)'.format(dev_path.rpartition('/')[-1])
         # the first two elemets of the list are table header and empty line delimiter, skip them
         for partition in partitions.splitlines()[2:]:
             dev = re.search(search_str, partition)
             if dev:
-                plist.append('/dev/{0}'.format(dev.group(1)))
+                plist.append('/dev/{0} ({1:.1f} GB)'.format(dev.group(2), int(dev.group(1)) / 1000000))
     except:
         # something went wrong, clear list to prevent accidental data loss
         del plist[:]
@@ -236,6 +241,7 @@ if __name__ == "__main__":
     parser.add_argument('-e', '--errno', nargs = 1, type = int, help = "convert error number returned by the script to error message")
     parser.add_argument('-d', '--dry_run', action = 'store_true', help = "execute the script but do not actually create partitions")
     parser.add_argument('-f', '--force', action = 'store_true', help = "force 'mkfs' to create a file system")
+    parser.add_argument('-p', '--partitions', action = 'store_true', help = "list partitions and their sizes separated by colon")
     args = parser.parse_args()
 
     if args.list:
@@ -247,6 +253,12 @@ if __name__ == "__main__":
             else:
                 sys_size = 0
             print('{0}:{1} GB:{2} GB'.format(disk, total_size, sys_size))
+    elif args.partitions:
+        all_partitions = []
+        dlist = find_disks(partitioned = True)
+        for disk in dlist:
+            all_partitions += find_partitions(disk)
+        print(':'.join(all_partitions))
     elif args.errno:
         ret = ErrCodes(args.errno[0])
         print(ret.err2str())
