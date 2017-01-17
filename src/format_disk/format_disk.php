@@ -59,13 +59,14 @@ function table_body($disks)
 	} else if ($ret_val == 0 && $num == 0) {
 		exec($parted_script . " --partitions", $output, $ret);
 		if ($ret == 0) {
-			$msg = "Disk is already partitioned: ";
+			$msg = "Disk is already partitioned: <ul>";
 			foreach ($output as $line) {
 				$plist = explode(':', $line);
 				foreach ($plist as $p) {
-					$msg = $msg . $p . " ";
+					$msg = $msg . "<li>" . $p . "</li>";
 				}
 			}
+			$msg = $msg . "</ul>";
 			$partition = substr($plist[0], 0, strpos($plist[0], '(') - 1);
 			$disk = substr($partition, 0, -1);
 			table_row(0, $disk, "", "", $msg);
