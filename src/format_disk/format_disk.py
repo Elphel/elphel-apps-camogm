@@ -43,6 +43,7 @@ import sys
 import stat
 import argparse
 import subprocess
+import time
 
 # use this % of total disk space for system partition
 SYS_PARTITION_RATIO = 5
@@ -202,7 +203,8 @@ def partition_disk(dev_path, sys_size, disk_size, dry_run = True, force = False)
             end = disk_size
             subprocess.check_output(['parted', '-s', dev_path, 'unit', 'GB',
                                      'mkpart', 'primary', str(start), str(end)], stderr = subprocess.STDOUT)
-            # make file system on first partition
+            # make file system on first partition; delay to let the changes propagate to the system
+            time.sleep(2)
             partition = dev_path + '1'
             if force:
                 f_param = '-FF'
