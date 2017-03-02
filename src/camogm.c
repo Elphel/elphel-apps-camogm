@@ -593,7 +593,7 @@ int sendImageFrame(camogm_state *state)
 		return -CAMOGM_FRAME_CHANGED; // not yet checking for the FPS
 	}
 //   check if file duration (in seconds) exceeded ,-CAMOGM_FRAME_CHANGED will trigger a new segment
-	if ((state->segment_duration > 0) &&
+	if (!state->rawdev_op && (state->segment_duration > 0) &&
 	    ((state->this_frame_params[port].timestamp_sec - state->frame_params[port].timestamp_sec) > state->segment_duration)) {
 		D3(fprintf(debug_file, "sendImageFrame:10: segment duration in seconds exceeded\n"));
 		return -CAMOGM_FRAME_CHANGED;
