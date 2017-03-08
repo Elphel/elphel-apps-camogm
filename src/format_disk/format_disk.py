@@ -207,7 +207,7 @@ def partition_disk(dev_path, sys_size, disk_size, dry_run = True, force = False)
             time.sleep(2)
             partition = dev_path + '1'
             if force:
-                f_param = '-FF'
+                cmd_str = ['mkfs.ext4', '-FF', partition]
                 # if system partition contained a file system then it will be mounted right after partitioning
                 # check this situation and unmount partition
                 mounted = subprocess.check_output(['mount'])
@@ -216,8 +216,8 @@ def partition_disk(dev_path, sys_size, disk_size, dry_run = True, force = False)
                     if mount_point:
                         subprocess.check_output(['umount', partition])
             else:
-                f_param = ''
-            subprocess.check_output(['mkfs.ext4', f_param, partition], stderr = subprocess.STDOUT)
+                cmd_str = ['mkfs.ext4', partition]
+            subprocess.check_output(cmd_str, stderr = subprocess.STDOUT)
         ret_str = ""
     except subprocess.CalledProcessError as e:
         ret_str = e.output
