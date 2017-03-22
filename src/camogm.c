@@ -365,6 +365,7 @@ int camogm_start(camogm_state *state)
 		if (is_chn_active(state, chn)) {
 			// Check/set circbuf read pointer
 			D3(fprintf(debug_file, "1: state->cirbuf_rp=0x%x\n", state->cirbuf_rp[chn]));
+			D3(fprintf(debug_file, "1a: compressed frame number = %i\n", lseek(state->fd_circ[chn], LSEEK_CIRC_GETFRAME, SEEK_END)));
 			if ((state->cirbuf_rp[chn] < 0) || (lseek(state->fd_circ[chn], state->cirbuf_rp[chn], SEEK_SET) < 0) || (lseek(state->fd_circ[chn], LSEEK_CIRC_VALID, SEEK_END) < 0 )) {
 				D3(fprintf(debug_file, "2: state->cirbuf_rp=0x%x\n", state->cirbuf_rp[chn]));
 				/* In "greedy" mode try to save as many frames from the circbuf as possible */
@@ -659,6 +660,7 @@ int sendImageFrame(camogm_state *state)
 		state->packetchunks[state->chunk_index  ].bytes = state->jpeg_len;
 		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][state->cirbuf_rp[port] >> 2];
 	}
+	D3(fprintf(debug_file, "\tcirbuf_rp = 0x%x\t", state->cirbuf_rp[port]));
 	D3(fprintf(debug_file, "_12_"));
 	state->packetchunks[state->chunk_index  ].bytes = 2;
 	state->packetchunks[state->chunk_index++].chunk = (unsigned char*)trailer;
@@ -681,6 +683,7 @@ int sendImageFrame(camogm_state *state)
 // advance frame pointer
 	state->frameno++;
 	state->cirbuf_rp[port] = lseek(state->fd_circ[port], LSEEK_CIRC_NEXT, SEEK_END);
+	D3(fprintf(debug_file, "\tcompressed frame number: %li\t", lseek(state->fd_circ[port], LSEEK_CIRC_GETFRAME, SEEK_END)));
 // optionally save it to global read pointer (i.e. for debugging with imgsrv "/pointers")
 	if (state->save_gp) lseek(state->fd_circ[port], LSEEK_CIRC_SETP, SEEK_END);
 	D3(fprintf(debug_file, "_15_\n"));
@@ -689,6 +692,7 @@ int sendImageFrame(camogm_state *state)
 	} else if (state->frames_skip < 0) {
 		state->frames_skip_left[port] += -(state->frames_skip);
 	}
+	D3(fprintf(debug_file,"cirbuf_rp to next frame = 0x%x\n", state->cirbuf_rp[port]));
 	return 0;
 }
 
