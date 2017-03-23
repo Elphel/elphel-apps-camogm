@@ -166,6 +166,7 @@ static uint64_t get_disk_size(const char *name);
 static int get_sysfs_name(const char *dev_name, char *sys_name, size_t str_sz, int type);
 static int get_disk_range(const char *name, struct range *rng);
 static int set_disk_range(const struct range *rng);
+static void get_disk_info(camogm_state *state);
 int open_files(camogm_state *state);
 unsigned long getGPValue(unsigned int port, unsigned long GPNumber);
 void setGValue(unsigned int port, unsigned long GNumber, unsigned long value);
@@ -841,30 +842,39 @@ void  camogm_set_ignore_fps(camogm_state *state, int d)
  */
 void  camogm_set_prefix(camogm_state *state, const char * p, path_type type)
 {
-	struct range rng = {0};
-
 	if (type == FILE_PATH) {
 		strncpy(state->path_prefix, p, sizeof(state->path_prefix) - 1);
 		state->path_prefix[sizeof(state->path_prefix) - 1] = '\0';
 	} else if (type == RAW_PATH && (strncmp(p, "/dev/", 5) == 0)) {
 		strncpy(state->rawdev.rawdev_path, p, sizeof(state->rawdev.rawdev_path) - 1);
 		state->rawdev.rawdev_path[sizeof(state->rawdev.rawdev_path) - 1] = '\0';
-		state->rawdev.end_pos = get_disk_size(state->rawdev.rawdev_path);
-		if (state->rawdev.end_pos == 0) {
-			state->rawdev_op = 0;
-			state->rawdev.end_pos = state->rawdev.start_pos;
-			state->rawdev.rawdev_path[0] = '\0';
-			D0(fprintf(debug_file, "ERROR: unable to initiate raw device operation\n"));
-		} else {
-			D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
-			state->rawdev_op = 1;
-		}
+	}
+}
 
-		if (get_disk_range(state->rawdev.rawdev_path, &rng) == 0) {
-			set_disk_range(&rng);
-		} else {
-			D0(fprintf(debug_file, "ERROR: unable to get disk size and starting sector\n"));
-		}
+/**
+ * @brief Get disk size, first LBA, last LBA and save these parameters in state structure.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      None
+ */
+void get_disk_info(camogm_state *state)
+{
+	struct range rng = {0};
+
+	state->rawdev.end_pos = get_disk_size(state->rawdev.rawdev_path);
+	if (state->rawdev.end_pos == 0) {
+		state->rawdev_op = 0;
+		state->rawdev.end_pos = state->rawdev.start_pos;
+		state->rawdev.rawdev_path[0] = '\0';
+		D0(fprintf(debug_file, "ERROR: unable to initiate raw device operation\n"));
+	} else {
+		D0(fprintf(debug_file, "WARNING: raw device write initiated\n"));
+		state->rawdev_op = 1;
+	}
+
+	if (get_disk_range(state->rawdev.rawdev_path, &rng) == 0) {
+		set_disk_range(&rng);
+	} else {
+		D0(fprintf(debug_file, "ERROR: unable to get disk size and starting sector\n"));
 	}
 }
 
@@ -1263,6 +1273,8 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 	}
 // now cmd is trimmed, arg is NULL or a pointer to trimmed command arguments
 	if (strcmp(cmd, "start") == 0) {
+		check_compressors(state);
+		get_disk_info(state);
 		camogm_start(state);
 		return 1;
 	} else if (strcmp(cmd, "reset") == 0) { // will reset pointer to the last acquired frame (if any)
