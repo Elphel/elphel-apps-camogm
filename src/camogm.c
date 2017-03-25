@@ -541,14 +541,13 @@ int sendImageFrame(camogm_state *state)
 		return -CAMOGM_FRAME_CHANGED;
 	}
 //same for open
-	if (((state->ivf) >= 0) && (state->segment_length >= 0) && (lseek(state->ivf, 0, SEEK_CUR) > state->segment_length)) {
+	if (!state->rawdev_op && ((state->ivf) >= 0) && (state->segment_length >= 0) && (lseek(state->ivf, 0, SEEK_CUR) > state->segment_length)) {
 		D3(fprintf(debug_file, "sendImageFrame:4: segment length exceeded\n"));
 		return -CAMOGM_FRAME_CHANGED;
 	}
 // check the frame pointer is valid
 	if ((fp = lseek(state->fd_circ[port], state->cirbuf_rp[port], SEEK_SET)) < 0) {
 		D3(fprintf(debug_file, "sendImageFrame:5: invalid frame\n"));
-
 		return -CAMOGM_FRAME_INVALID; //it will probably be that allready
 	}
 // is the frame ready?
@@ -1537,7 +1536,9 @@ int listener_loop(camogm_state *state)
 				exit(-1);
 			} // switch sendImageFrame()
 
-			if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED)) state->last_error_code = rslt;
+			if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED))
+				// add port number to error code to facilitate debugging
+				state->last_error_code = rslt + 100 * state->port_num;
 		} else if (state->prog_state == STATE_STARTING) { // no commands in queue,starting (but not started yet)
 
 			// retry starting
@@ -1566,7 +1567,9 @@ int listener_loop(camogm_state *state)
 				clean_up(state);
 				exit(-1);
 			} // switch camogm_start()
-			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) ) state->last_error_code = rslt;
+			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) )
+				// add port number to error code to facilitate debugging
+				state->last_error_code = rslt + 100 * state->port_num;
 		} else if (state->prog_state == STATE_READING) {
 			usleep(COMMAND_LOOP_DELAY);
 		} else {                            // not running, not starting
@@ -1789,6 +1792,11 @@ unsigned int select_port(camogm_state *state)
 					min_sz = free_sz;
 					chn = i;
 				}
+			} else {
+				// current frame pointer is possibly overwritten (buffer overflow), select
+				// this channel which will force sendImageFrame() to take recovery actions
+				chn = i;
+				break;
 			}
 		} else {
 			if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
