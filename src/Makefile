@@ -31,7 +31,7 @@ IMAGEDIR   = $(WWW_PAGES)/images
 all: $(PROGS) $(TEST_PROG)
 
 $(PROGS): $(OBJS)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 $(TEST_PROG): $(TEST_SRC:.c=.o)
 

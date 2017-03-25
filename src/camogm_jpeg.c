@@ -36,6 +36,9 @@
 /** State file record format. It includes device path in /dev, starting, current and ending LBAs */
 #define STATE_FILE_FORMAT         "%s\t%llu\t%llu\t%llu\n"
 
+/* forward declarations */
+static void *jpeg_writer(void *thread_args);
+
 /** Get starting and endign LBAs of the partition specified as raw device buffer */
 static int get_disk_range(struct range *range)
 {
@@ -162,13 +165,62 @@ static int save_state_file(const rawdev_buffer *rawdev)
 	return ret;
 }
 
+/**
+ * @brief Initialize synchronization resources for disk writing thread and then start this thread. This function
+ * is call each time JPEG format is set or changed, thus we need to check the state of writing thread before
+ * initialization to prevent spawning multiple threads.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      0 if initialization was successful and negative value otherwise
+ */
 int camogm_init_jpeg(camogm_state *state)
 {
-	return 0;
+	int ret = 0;
+	int ret_val;
+
+	if (state->writer_params.state == STATE_STOPPED) {
+		ret_val = pthread_cond_init(&state->writer_params.main_cond, NULL);
+		if (ret_val != 0) {
+			D0(fprintf(debug_file, "Can not initialize conditional variable for main thread: %s\n", strerror(ret_val)));
+			ret = -1;
+		}
+		ret_val = pthread_cond_init(&state->writer_params.writer_cond, NULL);
+		if (ret_val != 0) {
+			D0(fprintf(debug_file, "Can not initialize conditional variable for writing thread: %s\n", strerror(ret_val)));
+			ret = -1;
+		}
+		ret_val = pthread_mutex_init(&state->writer_params.writer_mutex, NULL);
+		if (ret_val != 0) {
+			D0(fprintf(debug_file, "Can not initialize mutex for writing thread: %s\n", strerror(ret_val)));
+			ret = -1;
+		}
+		ret_val = pthread_create(&state->writer_params.writer_thread, NULL, jpeg_writer, (void *)state);
+		if (ret_val != 0) {
+			D0(fprintf(debug_file, "Can not start writer thread: %s\n", strerror(ret_val)));
+			ret = -1;
+		}
+	}
+
+	return ret;
 }
 
-void camogm_free_jpeg(void)
+/**
+ * @brief Stop disk writing thread and free its resources. This function is called after the program receives 'exit' command.
+ * @param[in]   state   a pointer to a structure containing current state
+ * @return      None
+ */
+void camogm_free_jpeg(camogm_state *state)
 {
+	pthread_cond_destroy(&state->writer_params.main_cond);
+	pthread_cond_destroy(&state->writer_params.writer_cond);
+	pthread_mutex_destroy(&state->writer_params.writer_mutex);
+
+	// terminate writing thread
+	pthread_mutex_lock(&state->writer_params.writer_mutex);
+	state->writer_params.exit_thread = true;
+	pthread_cond_signal(&state->writer_params.writer_cond);
+	pthread_mutex_unlock(&state->writer_params.writer_mutex);
+	pthread_join(state->writer_params.writer_thread, NULL);
+	state->writer_params.exit_thread = false;
 }
 
 /** Calculate the total length of current frame */
@@ -212,16 +264,16 @@ int camogm_start_jpeg(camogm_state *state)
 			}
 		}
 	} else {
-		if (open_state_file(&state->rawdev) != 0) {
-			D0(fprintf(debug_file, "Could not set write pointer via sysfs, recording will start from the beginning of partition: "
-					"%s\n", state->rawdev.rawdev_path));
-		}
-		state->rawdev.sysfs_fd = open(SYSFS_AHCI_WRITE, O_WRONLY);
-		D6(fprintf(debug_file, "Open sysfs file: %s\n", SYSFS_AHCI_WRITE));
-		if (state->rawdev.sysfs_fd < 0) {
-			D0(fprintf(debug_file, "Error opening sysfs file: %s\n", SYSFS_AHCI_WRITE));
+//		if (open_state_file(&state->rawdev) != 0) {
+//			D0(fprintf(debug_file, "Could not set write pointer via sysfs, recording will start from the beginning of partition: "
+//					"%s\n", state->rawdev.rawdev_path));
+//		}
+		state->writer_params.blockdev_fd = open(state->rawdev.rawdev_path, O_WRONLY);
+		if (state->writer_params.blockdev_fd < 0) {
+			D0(fprintf(debug_file, "Error opening block device: %s\n", state->rawdev.rawdev_path));
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
+		D6(fprintf(debug_file, "Open block device: %s\n", state->rawdev.rawdev_path));
 	}
 
 	return 0;
@@ -242,6 +294,7 @@ int camogm_frame_jpeg(camogm_state *state)
 	int port = state->port_num;
 	struct frame_data fdata = {0};
 
+	sprintf(state->path, "%s%d_%010ld_%06ld.jpeg", state->path_prefix, port, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
 	if (!state->rawdev_op) {
 		l = 0;
 		for (i = 0; i < (state->chunk_index) - 1; i++) {
@@ -249,7 +302,6 @@ int camogm_frame_jpeg(camogm_state *state)
 			chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
 			l += chunks_iovec[i].iov_len;
 		}
-		sprintf(state->path, "%s%d_%010ld_%06ld.jpeg", state->path_prefix, port, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
 		if (((state->ivf = open(state->path, O_RDWR | O_CREAT, 0777))) < 0) {
 			D0(fprintf(debug_file, "Error opening %s for writing, returned %d, errno=%d\n", state->path, state->ivf, errno));
 			return -CAMOGM_FRAME_FILE_ERR;
@@ -261,26 +313,31 @@ int camogm_frame_jpeg(camogm_state *state)
 			close(state->ivf);
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
+		state->rawdev.last_jpeg_size = l;
 		close(state->ivf);
 	} else {
 		D6(fprintf(debug_file, "\ndump iovect array for port %u\n", state->port_num));
 		for (int i = 0; i < state->chunk_index - 1; i++) {
 			D6(fprintf(debug_file, "ptr: %p, length: %ld\n", state->packetchunks[i + 1].chunk, state->packetchunks[i + 1].bytes));
 		}
-		fdata.sensor_port = port;
-		fdata.cirbuf_ptr = state->cirbuf_rp[port];
-		fdata.jpeg_len = state->jpeg_len;
-		if (state->exif) {
-			fdata.meta_index = state->this_frame_params[port].meta_index;
-			fdata.cmd |= DRV_CMD_EXIF;
+		// next frame is ready for recording, signal this to the writer thread
+		pthread_mutex_lock(&state->writer_params.writer_mutex);
+		while (state->writer_params.data_ready)
+			pthread_cond_wait(&state->writer_params.main_cond, &state->writer_params.writer_mutex);
+		D6(fprintf(debug_file, "_13a_"));
+		// proceed if last frame was recorded without errors
+		if (state->writer_params.last_ret_val == 0) {
+			state->writer_params.data_ready = true;
+			pthread_cond_signal(&state->writer_params.writer_cond);
 		}
-		fdata.cmd |= DRV_CMD_WRITE;
-		if (write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data)) < 0) {
-			D0(fprintf(debug_file, "Can not pass IO vector to driver: %s\n", strerror(errno)));
-			return -CAMOGM_FRAME_FILE_ERR;
+		pthread_mutex_unlock(&state->writer_params.writer_mutex);
+		if (state->writer_params.last_ret_val != 0) {
+			return state->writer_params.last_ret_val;
 		}
+
 		// update statistics
-		state->rawdev.total_rec_len += camogm_get_jpeg_size(state);
+		state->rawdev.last_jpeg_size = camogm_get_jpeg_size(state);
+		state->rawdev.total_rec_len += state->rawdev.last_jpeg_size;
 	}
 
 	return 0;
@@ -299,16 +356,64 @@ int camogm_end_jpeg(camogm_state *state)
 	struct frame_data fdata = {0};
 
 	if (state->rawdev_op) {
-		fdata.cmd = DRV_CMD_FINISH;
-		if (write(state->rawdev.sysfs_fd, &fdata, sizeof(struct frame_data)) < 0) {
-			D0(fprintf(debug_file, "Error sending 'finish' command to driver\n"));
-		}
-		D6(fprintf(debug_file, "Closing sysfs file %s\n", SYSFS_AHCI_WRITE));
-		ret = close(state->rawdev.sysfs_fd);
+		D6(fprintf(debug_file, "Closing block device %s\n", state->rawdev.rawdev_path));
+		ret = close(state->writer_params.blockdev_fd);
 		if (ret == -1)
 			D0(fprintf(debug_file, "Error: %s\n", strerror(errno)));
 
-		save_state_file(&state->rawdev);
+//		save_state_file(&state->rawdev);
 	}
 	return ret;
+}
+
+/**
+ * @brief Disk writing thread. This thread holds local copy of a structure containing current state
+ * of the program and updates it on a signal from main thread every time new frame is ready for recording.
+ * @param[in]   thread_args   a pointer to a structure containing current state
+ * @return      None
+ */
+void *jpeg_writer(void *thread_args)
+{
+	int rslt = 0;
+	int chunk_index;
+	ssize_t iovlen, l;
+	bool process = true;
+	struct iovec chunks_iovec[FILE_CHUNKS_NUM];
+	camogm_state *state = (camogm_state *)thread_args;
+	struct writer_params *params = &state->writer_params;
+
+	memset((void *)chunks_iovec, 0, sizeof(struct iovec) * FILE_CHUNKS_NUM);
+	pthread_mutex_lock(&params->writer_mutex);
+	params->state = STATE_RUNNING;
+	while (process) {
+		while (!params->data_ready && !params->exit_thread) {
+			pthread_cond_wait(&params->writer_cond, &params->writer_mutex);
+		}
+		if (params->exit_thread) {
+			process = false;
+		}
+		if (params->data_ready) {
+			l = 0;
+			state->writer_params.last_ret_val = 0;
+			for (int i = 0; i < (state->chunk_index) - 1; i++) {
+				chunks_iovec[i].iov_base = state->packetchunks[i + 1].chunk;
+				chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
+				l += chunks_iovec[i].iov_len;
+			}
+			chunk_index = state->chunk_index;
+			iovlen = writev(state->writer_params.blockdev_fd, chunks_iovec, chunk_index - 1);
+			if (iovlen < l) {
+				D0(fprintf(debug_file, "writev error: %s (returned %li, expected %li)\n", strerror(errno), iovlen, l));
+				state->writer_params.last_ret_val = -CAMOGM_FRAME_FILE_ERR;
+			}
+
+			// release main thread
+			params->data_ready = false;
+			pthread_cond_signal(&params->main_cond);
+		}
+	}
+	params->state = STATE_STOPPED;
+	pthread_mutex_unlock(&state->writer_params.writer_mutex);
+
+	return NULL;
 }

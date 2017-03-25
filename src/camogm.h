@@ -65,6 +65,8 @@
 #define MMAP_CHUNK_SIZE           10485760
 /** @brief Time interval (in microseconds) for processing commands */
 #define COMMAND_LOOP_DELAY        500000
+/** @brief File can be split up to this number of chunks */
+#define FILE_CHUNKS_NUM           8
 
 /**
  * @enum state_flags
@@ -124,6 +126,7 @@ typedef struct {
 	uint64_t mmap_offset;
 	uint64_t file_start;
 	int64_t total_rec_len;
+	unsigned long last_jpeg_size;
 	pthread_t tid;
 	volatile int thread_state;
 	unsigned char *disk_mmap;
@@ -131,6 +134,23 @@ typedef struct {
 	char state_path[ELPHEL_PATH_MAX];
 } rawdev_buffer;
 
+/**
+ * @struct writer_params
+ * @brief Contains mutexes and conditional variables associated with disk writing thread
+ */
+struct writer_params {
+	int blockdev_fd;                                        ///< file descriptor for open block device where frame will be recorded
+	pthread_t writer_thread;                                ///< disk writing thread
+	pthread_mutex_t writer_mutex;                           ///< synchronization mutex for main and writing threads
+	pthread_cond_t writer_cond;                             ///< conditional variable indicating that writer thread can proceed with new frame
+	pthread_cond_t main_cond;                               ///< conditional variable indicating that main thread can update write pointers
+	bool data_ready;                                        ///< flag indicating that new frame is ready for recording, access to this flag
+	                                                        ///< must be protected with #writer_mutex. Set this flag in main thread and reset in
+	                                                        ///< disk writing thread.
+	int last_ret_val;                                       ///< error value return during last frame recording (if any occurred)
+	bool exit_thread;                                       ///< flag indicating that the writing thread should terminate
+	int state;                                              ///< the state of disk writing thread
+};
 /**
  * @struct camogm_state
  * @brief Holds current state of the running program
@@ -191,7 +211,7 @@ typedef struct {
 	int formats;                                            ///< bitmask of used (initialized) formats
 	int format;                                             ///< output file format
 	int set_format;                                         ///< output format to set (will be updated after stop)
-	elph_packet_chunk packetchunks[8];
+	elph_packet_chunk packetchunks[FILE_CHUNKS_NUM];
 	int chunk_index;
 	int buf_overruns[SENSOR_PORTS];
 	int buf_min[SENSOR_PORTS];
@@ -221,6 +241,7 @@ typedef struct {
 	rawdev_buffer rawdev;                                   ///< contains pointers to raw device buffer
 	unsigned int active_chn;                                ///< bitmask of active sensor ports
 	uint16_t sock_port; 									///< command socket port number
+	struct writer_params writer_params;                     ///< contains control parameters for writing thread
 } camogm_state;
 
 extern int debug_level;

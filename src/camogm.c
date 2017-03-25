@@ -64,21 +64,6 @@
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 
-#if 0
-const char *exifFileNames[] = { "/dev/exif_exif0", "/dev/exif_exif1",
-                                "/dev/exif_exif2", "/dev/exif_exif3"
-};
-
-const char *headFileNames[] = { "/dev/jpeghead0", "/dev/jpeghead1",
-                                "/dev/jpeghead2", "/dev/jpeghead3"
-};
-const char *ctlFileNames[] = {   "/dev/frameparsall0", "/dev/frameparsall1",
-                                "/dev/frameparsall2", "/de/framepars3"
-};
-const char *circbufFileNames[] = {"/dev/circbuf0", "/dev/circbuf1",
-                                "/dev/circbuf2", "/dev/circbuf3"
-};
-#else
 const char *exifFileNames[] = { DEV393_PATH(DEV393_EXIF0), DEV393_PATH(DEV393_EXIF1),
                                 DEV393_PATH(DEV393_EXIF2), DEV393_PATH(DEV393_EXIF3)
 };
@@ -92,7 +77,6 @@ const char *ctlFileNames[] = {  DEV393_PATH(DEV393_FRAMEPARS0), DEV393_PATH(DEV3
 const char *circbufFileNames[] = {DEV393_PATH(DEV393_CIRCBUF0), DEV393_PATH(DEV393_CIRCBUF1),
                                   DEV393_PATH(DEV393_CIRCBUF2), DEV393_PATH(DEV393_CIRCBUF3)
 };
-#endif
 
 int lastDaemonBit[SENSOR_PORTS] = {DAEMON_BIT_CAMOGM};
 struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
@@ -167,6 +151,7 @@ static int get_sysfs_name(const char *dev_name, char *sys_name, size_t str_sz, i
 static int get_disk_range(const char *name, struct range *rng);
 static int set_disk_range(const struct range *rng);
 static void get_disk_info(camogm_state *state);
+static struct timeval get_fpga_time(const int fd_fparsall, unsigned int port);
 int open_files(camogm_state *state);
 unsigned long getGPValue(unsigned int port, unsigned long GPNumber);
 void setGValue(unsigned int port, unsigned long GNumber, unsigned long value);
@@ -278,6 +263,10 @@ void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 	state->active_chn = ALL_CHN_INACTIVE;
 	state->rawdev.mmap_default_size = MMAP_CHUNK_SIZE;
 	state->sock_port = port_num;
+
+	state->writer_params.data_ready = false;
+	state->writer_params.exit_thread = false;
+	state->writer_params.state = STATE_STOPPED;
 }
 
 /**
@@ -365,7 +354,7 @@ int camogm_start(camogm_state *state)
 		if (is_chn_active(state, chn)) {
 			// Check/set circbuf read pointer
 			D3(fprintf(debug_file, "1: state->cirbuf_rp=0x%x\n", state->cirbuf_rp[chn]));
-			D3(fprintf(debug_file, "1a: compressed frame number = %i\n", lseek(state->fd_circ[chn], LSEEK_CIRC_GETFRAME, SEEK_END)));
+			D3(fprintf(debug_file, "1a: compressed frame number = %li\n", lseek(state->fd_circ[chn], LSEEK_CIRC_GETFRAME, SEEK_END)));
 			if ((state->cirbuf_rp[chn] < 0) || (lseek(state->fd_circ[chn], state->cirbuf_rp[chn], SEEK_SET) < 0) || (lseek(state->fd_circ[chn], LSEEK_CIRC_VALID, SEEK_END) < 0 )) {
 				D3(fprintf(debug_file, "2: state->cirbuf_rp=0x%x\n", state->cirbuf_rp[chn]));
 				/* In "greedy" mode try to save as many frames from the circbuf as possible */
@@ -523,6 +512,10 @@ int sendImageFrame(camogm_state *state)
 	int * ifp_this = (int*)&(state->this_frame_params[state->port_num]);
 	int fp;
 	int port = state->port_num;
+	struct timeval start_time, end_time;
+
+	D6(fprintf(debug_file, "last_error_code = %d\n", state->last_error_code));
+	start_time = get_fpga_time(state->fd_fparmsall[port], port);
 
 // This is probably needed only for Quicktime (not to exceed already allocated frame index)
 	if (!state->rawdev_op && (state->frameno >= (state->max_frames))) {
@@ -693,6 +686,18 @@ int sendImageFrame(camogm_state *state)
 		state->frames_skip_left[port] += -(state->frames_skip);
 	}
 	D3(fprintf(debug_file,"cirbuf_rp to next frame = 0x%x\n", state->cirbuf_rp[port]));
+
+	end_time = get_fpga_time(state->fd_fparmsall[port], port);
+	unsigned int mbps; // write speed, MB/s
+	unsigned long long time_diff; // time elapsed, in microseconds
+	time_diff = ((end_time.tv_sec * 1000000 + end_time.tv_usec) - (start_time.tv_sec * 1000000 + start_time.tv_usec));
+	mbps = ((double)state->rawdev.last_jpeg_size / (double)1048576) / ((double)time_diff / (double)1000000);
+	D6(fprintf(debug_file, "Frame start time: %ld:%ld; frame end time: %ld:%ld; last frame size: %lu\n",
+			start_time.tv_sec, start_time.tv_usec,
+			end_time.tv_sec, end_time.tv_usec,
+			state->rawdev.last_jpeg_size));
+	D6(fprintf(debug_file, "Write speed: %d MB/s\n", mbps));
+
 	return 0;
 }
 
@@ -750,7 +755,7 @@ void camogm_free(camogm_state *state)
 			switch (f) {
 			case CAMOGM_FORMAT_NONE: break;
 			case CAMOGM_FORMAT_OGM:  camogm_free_ogm(); break;
-			case CAMOGM_FORMAT_JPEG: camogm_free_jpeg(); break;
+			case CAMOGM_FORMAT_JPEG: camogm_free_jpeg(state); break;
 			case CAMOGM_FORMAT_MOV:  camogm_free_mov(); break;
 			}
 		}
@@ -1791,7 +1796,7 @@ unsigned int select_port(camogm_state *state)
 				free_sz = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
 				lseek(state->fd_circ[i], file_pos, SEEK_SET);
 				if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
-					D6(fprintf(debug_file, "port %i = %i, ", i, free_sz));
+					D6(fprintf(debug_file, "port %i = %li, ", i, free_sz));
 				if ((free_sz < min_sz && free_sz >= 0) || min_sz == -1) {
 					min_sz = free_sz;
 					chn = i;
@@ -1978,7 +1983,7 @@ int main(int argc, char *argv[])
 	sstate.rawdev.thread_state = STATE_RUNNING;
 	str_len = strlen(state_name_str);
 	if (str_len > 0) {
-		strncpy(&sstate.rawdev.state_path, state_name_str, str_len + 1);
+		strncpy(sstate.rawdev.state_path, (const char *)state_name_str, str_len + 1);
 	}
 
 	ret = listener_loop(&sstate);
@@ -2052,4 +2057,20 @@ int isDaemonEnabled(unsigned int port, int daemonBit)   // <0 - use default
 inline int is_fd_valid(int fd)
 {
 	return fcntl(fd, F_GETFD) != -1 || errno != EBADF;
+}
+
+/**
+ * @brief Get current FPGA time
+ * @return   Time value in \e timeval structure
+ */
+struct timeval get_fpga_time(const int fd_fparsall, unsigned int port)
+{
+	struct timeval tv;
+	unsigned long write_data[] = {FRAMEPARS_GETFPGATIME, 0};
+
+	write(fd_fparsall, write_data, sizeof(unsigned long) * 2);
+	tv.tv_sec = getGPValue(port, G_SECONDS);
+	tv.tv_usec = getGPValue(port, G_MICROSECONDS);
+
+	return tv;
 }
