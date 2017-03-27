@@ -38,6 +38,7 @@
 #define CAMOGM_TOO_EARLY          8        ///< too early to start, waiting for particular timestamp
 #define CAMOGM_FRAME_OTHER        9        ///< other errors
 #define CAMOGM_NO_SPACE           10       ///< no free space left on current file system
+#define CAMOGM_ERRNUM             11       ///< total number of errors returned, increase this if new error codes are added
 
 #define CAMOGM_FORMAT_NONE        0        ///< no video output
 #define CAMOGM_FORMAT_OGM         1        ///< output as Ogg Media file
@@ -221,6 +222,8 @@ typedef struct {
 	rawdev_buffer rawdev;                                   ///< contains pointers to raw device buffer
 	unsigned int active_chn;                                ///< bitmask of active sensor ports
 	uint16_t sock_port; 									///< command socket port number
+
+	unsigned int error_stat[SENSOR_PORTS][CAMOGM_ERRNUM];   ///< collect statistics about errors
 } camogm_state;
 
 extern int debug_level;

@@ -174,6 +174,7 @@ unsigned int select_port(camogm_state *states);
 inline void set_chn_state(camogm_state *s, unsigned int port, unsigned int new_state);
 inline int is_chn_active(camogm_state *s, unsigned int port);
 void clean_up(camogm_state *state);
+static void camogm_err_stat(const camogm_state *state, int port, FILE *f, bool xml);
 
 void put_uint16(void *buf, u_int16_t val)
 {
@@ -497,7 +498,10 @@ int camogm_start(camogm_state *state)
 	default: rslt = 0; // do nothing
 	}
 	if (rslt) {
+		unsigned int err_code = -rslt;
 		D0(fprintf(debug_file, "camogm_start() error, rslt=0x%x\n", rslt));
+		if (err_code > 0 && err_code < CAMOGM_ERRNUM)
+			state->error_stat[port][err_code]++;
 		return rslt;
 	}
 	if (state->kml_enable) rslt = camogm_start_kml(state);  // will turn on state->kml_used if it can
@@ -1109,8 +1113,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"\t\t<frame_period>%d</frame_period>\n" \
 			"\t\t<buffer_free>%d</buffer_free>\n" \
 			"\t\t<buffer_used>%d</buffer_used>\n" \
-			"\t\t<circbuf_rp>%d</circbuf_rp>\n" \
-			"\t</sensor_port_%d>\n",
+			"\t\t<circbuf_rp>%d</circbuf_rp>\n",
 				chn,
 				_active,
 				_compressor_state[chn],
@@ -1122,9 +1125,10 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 				state->frame_period[chn],
 				_b_free[chn],
 				_b_used[chn],
-				state->cirbuf_rp[chn],
-				chn
+				state->cirbuf_rp[chn]
 				);
+			camogm_err_stat(state, chn, f, true);
+			fprintf(f, "\t</sensor_port_%d>\n", chn);
 		}
 		fprintf(f, "</camogm_state>\n");
 	} else {
@@ -1186,6 +1190,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			fprintf(f, "buffer free        \t%d\n",    _b_free[chn]);
 			fprintf(f, "buffer used        \t%d\n",    _b_used[chn]);
 			fprintf(f, "circbuf_rp         \t%d (0x%x)\n", state->cirbuf_rp[chn], state->cirbuf_rp[chn]);
+			camogm_err_stat(state, chn, f, false);
 			fprintf(f, "\n");
 		}
 	}
@@ -1193,6 +1198,47 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	FOR_EACH_PORT(int, chn) {if (state->buf_overruns[chn] >= 0) state->buf_overruns[chn] = 0;}  // resets overruns after reading status , so "overruns" means since last reading status
 	state->last_error_code = 0;                             // Reset error
 	FOR_EACH_PORT(int, chn) {state->buf_min[chn] = _b_free[chn];}
+}
+
+/**
+ * Print collected error statistics in xml or plain text format.
+ * @param   state   pointer to a structure containing current state
+ * @param   port    sensor port for which statistics should be printed
+ * @param   fd      file stream for output
+ * @param   xml     flag indicating that statistics should be in xml format
+ * @return  None
+ */
+void camogm_err_stat(const camogm_state *state, int port, FILE *f, bool xml)
+{
+	if (xml) {
+		fprintf(f,
+				"\t\t<frame_not_ready>%u</frame_not_ready>\n" \
+				"\t\t<frame_nextfile>%u</frame_nextfile>\n" \
+				"\t\t<frame_invalid>%u</frame_invalid>\n" \
+				"\t\t<frame_changed>%u</frame_changed>\n" \
+				"\t\t<frame_broken>%u</frame_broken>\n" \
+				"\t\t<frame_file_err>%u</frame_file_err>\n" \
+				"\t\t<frame_malloc>%u</frame_malloc>\n" \
+				"\t\t<frame_too_early>%u</frame_too_early>\n" \
+				"\t\t<frame_other>%u</frame_other>\n" \
+				"\t\t<frame_nospace>%u</frame_nospace>\n",
+				state->error_stat[port][CAMOGM_FRAME_NOT_READY], state->error_stat[port][CAMOGM_FRAME_NEXTFILE],
+				state->error_stat[port][CAMOGM_FRAME_INVALID], state->error_stat[port][CAMOGM_FRAME_CHANGED],
+				state->error_stat[port][CAMOGM_FRAME_BROKEN], state->error_stat[port][CAMOGM_FRAME_FILE_ERR],
+				state->error_stat[port][CAMOGM_FRAME_MALLOC], state->error_stat[port][CAMOGM_TOO_EARLY],
+				state->error_stat[port][CAMOGM_FRAME_OTHER], state->error_stat[port][CAMOGM_NO_SPACE]);
+	} else {
+		fprintf(f, "frame_not_ready    \t%u\n", state->error_stat[port][CAMOGM_FRAME_NOT_READY]);
+		fprintf(f, "frame_invalid      \t%u\n", state->error_stat[port][CAMOGM_FRAME_INVALID]);
+		fprintf(f, "frame_changed      \t%u\n", state->error_stat[port][CAMOGM_FRAME_CHANGED]);
+		fprintf(f, "frame_nextfile     \t%u\n", state->error_stat[port][CAMOGM_FRAME_NEXTFILE]);
+		fprintf(f, "frame_broken       \t%u\n", state->error_stat[port][CAMOGM_FRAME_BROKEN]);
+		fprintf(f, "frame_file_err     \t%u\n", state->error_stat[port][CAMOGM_FRAME_FILE_ERR]);
+		fprintf(f, "frame_malloc       \t%u\n", state->error_stat[port][CAMOGM_FRAME_MALLOC]);
+		fprintf(f, "frame_too_early    \t%u\n", state->error_stat[port][CAMOGM_TOO_EARLY]);
+		fprintf(f, "frame_other        \t%u\n", state->error_stat[port][CAMOGM_FRAME_OTHER]);
+		fprintf(f, "frame_nospace      \t%u\n", state->error_stat[port][CAMOGM_NO_SPACE]);
+	}
 }
 
 /**
@@ -1536,6 +1582,10 @@ int listener_loop(camogm_state *state)
 				exit(-1);
 			} // switch sendImageFrame()
 
+			// collect error statistics
+			if (rslt > 0 && rslt < CAMOGM_ERRNUM)
+				state->error_stat[curr_port][rslt]++;
+
 			if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED))
 				// add port number to error code to facilitate debugging
 				state->last_error_code = rslt + 100 * state->port_num;
@@ -1567,6 +1617,11 @@ int listener_loop(camogm_state *state)
 				clean_up(state);
 				exit(-1);
 			} // switch camogm_start()
+
+			// collect error statistics
+			if (rslt > 0 && rslt < CAMOGM_ERRNUM)
+				state->error_stat[curr_port][rslt]++;
+
 			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) )
 				// add port number to error code to facilitate debugging
 				state->last_error_code = rslt + 100 * state->port_num;
@@ -1787,7 +1842,7 @@ unsigned int select_port(camogm_state *state)
 				free_sz = lseek(state->fd_circ[i], LSEEK_CIRC_FREE, SEEK_END);
 				lseek(state->fd_circ[i], file_pos, SEEK_SET);
 				if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
-					D6(fprintf(debug_file, "port %i = %i, ", i, free_sz));
+					D6(fprintf(debug_file, "port %i = %li, ", i, free_sz));
 				if ((free_sz < min_sz && free_sz >= 0) || min_sz == -1) {
 					min_sz = free_sz;
 					chn = i;
@@ -1974,7 +2029,7 @@ int main(int argc, char *argv[])
 	sstate.rawdev.thread_state = STATE_RUNNING;
 	str_len = strlen(state_name_str);
 	if (str_len > 0) {
-		strncpy(&sstate.rawdev.state_path, state_name_str, str_len + 1);
+		strncpy(sstate.rawdev.state_path, state_name_str, str_len + 1);
 	}
 
 	ret = listener_loop(&sstate);
