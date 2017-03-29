@@ -126,8 +126,8 @@ static void remap_vectors(camogm_state *state, struct iovec *chunks)
 	chunks[CHUNK_DATA_0].iov_base = (void *)state->packetchunks[chunk_index].chunk;
 	chunks[CHUNK_DATA_0].iov_len = state->packetchunks[chunk_index++].bytes;
 	if (state->writer_params.segments == 2) {
-		chunks[CHUNK_DATA_0].iov_base = (void *)state->packetchunks[chunk_index].chunk;
-		chunks[CHUNK_DATA_0].iov_len = state->packetchunks[chunk_index++].bytes;
+		chunks[CHUNK_DATA_1].iov_base = (void *)state->packetchunks[chunk_index].chunk;
+		chunks[CHUNK_DATA_1].iov_len = state->packetchunks[chunk_index++].bytes;
 	}
 	chunks[CHUNK_TRAILER].iov_base = (void *)state->packetchunks[chunk_index].chunk;
 	chunks[CHUNK_TRAILER].iov_len = state->packetchunks[chunk_index].bytes;
