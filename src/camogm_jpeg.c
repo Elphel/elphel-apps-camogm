@@ -329,6 +329,7 @@ int camogm_frame_jpeg(camogm_state *state)
 		align_frame(state);
 		if (update_lba(state) == 1) {
 			D0(fprintf(debug_file, "The end of block device reached, continue recording from start\n"));
+			lseek(state->writer_params.blockdev_fd, 0, SEEK_SET);
 		}
 		D6(fprintf(debug_file, "Block device positions: start = %llu, current = %llu, end = %llu\n",
 				state->writer_params.lba_start, state->writer_params.lba_current, state->writer_params.lba_end));
@@ -342,10 +343,6 @@ int camogm_frame_jpeg(camogm_state *state)
 		if (state->writer_params.last_ret_val != 0) {
 			return state->writer_params.last_ret_val;
 		}
-
-		// update statistics
-//		state->rawdev.last_jpeg_size = camogm_get_jpeg_size(state);
-//		state->rawdev.total_rec_len += state->rawdev.last_jpeg_size;
 	}
 
 	return 0;
@@ -424,12 +421,6 @@ void *jpeg_writer(void *thread_args)
 		if (params->data_ready) {
 			l = 0;
 			state->writer_params.last_ret_val = 0;
-//			for (int i = 0; i < (state->chunk_index) - 1; i++) {
-//				chunks_iovec[i].iov_base = state->packetchunks[i + 1].chunk;
-//				chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
-//				l += chunks_iovec[i].iov_len;
-//			}
-//			chunk_index = state->chunk_index;
 			chunk_index = get_data_buffers(state, &chunks_iovec, FILE_CHUNKS_NUM);
 			if (chunk_index > 0) {
 				for (int i = 0; i < chunk_index; i++)

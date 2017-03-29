@@ -106,6 +106,7 @@ static inline size_t align_bytes_num(size_t data_len, size_t align_len)
 		return align_len - rem;
 }
 
+/** Remap vectors pointing to various buffers with frame data to vectors used during frame alignment */
 static void remap_vectors(camogm_state *state, struct iovec *chunks)
 {
 	int chunk_index = 1;
@@ -177,6 +178,7 @@ static size_t get_blocks_num(struct iovec *sgl, size_t n_elem)
 	return total / PHY_BLOCK_SIZE;
 }
 
+/** Allocate and initialize buffers for frame alignment */
 int init_align_buffers(camogm_state *state)
 {
 	state->writer_params.data_chunks = (struct iovec *)malloc(MAX_DATA_CHUNKS * sizeof(struct iovec));
@@ -211,6 +213,7 @@ int init_align_buffers(camogm_state *state)
 	return 0;
 }
 
+/** Delete buffers for frame alignment */
 void deinit_align_buffers(camogm_state *state)
 {
 	struct writer_params *params = &state->writer_params;
@@ -408,7 +411,6 @@ void align_frame(camogm_state *state)
 	} else {
 		/* the frame is aligned to sector boundary but some buffers may be not */
 		chunks[CHUNK_ALIGN].iov_base = vectrpos(cbuff, 0);
-//		chunks[CHUNK_ALIGN].iov_dma = cbuff->iov_dma + cbuff->iov_len;
 		chunks[CHUNK_ALIGN].iov_len = 0;
 		if (chunks[CHUNK_DATA_1].iov_len == 0) {
 			data_len = chunks[CHUNK_DATA_0].iov_len % ALIGNMENT_SIZE;
@@ -510,6 +512,7 @@ int prep_last_block(camogm_state *state)
 	return ret;
 }
 
+/** Convert LBA to byte offset used for lseek */
 off64_t lba_to_offset(uint64_t lba)
 {
 	return lba * PHY_BLOCK_SIZE;
