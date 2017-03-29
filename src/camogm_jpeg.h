@@ -24,6 +24,6 @@ int camogm_init_jpeg(camogm_state *state);
 int camogm_start_jpeg(camogm_state *state);
 int camogm_frame_jpeg(camogm_state *state);
 int camogm_end_jpeg(camogm_state *state);
-void camogm_free_jpeg(void);
+void camogm_free_jpeg(camogm_state *state);
 
 #endif /* _CAMOGM_JPEG_H */

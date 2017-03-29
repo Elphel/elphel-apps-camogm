@@ -64,21 +64,6 @@
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 
-#if 0
-const char *exifFileNames[] = { "/dev/exif_exif0", "/dev/exif_exif1",
-                                "/dev/exif_exif2", "/dev/exif_exif3"
-};
-
-const char *headFileNames[] = { "/dev/jpeghead0", "/dev/jpeghead1",
-                                "/dev/jpeghead2", "/dev/jpeghead3"
-};
-const char *ctlFileNames[] = {   "/dev/frameparsall0", "/dev/frameparsall1",
-                                "/dev/frameparsall2", "/de/framepars3"
-};
-const char *circbufFileNames[] = {"/dev/circbuf0", "/dev/circbuf1",
-                                "/dev/circbuf2", "/dev/circbuf3"
-};
-#else
 const char *exifFileNames[] = { DEV393_PATH(DEV393_EXIF0), DEV393_PATH(DEV393_EXIF1),
                                 DEV393_PATH(DEV393_EXIF2), DEV393_PATH(DEV393_EXIF3)
 };
@@ -92,7 +77,6 @@ const char *ctlFileNames[] = {  DEV393_PATH(DEV393_FRAMEPARS0), DEV393_PATH(DEV3
 const char *circbufFileNames[] = {DEV393_PATH(DEV393_CIRCBUF0), DEV393_PATH(DEV393_CIRCBUF1),
                                   DEV393_PATH(DEV393_CIRCBUF2), DEV393_PATH(DEV393_CIRCBUF3)
 };
-#endif
 
 int lastDaemonBit[SENSOR_PORTS] = {DAEMON_BIT_CAMOGM};
 struct framepars_all_t   *frameParsAll[SENSOR_PORTS];
@@ -167,6 +151,7 @@ static int get_sysfs_name(const char *dev_name, char *sys_name, size_t str_sz, i
 static int get_disk_range(const char *name, struct range *rng);
 static int set_disk_range(const struct range *rng);
 static void get_disk_info(camogm_state *state);
+static struct timeval get_fpga_time(const int fd_fparsall, unsigned int port);
 int open_files(camogm_state *state);
 unsigned long getGPValue(unsigned int port, unsigned long GPNumber);
 void setGValue(unsigned int port, unsigned long GNumber, unsigned long value);
@@ -279,6 +264,10 @@ void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 	state->active_chn = ALL_CHN_INACTIVE;
 	state->rawdev.mmap_default_size = MMAP_CHUNK_SIZE;
 	state->sock_port = port_num;
+
+	state->writer_params.data_ready = false;
+	state->writer_params.exit_thread = false;
+	state->writer_params.state = STATE_STOPPED;
 }
 
 /**
@@ -366,6 +355,7 @@ int camogm_start(camogm_state *state)
 		if (is_chn_active(state, chn)) {
 			// Check/set circbuf read pointer
 			D3(fprintf(debug_file, "1: state->cirbuf_rp=0x%x\n", state->cirbuf_rp[chn]));
+			D3(fprintf(debug_file, "1a: compressed frame number = %li\n", lseek(state->fd_circ[chn], LSEEK_CIRC_GETFRAME, SEEK_END)));
 			if ((state->cirbuf_rp[chn] < 0) || (lseek(state->fd_circ[chn], state->cirbuf_rp[chn], SEEK_SET) < 0) || (lseek(state->fd_circ[chn], LSEEK_CIRC_VALID, SEEK_END) < 0 )) {
 				D3(fprintf(debug_file, "2: state->cirbuf_rp=0x%x\n", state->cirbuf_rp[chn]));
 				/* In "greedy" mode try to save as many frames from the circbuf as possible */
@@ -526,6 +516,9 @@ int sendImageFrame(camogm_state *state)
 	int * ifp_this = (int*)&(state->this_frame_params[state->port_num]);
 	int fp;
 	int port = state->port_num;
+	struct timeval start_time, end_time;
+
+//	start_time = get_fpga_time(state->fd_fparmsall[port], port);
 
 // This is probably needed only for Quicktime (not to exceed already allocated frame index)
 	if (!state->rawdev_op && (state->frameno >= (state->max_frames))) {
@@ -656,13 +649,16 @@ int sendImageFrame(camogm_state *state)
 /* copy from the beginning of the buffer to the end of the frame */
 		state->packetchunks[state->chunk_index  ].bytes = state->jpeg_len - (state->circ_buff_size[port] - state->cirbuf_rp[port]);
 		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][0];
+		state->writer_params.segments = 2;
 	} else { // single segment
 		D3(fprintf(debug_file, "_11_"));
 
 /* copy from the beginning of the frame to the end of the frame (no buffer rollovers) */
 		state->packetchunks[state->chunk_index  ].bytes = state->jpeg_len;
 		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][state->cirbuf_rp[port] >> 2];
+		state->writer_params.segments = 1;
 	}
+	D3(fprintf(debug_file, "\tcirbuf_rp = 0x%x\t", state->cirbuf_rp[port]));
 	D3(fprintf(debug_file, "_12_"));
 	state->packetchunks[state->chunk_index  ].bytes = 2;
 	state->packetchunks[state->chunk_index++].chunk = (unsigned char*)trailer;
@@ -685,6 +681,7 @@ int sendImageFrame(camogm_state *state)
 // advance frame pointer
 	state->frameno++;
 	state->cirbuf_rp[port] = lseek(state->fd_circ[port], LSEEK_CIRC_NEXT, SEEK_END);
+	D3(fprintf(debug_file, "\tcompressed frame number: %li\t", lseek(state->fd_circ[port], LSEEK_CIRC_GETFRAME, SEEK_END)));
 // optionally save it to global read pointer (i.e. for debugging with imgsrv "/pointers")
 	if (state->save_gp) lseek(state->fd_circ[port], LSEEK_CIRC_SETP, SEEK_END);
 	D3(fprintf(debug_file, "_15_\n"));
@@ -693,6 +690,19 @@ int sendImageFrame(camogm_state *state)
 	} else if (state->frames_skip < 0) {
 		state->frames_skip_left[port] += -(state->frames_skip);
 	}
+	D3(fprintf(debug_file,"cirbuf_rp to next frame = 0x%x\n", state->cirbuf_rp[port]));
+
+//	end_time = get_fpga_time(state->fd_fparmsall[port], port);
+//	unsigned int mbps; // write speed, MB/s
+//	unsigned long long time_diff; // time elapsed, in microseconds
+//	time_diff = ((end_time.tv_sec * 1000000 + end_time.tv_usec) - (start_time.tv_sec * 1000000 + start_time.tv_usec));
+//	mbps = ((double)state->rawdev.last_jpeg_size / (double)1048576) / ((double)time_diff / (double)1000000);
+//	D6(fprintf(debug_file, "Frame start time: %ld:%ld; frame end time: %ld:%ld; last frame size: %lu\n",
+//			start_time.tv_sec, start_time.tv_usec,
+//			end_time.tv_sec, end_time.tv_usec,
+//			state->rawdev.last_jpeg_size));
+//	D6(fprintf(debug_file, "Write speed: %d MB/s\n", mbps));
+
 	return 0;
 }
 
@@ -750,7 +760,7 @@ void camogm_free(camogm_state *state)
 			switch (f) {
 			case CAMOGM_FORMAT_NONE: break;
 			case CAMOGM_FORMAT_OGM:  camogm_free_ogm(); break;
-			case CAMOGM_FORMAT_JPEG: camogm_free_jpeg(); break;
+			case CAMOGM_FORMAT_JPEG: camogm_free_jpeg(state); break;
 			case CAMOGM_FORMAT_MOV:  camogm_free_mov(); break;
 			}
 		}
@@ -875,6 +885,9 @@ void get_disk_info(camogm_state *state)
 	}
 
 	if (get_disk_range(state->rawdev.rawdev_path, &rng) == 0) {
+		state->writer_params.lba_start = rng.from;
+		state->writer_params.lba_end = rng.to;
+		state->writer_params.lba_current = state->writer_params.lba_start;
 		set_disk_range(&rng);
 	} else {
 		D0(fprintf(debug_file, "ERROR: unable to get disk size and starting sector\n"));
@@ -2029,7 +2042,7 @@ int main(int argc, char *argv[])
 	sstate.rawdev.thread_state = STATE_RUNNING;
 	str_len = strlen(state_name_str);
 	if (str_len > 0) {
-		strncpy(sstate.rawdev.state_path, state_name_str, str_len + 1);
+		strncpy(sstate.rawdev.state_path, (const char *)state_name_str, str_len + 1);
 	}
 
 	ret = listener_loop(&sstate);
@@ -2103,4 +2116,20 @@ int isDaemonEnabled(unsigned int port, int daemonBit)   // <0 - use default
 inline int is_fd_valid(int fd)
 {
 	return fcntl(fd, F_GETFD) != -1 || errno != EBADF;
+}
+
+/**
+ * @brief Get current FPGA time
+ * @return   Time value in \e timeval structure
+ */
+struct timeval get_fpga_time(const int fd_fparsall, unsigned int port)
+{
+	struct timeval tv;
+	unsigned long write_data[] = {FRAMEPARS_GETFPGATIME, 0};
+
+	write(fd_fparsall, write_data, sizeof(unsigned long) * 2);
+	tv.tv_sec = getGPValue(port, G_SECONDS);
+	tv.tv_usec = getGPValue(port, G_MICROSECONDS);
+
+	return tv;
 }
