@@ -514,8 +514,7 @@ int sendImageFrame(camogm_state *state)
 	int port = state->port_num;
 	struct timeval start_time, end_time;
 
-	D6(fprintf(debug_file, "last_error_code = %d\n", state->last_error_code));
-	start_time = get_fpga_time(state->fd_fparmsall[port], port);
+//	start_time = get_fpga_time(state->fd_fparmsall[port], port);
 
 // This is probably needed only for Quicktime (not to exceed already allocated frame index)
 	if (!state->rawdev_op && (state->frameno >= (state->max_frames))) {
@@ -646,12 +645,14 @@ int sendImageFrame(camogm_state *state)
 /* copy from the beginning of the buffer to the end of the frame */
 		state->packetchunks[state->chunk_index  ].bytes = state->jpeg_len - (state->circ_buff_size[port] - state->cirbuf_rp[port]);
 		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][0];
+		state->writer_params.segments = 2;
 	} else { // single segment
 		D3(fprintf(debug_file, "_11_"));
 
 /* copy from the beginning of the frame to the end of the frame (no buffer rollovers) */
 		state->packetchunks[state->chunk_index  ].bytes = state->jpeg_len;
 		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)&ccam_dma_buf[state->port_num][state->cirbuf_rp[port] >> 2];
+		state->writer_params.segments = 1;
 	}
 	D3(fprintf(debug_file, "\tcirbuf_rp = 0x%x\t", state->cirbuf_rp[port]));
 	D3(fprintf(debug_file, "_12_"));
@@ -687,16 +688,16 @@ int sendImageFrame(camogm_state *state)
 	}
 	D3(fprintf(debug_file,"cirbuf_rp to next frame = 0x%x\n", state->cirbuf_rp[port]));
 
-	end_time = get_fpga_time(state->fd_fparmsall[port], port);
-	unsigned int mbps; // write speed, MB/s
-	unsigned long long time_diff; // time elapsed, in microseconds
-	time_diff = ((end_time.tv_sec * 1000000 + end_time.tv_usec) - (start_time.tv_sec * 1000000 + start_time.tv_usec));
-	mbps = ((double)state->rawdev.last_jpeg_size / (double)1048576) / ((double)time_diff / (double)1000000);
-	D6(fprintf(debug_file, "Frame start time: %ld:%ld; frame end time: %ld:%ld; last frame size: %lu\n",
-			start_time.tv_sec, start_time.tv_usec,
-			end_time.tv_sec, end_time.tv_usec,
-			state->rawdev.last_jpeg_size));
-	D6(fprintf(debug_file, "Write speed: %d MB/s\n", mbps));
+//	end_time = get_fpga_time(state->fd_fparmsall[port], port);
+//	unsigned int mbps; // write speed, MB/s
+//	unsigned long long time_diff; // time elapsed, in microseconds
+//	time_diff = ((end_time.tv_sec * 1000000 + end_time.tv_usec) - (start_time.tv_sec * 1000000 + start_time.tv_usec));
+//	mbps = ((double)state->rawdev.last_jpeg_size / (double)1048576) / ((double)time_diff / (double)1000000);
+//	D6(fprintf(debug_file, "Frame start time: %ld:%ld; frame end time: %ld:%ld; last frame size: %lu\n",
+//			start_time.tv_sec, start_time.tv_usec,
+//			end_time.tv_sec, end_time.tv_usec,
+//			state->rawdev.last_jpeg_size));
+//	D6(fprintf(debug_file, "Write speed: %d MB/s\n", mbps));
 
 	return 0;
 }
@@ -880,6 +881,9 @@ void get_disk_info(camogm_state *state)
 	}
 
 	if (get_disk_range(state->rawdev.rawdev_path, &rng) == 0) {
+		state->writer_params.lba_start = rng.from;
+		state->writer_params.lba_end = rng.to;
+		state->writer_params.lba_current = state->writer_params.lba_start;
 		set_disk_range(&rng);
 	} else {
 		D0(fprintf(debug_file, "ERROR: unable to get disk size and starting sector\n"));

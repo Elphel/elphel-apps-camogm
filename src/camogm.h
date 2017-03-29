@@ -27,7 +27,6 @@
 #include <elphel/c313a.h>
 #include <elphel/x393_devices.h>
 
-
 #define CAMOGM_FRAME_NOT_READY    1        ///< frame pointer valid, but not yet acquired
 #define CAMOGM_FRAME_INVALID      2        ///< invalid frame pointer
 #define CAMOGM_FRAME_CHANGED      3        ///< frame parameters have changed
@@ -150,6 +149,16 @@ struct writer_params {
 	int last_ret_val;                                       ///< error value return during last frame recording (if any occurred)
 	bool exit_thread;                                       ///< flag indicating that the writing thread should terminate
 	int state;                                              ///< the state of disk writing thread
+	int segments;                                           ///< the number of segments in frame
+
+	struct iovec *data_chunks;                              ///< a set of vectors pointing to aligned frame data buffers
+	struct iovec prev_rem_vect;                             ///< vector pointing to the remainder of the previous frame
+	unsigned char *rem_buff;                                ///< buffer containing the unaligned remainder of the current frame
+	unsigned char *prev_rem_buff;                           ///< buffer containing the unaligned remainder of the previous frame
+	unsigned char *common_buff;                             ///< buffer for aligned JPEG header
+	uint64_t lba_start;                                     ///< disk starting LBA
+	uint64_t lba_current;                                   ///< current write position in LBAs
+	uint64_t lba_end;                                       ///< disk last LBA
 };
 /**
  * @struct camogm_state

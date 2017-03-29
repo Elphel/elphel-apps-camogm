@@ -32,12 +32,15 @@
 
 #include "camogm_jpeg.h"
 #include "camogm_read.h"
+#include "camogm_align.h"
 
 /** State file record format. It includes device path in /dev, starting, current and ending LBAs */
 #define STATE_FILE_FORMAT         "%s\t%llu\t%llu\t%llu\n"
 
 /* forward declarations */
 static void *jpeg_writer(void *thread_args);
+static int save_state_file(const rawdev_buffer *rawdev, uint64_t current_pos);
+static int open_state_file(const rawdev_buffer *rawdev, uint64_t *current_pos);
 
 /** Get starting and endign LBAs of the partition specified as raw device buffer */
 static int get_disk_range(struct range *range)
@@ -96,12 +99,12 @@ static int find_state(FILE *f, uint64_t *pos, const rawdev_buffer *rawdev)
 }
 
 /** Read state from file and restore disk write pointer */
-static int open_state_file(const rawdev_buffer *rawdev)
+static int open_state_file(const rawdev_buffer *rawdev, uint64_t *current_pos)
 {
 	int fd, len;
 	FILE *f;
 	int ret = 0;
-	uint64_t curr_pos;
+	uint64_t lba_pos;
 	char buff[SMALL_BUFF_LEN] = {0};
 
 	if (strlen(rawdev->state_path) == 0) {
@@ -110,15 +113,9 @@ static int open_state_file(const rawdev_buffer *rawdev)
 
 	f = fopen(rawdev->state_path, "r");
 	if (f != NULL) {
-		if (find_state(f, &curr_pos, rawdev) != -1) {
-			fd = open(SYSFS_AHCI_LBA_CURRENT, O_WRONLY);
-			if (fd >= 0) {
-				len = snprintf(buff, SMALL_BUFF_LEN, "%llu", curr_pos);
-				write(fd, buff, len + 1);
-				close(fd);
-			} else {
-				ret = -1;
-			}
+		if (find_state(f, &lba_pos, rawdev) != -1) {
+			*current_pos = lba_pos;
+			D0(fprintf(debug_file, "Got starting LBA from state file: %llu\n", lba_pos));
 		}
 		fclose(f);
 	} else {
@@ -129,12 +126,11 @@ static int open_state_file(const rawdev_buffer *rawdev)
 }
 
 /** Save current position of the disk write pointer */
-static int save_state_file(const rawdev_buffer *rawdev)
+static int save_state_file(const rawdev_buffer *rawdev, uint64_t current_pos)
 {
 	int ret = 0;
 	FILE *f;
 	struct range range;
-	uint64_t curr_pos;
 
 	if (strlen(rawdev->state_path) == 0) {
 		return ret;
@@ -143,21 +139,13 @@ static int save_state_file(const rawdev_buffer *rawdev)
 		return -1;
 	}
 
-	// get raw device buffer current postion on disk, this position indicates where recording has stopped
-	f = fopen(SYSFS_AHCI_LBA_CURRENT, "r");
-	if (f == NULL) {
-		return -1;
-	}
-	fscanf(f, "%llu\n", &curr_pos);
-	fclose(f);
-
 	// save pointers to a regular file
 	f = fopen(rawdev->state_path, "w");
 	if (f == NULL) {
 		return -1;
 	}
 	fprintf(f, "Device\t\tStart LBA\tCurrent LBA\tEnd LBA\n");
-	fprintf(f, STATE_FILE_FORMAT, rawdev->rawdev_path, range.from, curr_pos, range.to);
+	fprintf(f, STATE_FILE_FORMAT, rawdev->rawdev_path, range.from, current_pos, range.to);
 	fflush(f);
 	fsync(fileno(f));
 	fclose(f);
@@ -198,6 +186,12 @@ int camogm_init_jpeg(camogm_state *state)
 			D0(fprintf(debug_file, "Can not start writer thread: %s\n", strerror(ret_val)));
 			ret = -1;
 		}
+
+		ret_val = init_align_buffers(state);
+		if (ret_val != 0) {
+			D0(fprintf(debug_file, "Can not initialize alignment buffers\n"));
+			ret = -1;
+		}
 	}
 
 	return ret;
@@ -221,6 +215,8 @@ void camogm_free_jpeg(camogm_state *state)
 	pthread_mutex_unlock(&state->writer_params.writer_mutex);
 	pthread_join(state->writer_params.writer_thread, NULL);
 	state->writer_params.exit_thread = false;
+
+	deinit_align_buffers(state);
 }
 
 /** Calculate the total length of current frame */
@@ -247,6 +243,7 @@ int camogm_start_jpeg(camogm_state *state)
 {
 	char * slash;
 	int rslt;
+	off64_t offset;
 
 	if (!state->rawdev_op) {
 		strcpy(state->path, state->path_prefix);   // make state->path a directory name (will be replaced when the frames will be written)
@@ -264,16 +261,18 @@ int camogm_start_jpeg(camogm_state *state)
 			}
 		}
 	} else {
-//		if (open_state_file(&state->rawdev) != 0) {
-//			D0(fprintf(debug_file, "Could not set write pointer via sysfs, recording will start from the beginning of partition: "
-//					"%s\n", state->rawdev.rawdev_path));
-//		}
+		if (open_state_file(&state->rawdev, &state->writer_params.lba_current) != 0) {
+			D0(fprintf(debug_file, "Could not get write pointer from state file, recording will start from the beginning of partition: "
+					"%s\n", state->rawdev.rawdev_path));
+		}
 		state->writer_params.blockdev_fd = open(state->rawdev.rawdev_path, O_WRONLY);
 		if (state->writer_params.blockdev_fd < 0) {
 			D0(fprintf(debug_file, "Error opening block device: %s\n", state->rawdev.rawdev_path));
 			return -CAMOGM_FRAME_FILE_ERR;
 		}
-		D6(fprintf(debug_file, "Open block device: %s\n", state->rawdev.rawdev_path));
+		offset = lba_to_offset(state->writer_params.lba_current - state->writer_params.lba_start);
+		lseek64(state->writer_params.blockdev_fd, offset, SEEK_SET);
+		D6(fprintf(debug_file, "Open block device: %s, offset in bytes: %llu\n", state->rawdev.rawdev_path, offset));
 	}
 
 	return 0;
@@ -325,6 +324,15 @@ int camogm_frame_jpeg(camogm_state *state)
 		while (state->writer_params.data_ready)
 			pthread_cond_wait(&state->writer_params.main_cond, &state->writer_params.writer_mutex);
 		D6(fprintf(debug_file, "_13a_"));
+
+		D6(fprintf(debug_file, "\n"));
+		align_frame(state);
+		if (update_lba(state) == 1) {
+			D0(fprintf(debug_file, "The end of block device reached, continue recording from start\n"));
+		}
+		D6(fprintf(debug_file, "Block device positions: start = %llu, current = %llu, end = %llu\n",
+				state->writer_params.lba_start, state->writer_params.lba_current, state->writer_params.lba_end));
+
 		// proceed if last frame was recorded without errors
 		if (state->writer_params.last_ret_val == 0) {
 			state->writer_params.data_ready = true;
@@ -336,8 +344,8 @@ int camogm_frame_jpeg(camogm_state *state)
 		}
 
 		// update statistics
-		state->rawdev.last_jpeg_size = camogm_get_jpeg_size(state);
-		state->rawdev.total_rec_len += state->rawdev.last_jpeg_size;
+//		state->rawdev.last_jpeg_size = camogm_get_jpeg_size(state);
+//		state->rawdev.total_rec_len += state->rawdev.last_jpeg_size;
 	}
 
 	return 0;
@@ -353,15 +361,36 @@ int camogm_frame_jpeg(camogm_state *state)
 int camogm_end_jpeg(camogm_state *state)
 {
 	int ret = 0;
+	int bytes;
+	ssize_t iovlen;
 	struct frame_data fdata = {0};
 
 	if (state->rawdev_op) {
+		// write any remaining data, do not use writer thread as there can be only one block left CHUNK_REM buffer
+		pthread_mutex_lock(&state->writer_params.writer_mutex);
+		bytes = prep_last_block(state);
+		if (bytes > 0) {
+			D6(fprintf(debug_file, "Write last block of data, size = %d\n", bytes));
+			// the remaining data block is placed in CHUNK_COMMON buffer, write just this buffer
+			iovlen = writev(state->writer_params.blockdev_fd, &state->writer_params.data_chunks[CHUNK_COMMON], 1);
+			if (iovlen < bytes) {
+				D0(fprintf(debug_file, "writev error: %s (returned %i, expected %i)\n", strerror(errno), iovlen, bytes));
+				state->writer_params.last_ret_val = -CAMOGM_FRAME_FILE_ERR;
+			} else {
+				// update statistic, just one block written
+				state->writer_params.lba_current += 1;
+				state->rawdev.total_rec_len += bytes;
+			}
+			reset_chunks(state->writer_params.data_chunks, 1);
+		}
+		pthread_mutex_unlock(&state->writer_params.writer_mutex);
+
 		D6(fprintf(debug_file, "Closing block device %s\n", state->rawdev.rawdev_path));
 		ret = close(state->writer_params.blockdev_fd);
 		if (ret == -1)
 			D0(fprintf(debug_file, "Error: %s\n", strerror(errno)));
 
-//		save_state_file(&state->rawdev);
+		save_state_file(&state->rawdev, state->writer_params.lba_current);
 	}
 	return ret;
 }
@@ -395,25 +424,40 @@ void *jpeg_writer(void *thread_args)
 		if (params->data_ready) {
 			l = 0;
 			state->writer_params.last_ret_val = 0;
-			for (int i = 0; i < (state->chunk_index) - 1; i++) {
-				chunks_iovec[i].iov_base = state->packetchunks[i + 1].chunk;
-				chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
-				l += chunks_iovec[i].iov_len;
-			}
-			chunk_index = state->chunk_index;
-			iovlen = writev(state->writer_params.blockdev_fd, chunks_iovec, chunk_index - 1);
-			if (iovlen < l) {
-				D0(fprintf(debug_file, "writev error: %s (returned %li, expected %li)\n", strerror(errno), iovlen, l));
+//			for (int i = 0; i < (state->chunk_index) - 1; i++) {
+//				chunks_iovec[i].iov_base = state->packetchunks[i + 1].chunk;
+//				chunks_iovec[i].iov_len = state->packetchunks[i + 1].bytes;
+//				l += chunks_iovec[i].iov_len;
+//			}
+//			chunk_index = state->chunk_index;
+			chunk_index = get_data_buffers(state, &chunks_iovec, FILE_CHUNKS_NUM);
+			if (chunk_index > 0) {
+				for (int i = 0; i < chunk_index; i++)
+					l += chunks_iovec[i].iov_len;
+				iovlen = writev(state->writer_params.blockdev_fd, chunks_iovec, chunk_index);
+				if (iovlen < l) {
+					D0(fprintf(debug_file, "writev error: %s (returned %i, expected %i)\n", strerror(errno), iovlen, l));
+					state->writer_params.last_ret_val = -CAMOGM_FRAME_FILE_ERR;
+				} else {
+					// update statistic
+					state->rawdev.last_jpeg_size = l;
+					state->rawdev.total_rec_len += state->rawdev.last_jpeg_size;
+					D6(fprintf(debug_file, "Current position in block device: %lld\n", lseek64(state->writer_params.blockdev_fd, 0, SEEK_CUR)));
+				}
+			} else {
+				D0(fprintf(debug_file, "data vector mapping error: %d)\n", chunk_index));
 				state->writer_params.last_ret_val = -CAMOGM_FRAME_FILE_ERR;
 			}
 
 			// release main thread
+			reset_chunks(state->writer_params.data_chunks, 0);
 			params->data_ready = false;
 			pthread_cond_signal(&params->main_cond);
 		}
 	}
 	params->state = STATE_STOPPED;
 	pthread_mutex_unlock(&state->writer_params.writer_mutex);
+	D5(fprintf(debug_file, "Exit from recording thread\n"));
 
 	return NULL;
 }
