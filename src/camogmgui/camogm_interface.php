@@ -74,6 +74,7 @@ $cmd_pipe = "/var/state/camogm_cmd";
 $cmd_state = "/var/state/camogm.state";
 $cmd_port = "3456";
 $default_state = "/home/root/camogm.disk";
+$state_file = "/mnt/sda1/camogm.disk";
 $start_str = "camogm -n " . $cmd_pipe . " -p " . $cmd_port;
 
 if ($cmd == "run_camogm")
@@ -88,7 +89,11 @@ if ($cmd == "run_camogm")
 	$p = (array_filter($arr, "low_daemon"));
 	$check = implode("<br />",$p);
 	
-	$state_file = get_state_path();
+	//$state_file = get_state_path();
+	if (isset($_GET['state_file'])){
+		$state_file = $_GET['state_file'];
+	}
+	
 	$start_str = $start_str . " -s " . $state_file;
 	
 	if (strstr($check, $start_str))
