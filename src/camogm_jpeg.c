@@ -40,7 +40,6 @@
 /* forward declarations */
 static void *jpeg_writer(void *thread_args);
 static int save_state_file(const rawdev_buffer *rawdev, uint64_t current_pos);
-static int open_state_file(const rawdev_buffer *rawdev, uint64_t *current_pos);
 
 /** Get starting and endign LBAs of the partition specified as raw device buffer */
 static int get_disk_range(struct range *range)
@@ -99,7 +98,7 @@ static int find_state(FILE *f, uint64_t *pos, const rawdev_buffer *rawdev)
 }
 
 /** Read state from file and restore disk write pointer */
-static int open_state_file(const rawdev_buffer *rawdev, uint64_t *current_pos)
+int open_state_file(const rawdev_buffer *rawdev, uint64_t *current_pos)
 {
 	int fd, len;
 	FILE *f;

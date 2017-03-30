@@ -25,5 +25,6 @@ int camogm_start_jpeg(camogm_state *state);
 int camogm_frame_jpeg(camogm_state *state);
 int camogm_end_jpeg(camogm_state *state);
 void camogm_free_jpeg(camogm_state *state);
+int open_state_file(const rawdev_buffer *rawdev, uint64_t *current_pos);
 
 #endif /* _CAMOGM_JPEG_H */

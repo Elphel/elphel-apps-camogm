@@ -1468,6 +1468,9 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 	} else if (strcmp(cmd, "rawdev_path") == 0) {
 		if (args) {
 			camogm_set_prefix(state, args, RAW_PATH);
+			// make disk geometry available in status xml before recording starts
+			get_disk_info(state);
+			open_state_file(&state->rawdev, &state->writer_params.lba_current);
 		} else {
 			state->rawdev_op = 0;
 			state->rawdev.rawdev_path[0] = '\0';
