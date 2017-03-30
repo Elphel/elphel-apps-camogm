@@ -365,6 +365,9 @@ int camogm_end_jpeg(camogm_state *state)
 	if (state->rawdev_op) {
 		// write any remaining data, do not use writer thread as there can be only one block left CHUNK_REM buffer
 		pthread_mutex_lock(&state->writer_params.writer_mutex);
+		while (state->writer_params.data_ready)
+			// wait for previous frame to be recorded first if it has not be recorded by the moment
+			pthread_cond_wait(&state->writer_params.main_cond, &state->writer_params.writer_mutex);
 		bytes = prep_last_block(state);
 		if (bytes > 0) {
 			D6(fprintf(debug_file, "Write last block of data, size = %d\n", bytes));
