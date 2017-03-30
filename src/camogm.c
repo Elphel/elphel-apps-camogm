@@ -1100,7 +1100,10 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <raw_device_path>\"%s\"</raw_device_path>\n" \
 			"  <raw_device_overruns>%d</raw_device_overruns>\n" \
 			"  <raw_device_pos_write>0x%llx</raw_device_pos_write>\n" \
-			"  <raw_device_pos_read>0x%llx (%d%% done)</raw_device_pos_read>\n",
+			"  <raw_device_pos_read>0x%llx (%d%% done)</raw_device_pos_read>\n" \
+			"  <lba_start>%llu</lba_start>\n" \
+			"  <lba_current>%llu</lba_current>\n" \
+			"  <lba_end>%llu</lba_end>\n",
 			_state,  state->path, state->frameno, state->start_after_timestamp, _dur, _udur, _len, \
 			_frames_skip, _sec_skip, \
 			state->width, state->height, _output_format, _using_exif, \
@@ -1110,7 +1113,8 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			_kml_enable, _kml_used, state->kml_path, state->kml_horHalfFov, state->kml_vertHalfFov, state->kml_near, \
 			_kml_height_mode, state->kml_height, state->kml_period, state->kml_last_ts, state->kml_last_uts, \
 			state->greedy ? "yes" : "no", state->ignore_fps ? "yes" : "no", state->rawdev.rawdev_path,
-			state->rawdev.overrun, state->rawdev.curr_pos_w, state->rawdev.curr_pos_r, _percent_done);
+			state->rawdev.overrun, state->rawdev.curr_pos_w, state->rawdev.curr_pos_r, _percent_done,
+			state->writer_params.lba_start, state->writer_params.lba_current, state->writer_params.lba_end);
 
 		FOR_EACH_PORT(int, chn) {
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";
@@ -1186,6 +1190,10 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "kml_height (extra) \t%f m\n",      state->kml_height);
 		fprintf(f, "kml_period         \t%d\n",        state->kml_period);
 		fprintf(f, "kml_last_ts        \t%d.%06d\n",   state->kml_last_ts, state->kml_last_uts);
+		fprintf(f, "\n");
+		fprintf(f, "lba_start          \t%llu\n",      state->writer_params.lba_start);
+		fprintf(f, "lba_current        \t%llu\n",      state->writer_params.lba_current);
+		fprintf(f, "lba_end            \t%llu\n",      state->writer_params.lba_end);
 		fprintf(f, "\n");
 		FOR_EACH_PORT(int, chn) {
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";
