@@ -265,7 +265,7 @@ int camogm_start_jpeg(camogm_state *state)
 			D0(fprintf(debug_file, "Could not get write pointer from state file, recording will start from the beginning of partition: "
 					"%s\n", state->rawdev.rawdev_path));
 		}
-		state->writer_params.blockdev_fd = open(state->rawdev.rawdev_path, O_WRONLY);
+		state->writer_params.blockdev_fd = open(state->rawdev.rawdev_path, O_RDWR);
 		if (state->writer_params.blockdev_fd < 0) {
 			D0(fprintf(debug_file, "Error opening block device: %s\n", state->rawdev.rawdev_path));
 			return -CAMOGM_FRAME_FILE_ERR;
@@ -410,6 +410,7 @@ void *jpeg_writer(void *thread_args)
 	struct iovec chunks_iovec[FILE_CHUNKS_NUM];
 	camogm_state *state = (camogm_state *)thread_args;
 	struct writer_params *params = &state->writer_params;
+	unsigned char dummy_buff[PHY_BLOCK_SIZE];
 
 	memset((void *)chunks_iovec, 0, sizeof(struct iovec) * FILE_CHUNKS_NUM);
 	pthread_mutex_lock(&params->writer_mutex);
@@ -422,6 +423,19 @@ void *jpeg_writer(void *thread_args)
 			process = false;
 		}
 		if (params->data_ready) {
+			/* dummy read cycle from (approximately) the beginning of previous frame */
+			ssize_t data_len;
+			off64_t curr_offset = lseek64(state->writer_params.blockdev_fd, 0, SEEK_CUR);
+			off64_t offset = lba_to_offset(state->writer_params.lba_current - state->writer_params.lba_start) - state->rawdev.last_jpeg_size;
+			offset = offset / PHY_BLOCK_SIZE;
+			lseek64(state->writer_params.blockdev_fd, offset, SEEK_SET);
+			data_len = read(state->writer_params.blockdev_fd, dummy_buff, PHY_BLOCK_SIZE);
+			if (data_len < PHY_BLOCK_SIZE) {
+				D6(fprintf(debug_file, "Dummy read error: requested %d, read %d, %s\n", PHY_BLOCK_SIZE, data_len, strerror(errno)));
+			}
+			lseek64(state->writer_params.blockdev_fd, curr_offset, SEEK_SET);
+			/* end of dummy read cycle */
+
 			l = 0;
 			state->writer_params.last_ret_val = 0;
 			chunk_index = get_data_buffers(state, &chunks_iovec, FILE_CHUNKS_NUM);
