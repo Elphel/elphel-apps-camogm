@@ -426,17 +426,20 @@ void *jpeg_writer(void *thread_args)
 			process = false;
 		}
 		if (params->data_ready) {
-			/* dummy read cycle from (approximately) the beginning of previous frame */
-			ssize_t data_len;
-			off64_t curr_offset = lseek64(state->writer_params.blockdev_fd, 0, SEEK_CUR);
-			off64_t offset = lba_to_offset(state->writer_params.lba_current - state->writer_params.lba_start) - state->rawdev.last_jpeg_size;
-			offset = offset / PHY_BLOCK_SIZE;
-			lseek64(state->writer_params.blockdev_fd, offset, SEEK_SET);
-			data_len = read(state->writer_params.blockdev_fd, dummy_buff, PHY_BLOCK_SIZE);
-			if (data_len < PHY_BLOCK_SIZE) {
-				D6(fprintf(debug_file, "Dummy read error: requested %d, read %d, %s\n", PHY_BLOCK_SIZE, data_len, strerror(errno)));
+			/* dummy read cycle from (approximately) the beginning of previous frame;
+			 * this is a debug feature used to find disk errors */
+			if (state->writer_params.dummy_read) {
+				ssize_t data_len;
+				off64_t curr_offset = lseek64(state->writer_params.blockdev_fd, 0, SEEK_CUR);
+				off64_t offset = lba_to_offset(state->writer_params.lba_current - state->writer_params.lba_start) - state->rawdev.last_jpeg_size;
+				offset = offset / PHY_BLOCK_SIZE;
+				lseek64(state->writer_params.blockdev_fd, offset, SEEK_SET);
+				data_len = read(state->writer_params.blockdev_fd, dummy_buff, PHY_BLOCK_SIZE);
+				if (data_len < PHY_BLOCK_SIZE) {
+					D6(fprintf(debug_file, "Dummy read error: requested %d, read %d, %s\n", PHY_BLOCK_SIZE, data_len, strerror(errno)));
+				}
+				lseek64(state->writer_params.blockdev_fd, curr_offset, SEEK_SET);
 			}
-			lseek64(state->writer_params.blockdev_fd, curr_offset, SEEK_SET);
 			/* end of dummy read cycle */
 
 			l = 0;

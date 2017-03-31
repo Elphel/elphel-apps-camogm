@@ -160,6 +160,7 @@ inline void set_chn_state(camogm_state *s, unsigned int port, unsigned int new_s
 inline int is_chn_active(camogm_state *s, unsigned int port);
 void clean_up(camogm_state *state);
 static void camogm_err_stat(const camogm_state *state, int port, FILE *f, bool xml);
+static void camogm_set_dummy_read(camogm_state *state, int d);
 
 void put_uint16(void *buf, u_int16_t val)
 {
@@ -268,6 +269,8 @@ void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 	state->writer_params.data_ready = false;
 	state->writer_params.exit_thread = false;
 	state->writer_params.state = STATE_STOPPED;
+
+	camogm_set_dummy_read(state, 0);
 }
 
 /**
@@ -844,6 +847,12 @@ void  camogm_set_greedy(camogm_state *state, int d)
 void  camogm_set_ignore_fps(camogm_state *state, int d)
 {
 	state->ignore_fps =   d ? 1 : 0;
+}
+
+void camogm_set_dummy_read(camogm_state *state, int d)
+{
+	state->writer_params.dummy_read = d ? true : false;
+	D6(fprintf(debug_file, "Set dummy read flag = %d\n", state->writer_params.dummy_read));
 }
 
 /**
@@ -1484,6 +1493,9 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 			D0(fprintf(debug_file, "Reading thread is not running, nothing to stop\n"));
 		}
 		return 29;
+	} else if (strcmp(cmd, "dummy_read") == 0) {
+		if ((args) && ((d = strtol(args, NULL, 10)) > 0)) camogm_set_dummy_read(state, d);
+		return 30;
 	}
 
 	return -1;

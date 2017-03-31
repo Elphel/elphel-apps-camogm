@@ -609,6 +609,7 @@ else
 			fprintf($fcmd, "prefix=%s;\n", $prefix);
 			setcookie("directory", $prefix);
 			break;
+			
 		case "set_debuglev":
 			$debuglev = $_GET['debuglev'];
 			fprintf($fcmd, "debuglev=%s;\n", $debuglev);
@@ -668,19 +669,23 @@ else
 			exec('aplay '.$soundfile);
 			break;
 		case "setmov":
-			exec('echo "format=mov;" > /var/state/camogm_cmd'); // Set quicktime *.mov as default format after startup.
-			exec('echo "save_gp=1;\n" > /var/state/camogm_cmd'); // enable calculation of free/used buffer space
+			exec('echo "format=mov;" > '.$cmd_pipe); // Set quicktime *.mov as default format after startup.
+			exec('echo "save_gp=1;\n" > '.$cmd_pipe); // enable calculation of free/used buffer space
 			break;
 		case "setjpeg":
-			exec('echo "format=jpg;" > /var/state/camogm_cmd'); // Set quicktime *.mov as default format after startup.
-			exec('echo "save_gp=1;\n" > /var/state/camogm_cmd'); // enable calculation of free/used buffer space
+			exec('echo "format=jpg;" > '.$cmd_pipe); // Set quicktime *.mov as default format after startup.
+			exec('echo "save_gp=1;\n" > '.$cmd_pipe); // enable calculation of free/used buffer space
 			break;
-                case "setrawdevpath":
-                        $rawdev_path = $_GET['path'];
-                        exec('echo "rawdev_path='.$rawdev_path.';" > /var/state/camogm_cmd');
-                        break;
+		case "setrawdevpath":
+				$rawdev_path = $_GET['path'];
+				exec('echo "rawdev_path='.$rawdev_path.';" > '.$cmd_pipe);
+				break;
 		case "gettime":
 			echo elphel_get_fpga_time();
+			break;
+		case "set_dummy_read":
+			$dummy_read = $_GET["dummy_read"];
+			exec('echo "dummy_read='.$dummy_read.';" > '.$cmd_pipe);
 			break;
 	}
 	if ($fcmd)

@@ -162,6 +162,7 @@ struct writer_params {
 	uint64_t lba_end;                                       ///< disk last LBA
 
 	time_t stat_update;                                     ///< time when status file was updated
+	bool dummy_read;                                        ///< inable dummy read cycle (debug feature)
 };
 /**
  * @struct camogm_state
