@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <string.h>
+#include <time.h>
 #include <elphel/c313a.h>
 #include <elphel/ahci_cmd.h>
 
@@ -36,10 +37,12 @@
 
 /** State file record format. It includes device path in /dev, starting, current and ending LBAs */
 #define STATE_FILE_FORMAT         "%s\t%llu\t%llu\t%llu\n"
+/** Status file update period, in seconds */
+#define STAT_UPDATE_PERIOD        60
 
 /* forward declarations */
 static void *jpeg_writer(void *thread_args);
-static int save_state_file(const rawdev_buffer *rawdev, uint64_t current_pos);
+static int save_state_file(const camogm_state *state);
 
 /** Get starting and endign LBAs of the partition specified as raw device buffer */
 static int get_disk_range(struct range *range)
@@ -100,11 +103,9 @@ static int find_state(FILE *f, uint64_t *pos, const rawdev_buffer *rawdev)
 /** Read state from file and restore disk write pointer */
 int open_state_file(const rawdev_buffer *rawdev, uint64_t *current_pos)
 {
-	int fd, len;
 	FILE *f;
 	int ret = 0;
 	uint64_t lba_pos;
-	char buff[SMALL_BUFF_LEN] = {0};
 
 	if (strlen(rawdev->state_path) == 0) {
 		return ret;
@@ -125,17 +126,15 @@ int open_state_file(const rawdev_buffer *rawdev, uint64_t *current_pos)
 }
 
 /** Save current position of the disk write pointer */
-static int save_state_file(const rawdev_buffer *rawdev, uint64_t current_pos)
+static int save_state_file(const camogm_state *state)
 {
 	int ret = 0;
 	FILE *f;
-	struct range range;
+	const rawdev_buffer *rawdev = &state->rawdev;
+	const struct writer_params *params = &state->writer_params;
 
 	if (strlen(rawdev->state_path) == 0) {
 		return ret;
-	}
-	if (get_disk_range(&range) != 0) {
-		return -1;
 	}
 
 	// save pointers to a regular file
@@ -144,7 +143,7 @@ static int save_state_file(const rawdev_buffer *rawdev, uint64_t current_pos)
 		return -1;
 	}
 	fprintf(f, "Device\t\tStart LBA\tCurrent LBA\tEnd LBA\n");
-	fprintf(f, STATE_FILE_FORMAT, rawdev->rawdev_path, range.from, current_pos, range.to);
+	fprintf(f, STATE_FILE_FORMAT, rawdev->rawdev_path, params->lba_start, params->lba_current, params->lba_end);
 	fflush(f);
 	fsync(fileno(f));
 	fclose(f);
@@ -272,6 +271,7 @@ int camogm_start_jpeg(camogm_state *state)
 		offset = lba_to_offset(state->writer_params.lba_current - state->writer_params.lba_start);
 		lseek64(state->writer_params.blockdev_fd, offset, SEEK_SET);
 		D6(fprintf(debug_file, "Open block device: %s, offset in bytes: %llu\n", state->rawdev.rawdev_path, offset));
+		state->writer_params.stat_update = time(NULL);
 	}
 
 	return 0;
@@ -290,7 +290,7 @@ int camogm_frame_jpeg(camogm_state *state)
 	ssize_t iovlen, l = 0;
 	struct iovec chunks_iovec[8];
 	int port = state->port_num;
-	struct frame_data fdata = {0};
+	time_t curr_time;
 
 	sprintf(state->path, "%s%d_%010ld_%06ld.jpeg", state->path_prefix, port, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
 	if (!state->rawdev_op) {
@@ -342,6 +342,12 @@ int camogm_frame_jpeg(camogm_state *state)
 		if (state->writer_params.last_ret_val != 0) {
 			return state->writer_params.last_ret_val;
 		}
+
+		// update status file if time has come
+		curr_time = time(NULL);
+		if (difftime(curr_time, state->writer_params.stat_update) > STAT_UPDATE_PERIOD) {
+			save_state_file(state);
+		}
 	}
 
 	return 0;
@@ -359,7 +365,6 @@ int camogm_end_jpeg(camogm_state *state)
 	int ret = 0;
 	int bytes;
 	ssize_t iovlen;
-	struct frame_data fdata = {0};
 
 	if (state->rawdev_op) {
 		// write any remaining data, do not use writer thread as there can be only one block left CHUNK_REM buffer
@@ -389,7 +394,7 @@ int camogm_end_jpeg(camogm_state *state)
 		if (ret == -1)
 			D0(fprintf(debug_file, "Error: %s\n", strerror(errno)));
 
-		save_state_file(&state->rawdev, state->writer_params.lba_current);
+		save_state_file(state);
 	}
 	return ret;
 }
@@ -402,7 +407,6 @@ int camogm_end_jpeg(camogm_state *state)
  */
 void *jpeg_writer(void *thread_args)
 {
-	int rslt = 0;
 	int chunk_index;
 	ssize_t iovlen, l;
 	bool process = true;
@@ -437,7 +441,7 @@ void *jpeg_writer(void *thread_args)
 
 			l = 0;
 			state->writer_params.last_ret_val = 0;
-			chunk_index = get_data_buffers(state, &chunks_iovec, FILE_CHUNKS_NUM);
+			chunk_index = get_data_buffers(state, chunks_iovec, FILE_CHUNKS_NUM);
 			if (chunk_index > 0) {
 				for (int i = 0; i < chunk_index; i++)
 					l += chunks_iovec[i].iov_len;

@@ -160,6 +160,8 @@ struct writer_params {
 	uint64_t lba_start;                                     ///< disk starting LBA
 	uint64_t lba_current;                                   ///< current write position in LBAs
 	uint64_t lba_end;                                       ///< disk last LBA
+
+	time_t stat_update;                                     ///< time when status file was updated
 };
 /**
  * @struct camogm_state
