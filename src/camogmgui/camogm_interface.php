@@ -77,31 +77,33 @@ $default_state = "/home/root/camogm.disk";
 $state_file = "/mnt/sda1/camogm.disk";
 $start_str = "camogm -n " . $cmd_pipe . " -p " . $cmd_port;
 
+function check_camogm_running(){
+  global $start_str;
+  
+  $camogm_running = false;
+  exec('ps | grep "camogm"', $arr);
+  $check = implode("<br/>",$arr);
+  
+  if (strstr($check, $start_str)){
+    $camogm_running = true;
+  }
+  
+  return $camogm_running;
+}
+
 if ($cmd == "run_camogm")
 {
-	$camogm_running = false;
-	exec('ps | grep "camogm"', $arr); 
-	function low_daemon($v)
-	{
-		return (substr($v, -1) != ']');
-	}
-	
-	$p = (array_filter($arr, "low_daemon"));
-	$check = implode("<br />",$p);
-	
-	//$state_file = get_state_path();
 	if (isset($_GET['state_file'])){
 		$state_file = $_GET['state_file'];
 	}
 	
-	$start_str = $start_str . " -s " . $state_file;
+	if(!check_camogm_running()) {
 	
-	if (strstr($check, $start_str))
-		$camogm_running = true;
-	else
-		$camogm_running = false;
-		
-	if(!$camogm_running) {
+                echo "camogm is not running, starting\n";
+	
+                $start_str = $start_str . " -s " . $state_file;
+	
+                // clean
 		exec("rm " . $cmd_pipe);
 		exec("rm " . $cmd_state);
 
@@ -130,28 +132,16 @@ if ($cmd == "run_camogm")
 			$cmd_str = 'format=mov;save_gp=1;';
 			write_cmd_pipe($cmd_str);
 		}
+	}else{
+          echo "camogm is running\n";
 	}
 }
 else if ($cmd == "status")
 {
-	// is camogm running
-	$camogm_running = "not running";
-	
-	exec('ps | grep "camogm"', $arr);
-	function low_daemon($v)
-	{
-		return (substr($v, -1) != ']');
-	}
-	
-	$p = (array_filter($arr, "low_daemon"));
-	$check = implode("<br />",$p);
-	
-	if (strstr($check, $start_str))
-		$camogm_running = "on";
-	else
-		$camogm_running = "off";
-		
-	if ($camogm_running=="on"){
+	if (check_camogm_running()) $camogm_running = "on";
+	else                        $camogm_running = "off";
+
+	if ($camogm_running){
 		$pipe="/var/state/camogm.state";
 		$mode=0777;
 		if(!file_exists($pipe)) {
@@ -174,24 +164,10 @@ else if ($cmd == "status")
 }
 else if ($cmd == "run_status")
 {	
-	// is camogm running
-	$camogm_running = "not running";
-
-	exec('ps | grep "camogm"', $arr); 
-	function low_daemon($v)
-	{
-		return (substr($v, -1) != ']');
-	}
 	
-	$p = (array_filter($arr, "low_daemon"));
-	$check = implode("<br />",$p);
+	if (check_camogm_running()) $camogm_running = "on";
+	else                        $camogm_running = "off";
 	
-	if (strstr($check, $start_str))
-		$camogm_running = "on";
-	else
-		$camogm_running = "off";
-	
-
 	$status="<?xml version='1.0'?><camogm_state>\n<state>".$camogm_running."</state>\n</camogm_state>";
 
 	header("Content-Type: text/xml");
