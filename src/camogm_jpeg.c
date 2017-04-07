@@ -270,7 +270,7 @@ int camogm_start_jpeg(camogm_state *state)
 		}
 		offset = lba_to_offset(state->writer_params.lba_current - state->writer_params.lba_start);
 		lseek64(state->writer_params.blockdev_fd, offset, SEEK_SET);
-		D6(fprintf(debug_file, "Open block device: %s, offset in bytes: %llu\n", state->rawdev.rawdev_path, offset));
+		D3(fprintf(debug_file, "Open block device: %s, offset in bytes: %llu\n", state->rawdev.rawdev_path, offset));
 		state->writer_params.stat_update = time(NULL);
 	}
 

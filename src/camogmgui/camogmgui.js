@@ -414,6 +414,21 @@ function process_recording(xmldoc) {
 	
 	if (state=='"stopped"'){
 		clearInterval(update_intvl);
+	} else {
+		var frame_period = 0;
+		var rates = xmldoc.getElementsByTagName('frame_period');
+		for (var i = 0; i < rates.length; i++) {
+			var data = parseInt(rates[i].firstChild.data);
+			if (data > frame_period)
+				frame_period = data;
+		}
+		if (frame_period != 0) {
+			frame_period /= 1000;
+		} else {
+			frame_period = 1000;
+		}
+		clearInterval(update_intvl);
+		update_intvl = setInterval(update_state, frame_period);
 	}
 	//Update HTML
 	document.getElementById('ajax_state').innerHTML = state.substring(1, state.length-1);
