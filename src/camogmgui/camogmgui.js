@@ -422,7 +422,7 @@ function process_recording(xmldoc) {
 			if (data > frame_period)
 				frame_period = data;
 		}
-		if (frame_period != 0) {
+		if (frame_period != 0 && frame_period < 1000000) {
 			frame_period /= 1000;
 		} else {
 			frame_period = 1000;
