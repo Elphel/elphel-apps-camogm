@@ -407,6 +407,7 @@ int camogm_end_jpeg(camogm_state *state)
  */
 void *jpeg_writer(void *thread_args)
 {
+	int reset_rem;
 	int chunk_index;
 	ssize_t iovlen, l;
 	bool process = true;
@@ -443,6 +444,7 @@ void *jpeg_writer(void *thread_args)
 			/* end of dummy read cycle */
 
 			l = 0;
+			reset_rem = 0;
 			state->writer_params.last_ret_val = 0;
 			chunk_index = get_data_buffers(state, chunks_iovec, FILE_CHUNKS_NUM);
 			if (chunk_index > 0) {
@@ -452,6 +454,7 @@ void *jpeg_writer(void *thread_args)
 				if (iovlen < l) {
 					D0(fprintf(debug_file, "writev error: %s (returned %i, expected %i)\n", strerror(errno), iovlen, l));
 					state->writer_params.last_ret_val = -CAMOGM_FRAME_FILE_ERR;
+					reset_rem = 1;
 				} else {
 					// update statistic
 					state->rawdev.last_jpeg_size = l;
@@ -461,10 +464,11 @@ void *jpeg_writer(void *thread_args)
 			} else {
 				D0(fprintf(debug_file, "data vector mapping error: %d)\n", chunk_index));
 				state->writer_params.last_ret_val = -CAMOGM_FRAME_FILE_ERR;
+				reset_rem = 1;
 			}
 
 			// release main thread
-			reset_chunks(state->writer_params.data_chunks, 0);
+			reset_chunks(state->writer_params.data_chunks, reset_rem);
 			params->data_ready = false;
 			pthread_cond_signal(&params->main_cond);
 		}

@@ -459,7 +459,7 @@ int update_lba(camogm_state *state)
 	if (state->writer_params.lba_current + total_sz <= state->writer_params.lba_end) {
 		state->writer_params.lba_current += total_sz;
 	} else {
-		state->writer_params.lba_current = state->writer_params.lba_start;
+		state->writer_params.lba_current = state->writer_params.lba_start + total_sz;
 		ret = 1;
 	}
 
