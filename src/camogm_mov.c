@@ -66,12 +66,15 @@ int quicktime_template_parser(camogm_state *state,
 void putBigEndian(unsigned long d, int l);
 int parse_special(void);
 int parse(camogm_state *state, int top);
+static int camogm_audio_mov(void *buff, int len, int slen);
 
 /**
  * @brief Called when format is changed to MOV (only once) and recording is stopped.
- * Read frame template from the file if it is not done yet.
+ * @param[in]   state   a pointer to a structure containing current state
+ * Read frame template from the file if it is not done yet and set callback function for
+ * audio stream recording.
  */
-int camogm_init_mov(void)
+int camogm_init_mov(camogm_state *state)
 {
 	FILE* qt_header;
 	int size;
@@ -96,6 +99,7 @@ int camogm_init_mov(void)
 		return -CAMOGM_FRAME_FILE_ERR;
 	}
 	q_template[size] = 0;
+	state->audio.write_samples = camogm_audio_mov;
 	return 0;
 }
 
@@ -158,6 +162,22 @@ int camogm_frame_mov(camogm_state *state)
 	}
 	state->frame_lengths[state->frameno] = l;
 	return 0;
+}
+
+/**
+ * Write audio samples to file.
+ * @param buff
+ * @param len
+ * @param slen
+ * @return
+ */
+static int camogm_audio_mov(void *buff, int len, int slen)
+{
+	int ret_val = 0;
+
+	D6(fprintf(debug_file, "write audio sample, len = %d, slen = %d\n", len, slen));
+
+	return ret_val;
 }
 
 /**

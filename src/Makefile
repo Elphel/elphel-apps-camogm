@@ -4,19 +4,19 @@ TEST_PROG  = camogm_test
 PHPSCRIPTS = camogmstate.php $(GUIDIR)/camogmgui.php $(GUIDIR)/camogmgui.css $(GUIDIR)/camogmgui.js $(GUIDIR)/camogm_interface.php \
              $(GUIDIR)/SpryTabbedPanels.css $(GUIDIR)/SpryTabbedPanels.js $(GUIDIR)/xml_simple.php $(GUIDIR)/SpryCollapsiblePanel.css \
              $(GUIDIR)/SpryCollapsiblePanel.js
-CONFIGS    = qt_source
+CONFIGS    = qt_source qt_audio
 IMAGES     = $(GUIDIR)/images/filebrowser-01.gif $(GUIDIR)/images/filebrowser-bottom-01.gif $(GUIDIR)/images/png_white_30.png \
              $(GUIDIR)/images/record.gif $(GUIDIR)/images/reload.png $(GUIDIR)/images/stop.gif $(GUIDIR)/images/create_folder.png \
              $(GUIDIR)/images/divider.png $(GUIDIR)/images/folder.gif $(GUIDIR)/images/help.png $(GUIDIR)/images/quicktime.png \
              $(GUIDIR)/images/rec_folder.png $(GUIDIR)/images/up_folder.gif $(GUIDIR)/images/play_audio.png $(GUIDIR)/images/hdd.png
 
 
-SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c camogm_read.c index_list.c camogm_align.c
+SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c camogm_read.c index_list.c camogm_align.c camogm_audio.c thelper.c
 TEST_SRC = camogm_test.c
 OBJS = $(SRCS:.c=.o)
 
 CFLAGS    += -Wall -I$(STAGING_DIR_HOST)/usr/include-uapi
-LDLIBS    += -logg -pthread -lm
+LDLIBS    += -logg -pthread -lm -lasound
 
 INSTALL    = install
 INSTMODE   = 0755

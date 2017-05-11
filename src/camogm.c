@@ -25,6 +25,7 @@
 #include <sys/ioctl.h>
 #include <sys/uio.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <string.h>
 #include <getopt.h>
 #include <ctype.h>
@@ -35,6 +36,7 @@
 #include "camogm_mov.h"
 #include "camogm_kml.h"
 #include "camogm_read.h"
+#include "thelper.h"
 
 /** @brief Default debug level */
 #define DEFAULT_DEBUG_LVL         6
@@ -61,6 +63,10 @@
 #define ALL_CHN_INACTIVE          0x00
 /** @brief This is a basic helper macro for processing all sensor ports at a time */
 #define FOR_EACH_PORT(indtype, indvar) for (indtype indvar = 0; indvar < SENSOR_PORTS; indvar++)
+/** @brief container_of macro as in the kernel */
+#define container_of(ptr, type, member) ({                      \
+             const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
+             (type *)( (char *)__mptr - offsetof(type,member) );})
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 
@@ -112,8 +118,8 @@ int debug_level;
 FILE* debug_file;
 
 void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num);
-int camogm_start(camogm_state *state);
-int camogm_stop(camogm_state *state);
+int camogm_start(camogm_state *state, bool restart);
+int camogm_stop(camogm_state *state, bool reset);
 void camogm_reset(camogm_state *state);
 int camogm_debug(camogm_state *state, const char *fname);
 int camogm_debug_level(int d);
@@ -152,6 +158,7 @@ static int get_disk_range(const char *name, struct range *rng);
 static int set_disk_range(const struct range *rng);
 static void get_disk_info(camogm_state *state);
 static struct timeval get_fpga_time(const int fd_fparsall, unsigned int port);
+static void get_fpga_time_w(const struct audio *audio, struct timeval *tv);
 int open_files(camogm_state *state);
 unsigned long getGPValue(unsigned int port, unsigned long GPNumber);
 void setGValue(unsigned int port, unsigned long GNumber, unsigned long value);
@@ -161,6 +168,10 @@ inline int is_chn_active(camogm_state *s, unsigned int port);
 void clean_up(camogm_state *state);
 static void camogm_err_stat(const camogm_state *state, int port, FILE *f, bool xml);
 static void camogm_set_dummy_read(camogm_state *state, int d);
+
+static void camogm_set_audio_state(camogm_state *state, char *args);
+static void camogm_set_audio_volume(camogm_state *state, char *args);
+static void camogm_set_audio_format(camogm_state *state, char *args);
 
 void put_uint16(void *buf, u_int16_t val)
 {
@@ -271,6 +282,13 @@ void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 	state->writer_params.state = STATE_STOPPED;
 
 	camogm_set_dummy_read(state, 0);
+
+	// audio stuff
+	state->audio.dev_name = DEFAULT_SND_DEVICE;
+	state->audio.set_audio_channels = SAMPLE_CHANNELS;
+	state->audio.set_audio_rate = SAMPLE_RATE;
+	state->audio.set_audio_volume = DEFAULT_AUDIO_VOLUME;
+	state->audio.get_fpga_time = get_fpga_time_w;
 }
 
 /**
@@ -311,9 +329,10 @@ int camogm_debug_level(int d)
 /**
  * @brief Start recording for each active sensor port
  * @param[in]   state   a pointer to a structure containing current state
+ * @param[in]   restart flag indicating that full restart is requested
  * @return      0 if the recording finished successfully and negative error code otherwise
  */
-int camogm_start(camogm_state *state)
+int camogm_start(camogm_state *state, bool restart)
 {
 	int timestamp_start;
 	int rslt;
@@ -338,13 +357,14 @@ int camogm_start(camogm_state *state)
 	int * ifp_this = (int*)&(state->this_frame_params[port]);
 	if (state->kml_enable) camogm_init_kml();  // do nothing
 
+	audio_init(&state->audio, restart);
 	if (state->format != state->set_format) {
 		state->format =  state->set_format;
 		switch (state->format) {
 		case CAMOGM_FORMAT_NONE: rslt = 0; break;
 		case CAMOGM_FORMAT_OGM:  rslt = camogm_init_ogm(); break;
 		case CAMOGM_FORMAT_JPEG: rslt = camogm_init_jpeg(state); break;
-		case CAMOGM_FORMAT_MOV:  rslt = camogm_init_mov(); break;
+		case CAMOGM_FORMAT_MOV:  rslt = camogm_init_mov(state); break;
 		}
 		state->formats |= 1 << (state->format);
 		// exit on unknown formats?
@@ -482,7 +502,8 @@ int camogm_start(camogm_state *state)
 		}
 	}
 
-// here we are ready to initialize Ogm (or other) file
+	// here we are ready to initialize Ogm (or other) file
+	audio_start(&state->audio);
 	switch (state->format) {
 	case CAMOGM_FORMAT_NONE: rslt = 0;  break;
 	case CAMOGM_FORMAT_OGM:  rslt = camogm_start_ogm(state);  break;
@@ -519,9 +540,6 @@ int sendImageFrame(camogm_state *state)
 	int * ifp_this = (int*)&(state->this_frame_params[state->port_num]);
 	int fp;
 	int port = state->port_num;
-	struct timeval start_time, end_time;
-
-//	start_time = get_fpga_time(state->fd_fparmsall[port], port);
 
 // This is probably needed only for Quicktime (not to exceed already allocated frame index)
 	if (!state->rawdev_op && (state->frameno >= (state->max_frames))) {
@@ -666,12 +684,68 @@ int sendImageFrame(camogm_state *state)
 	state->packetchunks[state->chunk_index  ].bytes = 2;
 	state->packetchunks[state->chunk_index++].chunk = (unsigned char*)trailer;
 
-	switch (state->format) {
-	case CAMOGM_FORMAT_NONE: rslt = 0; break;
-	case CAMOGM_FORMAT_OGM:  rslt = camogm_frame_ogm(state); break;
-	case CAMOGM_FORMAT_JPEG: rslt = camogm_frame_jpeg(state); break;
-	case CAMOGM_FORMAT_MOV:  rslt = camogm_frame_mov(state); break;
-	default: rslt = 0; // do nothing
+	state->audio.ts_video.tv_sec = state->this_frame_params[port].timestamp_sec;
+	state->audio.ts_video.tv_usec = state->this_frame_params[port].timestamp_usec;
+	int sync_ok = 1;
+	// synchronize audio and video before recording has started, this need to be done only once
+	if (state->audio.ctx_a.begin_of_stream_with_audio) {
+		D6(fprintf(debug_file, "\n"));
+		if (state->audio.ctx_a.audio_trigger) {
+			state->audio.ts_video_start = state->audio.ts_audio;
+			state->audio.ts_video_start.tv_usec += state->frame_period[port] / 2;
+			time_normalize(&state->audio.ts_video_start);
+			state->audio.ctx_a.audio_trigger = 0;
+			// calculate how many audio samples we need to skip here
+			long audio_to_skip = 0;
+			struct timeval tv = state->audio.ts_video;
+			while (time_comp(&tv, &state->audio.ts_video_start) < 0) {
+				tv.tv_usec += state->frame_period[port];
+				time_normalize(&tv);
+			}
+			tv.tv_sec -= 1;
+			tv.tv_usec += 1000000;
+			tv.tv_usec -= state->frame_period[port] / 2;
+			time_normalize(&tv);
+			if (tv.tv_sec != state->audio.ts_audio.tv_sec) {
+				audio_to_skip = tv.tv_sec - state->audio.ts_audio.tv_sec;
+				audio_to_skip *= 1000000;
+			}
+			audio_to_skip += tv.tv_usec;
+			audio_to_skip -= state->audio.ts_audio.tv_usec;
+			double s = state->audio.audio_rate;
+			s /= 1000.0;
+			s *= audio_to_skip;
+			s /= 1000.0;
+			state->audio.ctx_a.audio_skip_samples = (long) s;
+			state->audio.ctx_a.time_start = tv;
+			D6(fprintf(debug_file , "audio started at: %ld:%06ld; we need to record it from: %ld:%06ld; audio_to_skip_us == %ld; "
+					"audio samples to skip == %lld\n",
+					state->audio.ts_audio.tv_sec, state->audio.ts_audio.tv_usec, tv.tv_sec, tv.tv_usec, audio_to_skip,
+					state->audio.ctx_a.audio_skip_samples));
+		}
+		D6(fprintf(debug_file, "audio (start): %ld:%06ld; video (current): %ld:%06ld; frame period is: %d us\n",
+				state->audio.ts_audio.tv_sec, state->audio.ts_audio.tv_usec, state->audio.ts_video.tv_sec, state->audio.ts_video.tv_usec,
+				state->frame_period[port]));
+		if (time_comp(&state->audio.ts_video_start, &state->audio.ts_video) > 0) {
+			D6(fprintf(debug_file, "skip this video frame\n"));
+			sync_ok = 0;
+		} else {
+			D6(fprintf(debug_file, "save video frame with time: %ld:%06ld\n", state->audio.ts_video.tv_sec, state->audio.ts_video.tv_usec));
+			state->audio.ctx_a.begin_of_stream_with_audio = 0;
+		}
+	}
+
+	if (sync_ok) {
+		switch (state->format) {
+		case CAMOGM_FORMAT_NONE: rslt = 0; break;
+		case CAMOGM_FORMAT_OGM:  rslt = camogm_frame_ogm(state); break;
+		case CAMOGM_FORMAT_JPEG: rslt = camogm_frame_jpeg(state); break;
+		case CAMOGM_FORMAT_MOV:  rslt = camogm_frame_mov(state); break;
+		default: rslt = 0; // do nothing
+		}
+	} else {
+		// skip only first video frames that are ahead of audio stream
+		rslt = 0;
 	}
 	if (rslt) {
 		D3(fprintf(debug_file, "sendImageFrame:12: camogm_frame_***() returned %d\n", rslt));
@@ -681,11 +755,12 @@ int sendImageFrame(camogm_state *state)
 	if (rslt) return rslt;
 
 	D3(fprintf(debug_file, "_14_"));
-// advance frame pointer
-	state->frameno++;
+	// advance frame pointer
+	if (sync_ok)
+		state->frameno++;
 	state->cirbuf_rp[port] = lseek(state->fd_circ[port], LSEEK_CIRC_NEXT, SEEK_END);
 	D3(fprintf(debug_file, "\tcompressed frame number: %li\t", lseek(state->fd_circ[port], LSEEK_CIRC_GETFRAME, SEEK_END)));
-// optionally save it to global read pointer (i.e. for debugging with imgsrv "/pointers")
+	// optionally save it to global read pointer (i.e. for debugging with imgsrv "/pointers")
 	if (state->save_gp) lseek(state->fd_circ[port], LSEEK_CIRC_SETP, SEEK_END);
 	D3(fprintf(debug_file, "_15_\n"));
 	if (state->frames_skip > 0) {
@@ -695,17 +770,6 @@ int sendImageFrame(camogm_state *state)
 	}
 	D3(fprintf(debug_file,"cirbuf_rp to next frame = 0x%x\n", state->cirbuf_rp[port]));
 
-//	end_time = get_fpga_time(state->fd_fparmsall[port], port);
-//	unsigned int mbps; // write speed, MB/s
-//	unsigned long long time_diff; // time elapsed, in microseconds
-//	time_diff = ((end_time.tv_sec * 1000000 + end_time.tv_usec) - (start_time.tv_sec * 1000000 + start_time.tv_usec));
-//	mbps = ((double)state->rawdev.last_jpeg_size / (double)1048576) / ((double)time_diff / (double)1000000);
-//	D6(fprintf(debug_file, "Frame start time: %ld:%ld; frame end time: %ld:%ld; last frame size: %lu\n",
-//			start_time.tv_sec, start_time.tv_usec,
-//			end_time.tv_sec, end_time.tv_usec,
-//			state->rawdev.last_jpeg_size));
-//	D6(fprintf(debug_file, "Write speed: %d MB/s\n", mbps));
-
 	return 0;
 }
 
@@ -713,9 +777,10 @@ int sendImageFrame(camogm_state *state)
  * @brief Stop current recording. If recording was not started, this function has no effect. This function
  * calls @e camogm_end_* for the current file format.
  * @param[in]   state   a pointer to a structure containing current state
+ * @param[in]   reset   flag indicating that sound HW should be reset as well
  * @return      0 if the operation was stopped successfully and negative error code otherwise
  */
-int camogm_stop(camogm_state *state)
+int camogm_stop(camogm_state *state, bool reset)
 {
 	int rslt = 0;
 
@@ -730,16 +795,18 @@ int camogm_stop(camogm_state *state)
 		}
 		return 0;
 	}
-	D1(fprintf(debug_file, "Ending recording\n"));
+	D1(fprintf(debug_file, "Stop recording\n"));
 	if (state->kml_used) camogm_end_kml(state);
+	if (state->audio.audio_enable)
+		audio_finish(&state->audio, reset);
 	switch (state->format) {
 	case CAMOGM_FORMAT_NONE: rslt = 0; break;
 	case CAMOGM_FORMAT_OGM:  rslt = camogm_end_ogm(state); break;
 	case CAMOGM_FORMAT_JPEG: rslt = camogm_end_jpeg(state); break;
 	case CAMOGM_FORMAT_MOV:  rslt = camogm_end_mov(state); break;
-//    default: return 0; // do nothing
+	//    default: return 0; // do nothing
 	}
-// now close video file (if it is open)
+	// now close video file (if it is open)
 	if (state->vf) fclose(state->vf);
 	state->vf = NULL;
 	if (rslt) return rslt;
@@ -935,7 +1002,7 @@ void  camogm_set_format(camogm_state *state, int d)
 		case CAMOGM_FORMAT_NONE: rslt = 0; break;
 		case CAMOGM_FORMAT_OGM:  rslt = camogm_init_ogm(); break;
 		case CAMOGM_FORMAT_JPEG: rslt = camogm_init_jpeg(state); break;
-		case CAMOGM_FORMAT_MOV:  rslt = camogm_init_mov(); break;
+		case CAMOGM_FORMAT_MOV:  rslt = camogm_init_mov(state); break;
 		}
 		if (rslt) {
 			D0(fprintf(debug_file, "%s:%d: Error setting format to=%d\n", __FILE__, __LINE__, state->format));
@@ -966,6 +1033,65 @@ void  camogm_set_start_after_timestamp(camogm_state *state, double d)
 	state->start_after_timestamp =  d;
 }
 
+/** @brief Change audio processing state */
+static void camogm_set_audio_state(camogm_state *state, char *args)
+{
+	if (strncmp(args, "on", 2) == 0 || strncmp(args, "enable", 6) == 0) {
+		state->audio.set_audio_enable = 1;
+	} else if (strncmp(args, "off", 3) == 0 || strncmp(args, "disable", 7) == 0){
+		state->audio.set_audio_enable = 0;
+	}
+}
+
+/** @brief Set audio volume */
+static void camogm_set_audio_volume(camogm_state *state, char *args)
+{
+	int vol = atoi(args);
+
+	if (vol > 65535)
+		vol = 65535;
+	if (vol < 0)
+		vol = 0;
+	state->audio.set_audio_volume = vol;
+}
+
+/** @brief Set audio sample rate and number of channels */
+static void camogm_set_audio_format(camogm_state *state, char *args)
+{
+	char buf[8];
+	int i;
+	int channels = -1;
+	int rate = -1;
+	char *right = strstr(args, "/");
+
+	if (right != NULL) {
+		channels = atol(&right[1]);
+		if (channels < AUDIO_CHANNELS_MIN)
+			channels = AUDIO_CHANNELS_MIN;
+		if (channels > AUDIO_CHANNELS_MAX)
+			channels = AUDIO_CHANNELS_MAX;
+		state->audio.set_audio_channels = channels;
+	}
+	for (i = 0; i < 7; i++) {
+		if (args[i] != '\0' && args[i] != '/')
+			buf[i] = args[i];
+		else
+			break;
+	}
+	buf[i] = '\0';
+	if (buf[0] != '\0') {
+		rate = atol(buf);
+		if (rate < AUDIO_RATE_MIN)
+			rate = AUDIO_RATE_MIN;
+		if (rate > AUDIO_RATE_MAX)
+			rate = AUDIO_RATE_MAX;
+		state->audio.set_audio_rate = rate;
+	}
+
+	D6(fprintf(debug_file, "request for audio format: %s; set rate = %d, channels = %d\n",
+			args, state->audio.set_audio_rate, state->audio.set_audio_channels));
+}
+
 /**
  * @brief Print current status either as plain text or in xml format
  * @param[in]   state   to a structure containing current state
@@ -987,6 +1113,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	int _frames_skip = 0;
 	int _sec_skip = 0;
 	char *_kml_enable, *_kml_used, *_kml_height_mode;
+	char *_audio_en;
 	unsigned int _percent_done;
 	off_t save_p;
 
@@ -1069,6 +1196,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	else
 		_percent_done = 0;
 
+	_audio_en = state->audio.set_audio_enable ? "yes" : "no";
 	if (xml) {
 		fprintf(f, "<?xml version=\"1.0\"?>\n" \
 			"<camogm_state>\n" \
@@ -1112,18 +1240,25 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			"  <raw_device_pos_read>0x%llx (%d%% done)</raw_device_pos_read>\n" \
 			"  <lba_start>%llu</lba_start>\n" \
 			"  <lba_current>%llu</lba_current>\n" \
-			"  <lba_end>%llu</lba_end>\n",
-			_state,  state->path, state->frameno, state->start_after_timestamp, _dur, _udur, _len, \
-			_frames_skip, _sec_skip, \
-			state->width, state->height, _output_format, _using_exif, \
-			state->path_prefix, state->segment_duration, state->segment_length, state->max_frames, state->timescale, \
-			state->frames_per_chunk,  state->last_error_code, \
-			state->debug_name, debug_level, _using_global_pointer, \
-			_kml_enable, _kml_used, state->kml_path, state->kml_horHalfFov, state->kml_vertHalfFov, state->kml_near, \
-			_kml_height_mode, state->kml_height, state->kml_period, state->kml_last_ts, state->kml_last_uts, \
+			"  <lba_end>%llu</lba_end>\n" \
+
+			"  <audio_enable>%s</audio_enable>\n" \
+			"  <audio_channels>%d</audio_channels>\n" \
+			"  <audio_rate>%d</audio_rate>\n" \
+			"  <audio_volume>%d</audio_volume>\n",
+			_state,  state->path, state->frameno, state->start_after_timestamp, _dur, _udur, _len,
+			_frames_skip, _sec_skip,
+			state->width, state->height, _output_format, _using_exif,
+			state->path_prefix, state->segment_duration, state->segment_length, state->max_frames, state->timescale,
+			state->frames_per_chunk,  state->last_error_code,
+			state->debug_name, debug_level, _using_global_pointer,
+			_kml_enable, _kml_used, state->kml_path, state->kml_horHalfFov, state->kml_vertHalfFov, state->kml_near,
+			_kml_height_mode, state->kml_height, state->kml_period, state->kml_last_ts, state->kml_last_uts,
 			state->greedy ? "yes" : "no", state->ignore_fps ? "yes" : "no", state->rawdev.rawdev_path,
 			state->rawdev.overrun, state->rawdev.curr_pos_w, state->rawdev.curr_pos_r, _percent_done,
-			state->writer_params.lba_start, state->writer_params.lba_current, state->writer_params.lba_end);
+			state->writer_params.lba_start, state->writer_params.lba_current, state->writer_params.lba_end,
+
+			_audio_en, state->audio.set_audio_channels, state->audio.set_audio_rate, state->audio.set_audio_volume);
 
 		FOR_EACH_PORT(int, chn) {
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";
@@ -1203,6 +1338,11 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "lba_start          \t%llu\n",      state->writer_params.lba_start);
 		fprintf(f, "lba_current        \t%llu\n",      state->writer_params.lba_current);
 		fprintf(f, "lba_end            \t%llu\n",      state->writer_params.lba_end);
+		fprintf(f, "\n");
+		fprintf(f, "audio_enable       \t%s\n",        _audio_en);
+		fprintf(f, "audio_channels     \t%d\n",        state->audio.set_audio_channels);
+		fprintf(f, "audio_rate         \t%d\n",        state->audio.set_audio_rate);
+		fprintf(f, "audio_volume       \t%d\n",        state->audio.set_audio_volume);
 		fprintf(f, "\n");
 		FOR_EACH_PORT(int, chn) {
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";
@@ -1349,17 +1489,18 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 // now cmd is trimmed, arg is NULL or a pointer to trimmed command arguments
 	if (strcmp(cmd, "start") == 0) {
 		check_compressors(state);
-		get_disk_info(state);
-		camogm_start(state);
+		if (state->rawdev_op)
+			get_disk_info(state);
+		camogm_start(state, true);
 		return 1;
 	} else if (strcmp(cmd, "reset") == 0) { // will reset pointer to the last acquired frame (if any)
 		camogm_reset(state);
 		return 2;
 	} else if (strcmp(cmd, "stop") == 0) {
-		camogm_stop(state);
+		camogm_stop(state, true);
 		return 3;
 	} else if (strcmp(cmd, "exit") == 0) {
-		camogm_stop(state);
+		camogm_stop(state, true);
 		camogm_free(state);
 		clean_up(state);
 		exit(0);
@@ -1496,6 +1637,18 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 	} else if (strcmp(cmd, "dummy_read") == 0) {
 		if ((args) && ((d = strtol(args, NULL, 10)) > 0)) camogm_set_dummy_read(state, d);
 		return 30;
+	} else if (strcmp(cmd, "audio") == 0) {
+		if (args)
+			camogm_set_audio_state(state, args);
+		return 31;
+	} else if (strcmp(cmd, "audio_volume") == 0) {
+		if (args)
+			camogm_set_audio_volume(state, args);
+		return 32;
+	} else if (strcmp(cmd, "audio_format") == 0) {
+		if (args)
+			camogm_set_audio_format(state, args);
+		return 33;
 	}
 
 	return -1;
@@ -1581,6 +1734,9 @@ int listener_loop(camogm_state *state)
 		} else if (state->prog_state == STATE_RUNNING) { // no commands in queue, started
 			switch ((rslt = -sendImageFrame(state))) {
 			case 0:
+				if (state->format == CAMOGM_FORMAT_MOV) {
+					audio_process(&state->audio);
+				}
 				break;                      // frame sent OK, nothing to do (TODO: check file length/duration)
 			case CAMOGM_FRAME_NOT_READY:    // just wait for the frame to appear at the current pointer
 				// we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
@@ -1605,8 +1761,8 @@ int listener_loop(camogm_state *state)
 			case  CAMOGM_FRAME_BROKEN:      // frame broken (buffer overrun)
 				// restart the file
 				D3(fprintf(debug_file,"%s:line %d - sendImageFrame() returned -%d\n", __FILE__, __LINE__, rslt));
-				camogm_stop(state);
-				camogm_start(state);
+				camogm_stop(state, false);
+				camogm_start(state, false);
 				break;
 			case  CAMOGM_FRAME_FILE_ERR:    // error with file I/O
 			case  CAMOGM_FRAME_OTHER:       // other errors
@@ -1628,7 +1784,7 @@ int listener_loop(camogm_state *state)
 		} else if (state->prog_state == STATE_STARTING) { // no commands in queue,starting (but not started yet)
 
 			// retry starting
-			switch ((rslt = -camogm_start(state))) {
+			switch ((rslt = -camogm_start(state, true))) {
 			case 0:
 				break;                      // file started OK, nothing to do
 			case CAMOGM_TOO_EARLY:
@@ -2155,4 +2311,20 @@ struct timeval get_fpga_time(const int fd_fparsall, unsigned int port)
 	tv.tv_usec = getGPValue(port, G_MICROSECONDS);
 
 	return tv;
+}
+
+/**
+ * Wrapper for a function returning FPGA time. This wrapper is set as a callback function for
+ * audio interface. The time value is retrieved through currently active port.
+ * @param[in]   audio   pointer to a structure containing audio parameters and buffers
+ * @param[out]  tv      pointer to a structure where time value will be stored
+ * @return      None
+ */
+static void get_fpga_time_w(const struct audio *audio, struct timeval *tv)
+{
+	unsigned int port;
+	camogm_state *state = container_of(audio, camogm_state, audio);
+
+	port = state->port_num;
+	*tv = get_fpga_time(state->fd_fparmsall[port], port);
 }

@@ -1,0 +1,300 @@
+{'moov
+{'mvhd
+        00 # version
+    000000 # Flags
+     !time # Creation time
+     !time # Modification time
+  !timescale # Time Scale - time unints per second
+  !duration # Duration - in time units
+  00010000 # Preferred rate
+      0100 # Preferred volume
+  00000000 00000000 0000 # (reserved)
+  00010000 00000000 00000000 # Matrix [a b u]
+  00000000 00010000 00000000 # Matrix [c d v]
+  00000000 00000000 40000000 # Matrix [x y w]
+  00000000 # Preview Time
+  00000000 # Preview Duration
+  00000000 # Poster Time
+  00000000 # Selection Time
+  00000000 # Selection Duration
+  00000000 # Current Time
+  00000002 # Next Track ID
+} # 'mvhd
+{'trak
+   {'tkhd
+        00  # version
+    00000f  # Flags
+     !time  # Creation time
+     !time  # Modification time
+  00000001  # Track ID
+  00000000  # (reserved)
+  !duration # Duration
+  00000000 00000000 # (reserved)
+      0000  # Layer
+	  0000  # Alternate group
+	  0000  # Volume
+	  0000  # (reserved)
+  00010000 00000000 00000000 # Matrix [a b u]
+  00000000 00010000 00000000 # Matrix [c d v]
+  00000000 00000000 40000000 # Matrix [x y w]
+  !width  0000 # Track width
+  !height 0000 # Track height
+  } # 'tkhd
+  {'mdia
+    {'mdhd
+        00   # version
+    000000   # Flags
+     !time   # Creation time
+     !time   # Modification time
+  !timescale # Time Scale
+  !duration  # Duration
+      0000   # Language
+	  0000   # Quality
+	} # 'mdhd
+    {'hdlr
+        00 # version
+    000000 # Flags
+    'mhlr  # Component type
+    'vide  # Component subtype
+    'appl  # Component manufacturer
+  00000000 # Component Flags
+  0001001f # Component Flags Mask
+  19 'Apple Video Media Handler # Component Name
+	} # 'hdlr
+	{'minf
+	  {'vmhd
+        00 # version
+    000001 # Flags
+	  0040 # Graphics Mode
+    8000 8000 8000 # Opcolor
+	  } # 'vmhd
+	  {'hdlr
+        00 # version
+    000000 # Flags
+    'dhlr  # Component type
+    'alis  # Component subtype
+    'appl  # Cmponent manufacturer
+  00000001 # Component Flags
+  00010026 # Component Flags Mask
+  18 'Apple Alias Data Handler # Component Name
+	  } # 'hdlr
+	  {'dinf
+	     {'dref
+          00 # version
+      000000 # Flags (1 - the same file???)
+    00000001 # Number of entries
+	0000000c 616c6973 00000001 # Data references
+		 }
+	  } # 'dinf
+	  {'stbl
+	    {'stsd
+          00 # version
+      000000 # Flags
+    00000001 # Number of entries
+	00000056 # Sample description size
+	   'jpeg # Data format
+    00000000 0000 # (reserved)
+	    0001 # Data reference index
+	    0000 # Version
+	    0000 # Revision Level
+       'appl # Vendor
+    00000000 # Temporal quality
+    00000200 # Spatial quality
+	  !width # Width
+	 !height # Height
+    00480000 # Horizontal resolution
+    00480000 # Vertical resolution
+    00000000 # Data size
+	    0001 # Frame count
+	0c 'Photo - JPEG # Compressor Name
+	00000000 00000000 00000000 00000000 000000 # padding
+	    0018 # Color depth (24)
+		ffff # Color table ID
+		} #'stsd
+		{'stts
+          00 # version
+      000000 # Flags
+    00000001 # Number of entries
+	!nframes !frame_duration # TIME-TO-SAMPLE table (was 0x0a 0x28) - time units/sample
+		}
+		{'stsc
+          00 # version
+      000000 # Flags
+    00000001 # Number of entries
+#	00000001 !nframes 00000001 # SAMPLE-TO-CHUNK table - all in one chunk
+	00000001 !samples_chunk 00000001 # SAMPLE-TO-CHUNK table - each sample it new chunk
+		}
+		{'stsz
+          00 # version
+      000000 # Flags
+    00000000 # Sample Size ** Did not work with non-zero!
+    !nframes # Number of entries
+    !sample_sizes # nframes of 4-byte words
+		}
+		{'stco
+          00 # version
+      000000 # Flags
+#    00000001 # Number of entries
+#	!mdata   #
+#    !nframes # Number of entries
+	!chunk_offsets   #
+		}
+	  } #'stbl
+	} #'minf
+  } # 'mdia
+#  {'udta
+#    00000000
+#  }
+} #'trak
+
+
+# sound track
+{'trak
+	{'tkhd
+			00 # Version
+		00000f # Flags
+		!time  # Creation time
+		!time  # Modification time
+	  00000002 # Track ID
+	  00000000 # (reserved)
+	!duration  # Duration (correct)
+	  00000000 # (reserved)
+	  00000000 # (reserved)
+		  0000 # Layer
+		  0000 # Alternate group
+		  0100 # Volume
+		  0000 # (reserved)
+  00010000 00000000 00000000 # Matrix [a b u]
+  00000000 00010000 00000000 # Matrix [c d v]
+  00000000 00000000 40000000 # Matrix [x y w]
+	  00000000 # Track width
+	  00000000 # Track height
+	} #'tkhd
+	{'mdia
+		{'mdhd # - required
+			00 # version
+		000000 # Flags
+		 !time # Creation time
+		 !time # Modification time
+!audio_timescale # Time Scale - 44100				// ???
+!audio_duration # Duration							// ???
+		  0000 # Language
+		  0000 # Quality
+		} # 'mdhd
+		{'hdlr # - not required
+			00 # version
+		000000 # Flags
+		'mhlr  # Component type
+		'soun  # Component subtype
+	  00000000 # Component manufacturer
+#		'niko  # Component manufacturer
+	  00000000 # Component Flags
+	  00000000 # Component Flags Mask
+			00 # Component name
+#    'appl  # Component manufacturer
+#  00000001 # Component Flags
+#  00010026 # Component Flags Mask
+#  18 'Apple Sound Data Handler # Component Name
+		} # 'hdlr
+		{'minf
+			{'smhd
+				00 # version
+			000000 # Flags
+			  0000 # Balance
+			  0000 # Reserved
+			} # 'smhd
+			{'hdlr
+				00 # version
+			000000 # Flags
+			'dhlr  # Component type
+			'alis  # Component subtype
+		  00000000 # Component manufacturer
+#			'niko  # Component manufacturer
+		  00000000 # Component Flags
+		  00000000 # Component Flags Mask
+				00 #
+#		  00000001 # Component Flags
+#		  00010026 # Component Flags Mask
+#18 'Apple Alias Data Handler # Component Name
+			} # 'hdlr
+			{'dinf
+				{'dref
+					00 # version
+				000000 # Flags (1 - the same file???)
+			  00000001 # Number of entries
+					{'alis
+					00000001
+					}
+				}
+			} # 'dinf
+			{'stbl		# Sample Table atom
+				{'stsd	# Sample Description atom
+					00 # Version
+				000000 # Flags
+			  00000001 # Number of entries
+					 {'sowt # 16 bit LE, Data format
+#					  0001 # Version
+#					  0000 # Revision
+			 00000000 0000 # (reserved)
+					  0001 # Data reference index
+					  0001 # Version
+					  0000 # Revision level
+				  00000000 # Vendor
+		   !audio_channels # 2b, Number of channels
+					  0010 # Sample size, == 0x10 == 16 bit
+					  0000 # Compression ID
+					  0000 # Packet size
+			   !audio_rate # 4b, Sample rate - unsigned 16.16 FP
+							# new fields...
+					00000001 # samples per packets - always 1
+					00000002 # number of bytes in a sample for a single channel
+	  !audio_bytes_per_frame # bytes per frame - 2 * channels
+					00000002 # bytes per sample - 2
+
+#					00000000 # Terminator
+#					00000000
+					}
+				} # 'stsd
+				{'stts	# Time-to-sample atom - from the "Some Useful Examples: Creating Audio Tracks at 44.1 kHz"
+					00 # version
+				000000 # Flags
+#		   !audio_stts #
+			  00000001 # Number of entries
+		!audio_samples # Samples count
+			  00000001 # Sample duration
+				}
+				{'stsc	# Sample-to-chunk atom - OK
+					00 # version
+				000000 # Flags
+		   !audio_stsc #
+#			  00000000 # Number of entries
+#[			  00000000 # first chunk
+#...		  00000000 # samples per chunk
+#]			  00000000 # samples description ID - 01 or 02 ?
+				}
+				{'stsz	# Sample size atom
+					00 # version
+				000000 # Flags
+		   !audio_stsz # Sample Size - 2 for Mono, 4 for Stereo - ?
+#			  00000000 # Number of entries - empty
+				}
+				{'stco	# Chunk offset atom
+					00 # version
+				000000 # Flags
+		   !audio_stco #
+				}
+			} # 'stbl
+		} # 'minf
+	} #'mdia
+} #'trak
+
+# {'udta
+#   {'WLOC
+#     0017
+#	 0020
+#   }
+#   00000000	# ???
+# }
+}
+  !data_size
+  'mdat

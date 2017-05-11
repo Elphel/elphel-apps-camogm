@@ -20,7 +20,9 @@
 
 #include "camogm.h"
 
-int camogm_init_mov(void);
+#define SAMPLE_DESCR_ID_AUDIO     1                             //< audio sample description ID, used in sample-to-chunk atom
+
+int camogm_init_mov(camogm_state *state);
 int camogm_start_mov(camogm_state *state);
 int camogm_frame_mov(camogm_state *state);
 int camogm_end_mov(camogm_state *state);
