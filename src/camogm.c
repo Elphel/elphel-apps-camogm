@@ -223,6 +223,8 @@ void check_compressors(camogm_state *state)
 		if (getGPValue(i, P_COMPRESSOR_RUN) != COMPRESSOR_RUN_STOP) {
 			state->active_chn |= 1 << i;
 		}
+		// restore the state of disabled channels
+		state->active_chn &= state->active_chn_mask;
 	}
 }
 
@@ -274,6 +276,7 @@ void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 	state->rawdev.curr_pos_w = state->rawdev.start_pos;
 	state->rawdev.curr_pos_r = state->rawdev.start_pos;
 	state->active_chn = ALL_CHN_INACTIVE;
+	state->active_chn_mask = ALL_CHN_ACTIVE;
 	state->rawdev.mmap_default_size = MMAP_CHUNK_SIZE;
 	state->sock_port = port_num;
 
@@ -2077,10 +2080,13 @@ inline int is_chn_active(camogm_state *s, unsigned int port)
 inline void set_chn_state(camogm_state *s, unsigned int port, unsigned int new_state)
 {
 	if (port >= 0 && port < SENSOR_PORTS) {
-		if (new_state)
+		if (new_state) {
 			s->active_chn |= 1 << port;
-		else
+			s->active_chn_mask |= 1 << port;
+		} else {
 			s->active_chn &= ~(1 << port);
+			s->active_chn_mask &= ~(1 << port);
+		}
 	}
 }
 

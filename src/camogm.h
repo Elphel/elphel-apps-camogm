@@ -256,6 +256,8 @@ typedef struct {
 	int rawdev_op;                                          ///< flag indicating writing to raw device
 	rawdev_buffer rawdev;                                   ///< contains pointers to raw device buffer
 	unsigned int active_chn;                                ///< bitmask of active sensor ports
+	unsigned int active_chn_mask;                           ///< bitmask of enabled sensor ports; used to save enabled/disabled ports between
+	                                                        ///< consecutive starts/stops as active ports list is updated on each start
 	uint16_t sock_port; 									///< command socket port number
 	struct writer_params writer_params;                     ///< contains control parameters for writing thread
 	unsigned int error_stat[SENSOR_PORTS][CAMOGM_ERRNUM];   ///< collect statistics about errors
