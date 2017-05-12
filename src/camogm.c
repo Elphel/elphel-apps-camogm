@@ -63,10 +63,6 @@
 #define ALL_CHN_INACTIVE          0x00
 /** @brief This is a basic helper macro for processing all sensor ports at a time */
 #define FOR_EACH_PORT(indtype, indvar) for (indtype indvar = 0; indvar < SENSOR_PORTS; indvar++)
-/** @brief container_of macro as in the kernel */
-#define container_of(ptr, type, member) ({                      \
-             const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
-             (type *)( (char *)__mptr - offsetof(type,member) );})
 
 char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 
@@ -1000,7 +996,7 @@ void  camogm_set_format(camogm_state *state, int d)
 
 	state->set_format =  d;
 	if (state->prog_state == STATE_STOPPED) {
-		state->format =  state->set_format;
+		state->format = state->set_format;
 		switch (state->format) {
 		case CAMOGM_FORMAT_NONE: rslt = 0; break;
 		case CAMOGM_FORMAT_OGM:  rslt = camogm_init_ogm(); break;
@@ -1551,7 +1547,7 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 		return 11;
 	} else if (strcmp(cmd, "format") == 0) {
 		if (args) {
-			if (strcmp(args,  "none") == 0) camogm_set_format(state, 0);
+			if (strcmp(args,  "none") == 0) camogm_set_format(state, CAMOGM_FORMAT_NONE);
 			else if ((strcmp(args, "ogm" ) == 0) || (strcmp(args, "ogg") == 0)) camogm_set_format(state, CAMOGM_FORMAT_OGM);
 			else if ((strcmp(args, "jpeg") == 0) || (strcmp(args, "jpg") == 0)) camogm_set_format(state, CAMOGM_FORMAT_JPEG);
 			else if (strcmp(args,  "mov" ) == 0) camogm_set_format(state, CAMOGM_FORMAT_MOV);
@@ -1641,8 +1637,19 @@ int parse_cmd(camogm_state *state, FILE* npipe)
 		if ((args) && ((d = strtol(args, NULL, 10)) > 0)) camogm_set_dummy_read(state, d);
 		return 30;
 	} else if (strcmp(cmd, "audio") == 0) {
-		if (args)
+		if (args) {
 			camogm_set_audio_state(state, args);
+			if (state->format != CAMOGM_FORMAT_NONE) {
+				/* Some file format initialization functions may depend on the state of audio recording, i.e.
+				 * MOV will load different header template when audio is enabled; thus we need to trigger
+				 * format selector in case the state of audio processing has changed. Here, format is reset
+				 * regardless of its previous state which will trigger format selector when file recording
+				 * starts.
+				 */
+				camogm_free(state);
+				state->format = CAMOGM_FORMAT_NONE;
+			}
+		}
 		return 31;
 	} else if (strcmp(cmd, "audio_volume") == 0) {
 		if (args)

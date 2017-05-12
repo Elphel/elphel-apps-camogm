@@ -153,7 +153,7 @@ static int save_state_file(const camogm_state *state)
 
 /**
  * @brief Initialize synchronization resources for disk writing thread and then start this thread. This function
- * is call each time JPEG format is set or changed, thus we need to check the state of writing thread before
+ * is called each time JPEG format is set or changed, thus we need to check the state of writing thread before
  * initialization to prevent spawning multiple threads.
  * @param[in]   state   a pointer to a structure containing current state
  * @return      0 if initialization was successful and negative value otherwise
@@ -202,19 +202,21 @@ int camogm_init_jpeg(camogm_state *state)
  */
 void camogm_free_jpeg(camogm_state *state)
 {
-	pthread_cond_destroy(&state->writer_params.main_cond);
-	pthread_cond_destroy(&state->writer_params.writer_cond);
-	pthread_mutex_destroy(&state->writer_params.writer_mutex);
+	if (state->writer_params.state == STATE_RUNNING) {
+		pthread_cond_destroy(&state->writer_params.main_cond);
+		pthread_cond_destroy(&state->writer_params.writer_cond);
+		pthread_mutex_destroy(&state->writer_params.writer_mutex);
 
-	// terminate writing thread
-	pthread_mutex_lock(&state->writer_params.writer_mutex);
-	state->writer_params.exit_thread = true;
-	pthread_cond_signal(&state->writer_params.writer_cond);
-	pthread_mutex_unlock(&state->writer_params.writer_mutex);
-	pthread_join(state->writer_params.writer_thread, NULL);
-	state->writer_params.exit_thread = false;
+		// terminate writing thread
+		pthread_mutex_lock(&state->writer_params.writer_mutex);
+		state->writer_params.exit_thread = true;
+		pthread_cond_signal(&state->writer_params.writer_cond);
+		pthread_mutex_unlock(&state->writer_params.writer_mutex);
+		pthread_join(state->writer_params.writer_thread, NULL);
+		state->writer_params.exit_thread = false;
 
-	deinit_align_buffers(state);
+		deinit_align_buffers(state);
+	}
 }
 
 /** Calculate the total length of current frame */

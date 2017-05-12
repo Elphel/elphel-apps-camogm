@@ -78,7 +78,7 @@ struct audio {
 	int frame_period;                                           ///< video frame period, used to calculate time stamps for audio samples
 
 	void (*get_fpga_time)(const struct audio *audio, struct timeval *tv);//< callback function which can get FPGA time
-	int (*write_samples)(void *buff, int len, int slen);        ///< callback function which actually write data to file, this must set
+	int (*write_samples)(void *buff, int len, int slen);        ///< callback function which actually write data to file, this must be set
 	                                                            ///< in the camogm_init_* function when appropriate format is selected
 };
 

@@ -27,12 +27,13 @@
 
 #include "camogm_mov.h"
 
-/** @brief Quicktime header length (w/o index tables) enough to accommodate static data */
+/** @brief QuickTime header length (w/o index tables) enough to accommodate static data */
 #define QUICKTIME_MIN_HEADER 0x300
 
 // for the parser
 const char hexStr[] = "0123456789abcdef";
-const char qtSourceFileName[] = "/etc/qt_source";
+const char qt_template_v[] = "/etc/qt_source";                  // QuickTime template for video files
+const char qt_template_av[] = "/etc/qt_audio";                  // QuickTime template for video + audio files
 char comStr[1024];
 int width = 1280;
 int height = 1024;
@@ -41,9 +42,9 @@ int sample_dur = 80;
 int samplesPerChunk = 10;
 int framesize = 80000;
 int timescale = 600;
-int * sizes;    // array of frame sizes
-int iPos;       // position in the string "iFile"
-int ofd;        // output file descriptor (file opened by the caller)
+int * sizes;                                                    // array of frame sizes
+int iPos;                                                       // position in the string "iFile"
+int ofd;                                                        // output file descriptor (file opened by the caller)
 int iFileLen;
 char * q_template = NULL;
 long headerSize = 0;
@@ -51,9 +52,9 @@ const char *iFile = NULL;
 
 
 int quicktime_template_parser(camogm_state *state,
-		const char * i_iFile,     // now - string containing header template
-		int i_ofd,                // output file descriptor (opened)
-		int i_width,              // width in pixels
+		const char * i_iFile,                                   // now - string containing header template
+		int i_ofd,                                              // output file descriptor (opened)
+		int i_width,                                            // width in pixels
 		int i_height,
 		int i_nframes,
 		int i_sample_dur,
@@ -61,7 +62,7 @@ int quicktime_template_parser(camogm_state *state,
 		int i_framesize,
 		int i_timescale,
 		int * i_sizes,
-		int data_start            // put zero if the header is written before data (no gap)
+		int data_start                                          // put zero if the header is written before data (no gap)
 );
 void putBigEndian(unsigned long d, int l);
 int parse_special(void);
@@ -78,21 +79,26 @@ int camogm_init_mov(camogm_state *state)
 {
 	FILE* qt_header;
 	int size;
+	char *qt_template = qt_template_v;
 
-	if ((qt_header = fopen(qtSourceFileName, "r")) == NULL) {
-		D0(fprintf(debug_file, "Error opening Quicktime header template %s for reading\n", qtSourceFileName));
+	if (state->audio.audio_enable)
+		qt_template = qt_template_av;
+	if ((qt_header = fopen(qt_template, "r")) == NULL) {
+		D0(fprintf(debug_file, "Error opening QuickTime header template %s for reading\n", qt_template));
 		return -CAMOGM_FRAME_FILE_ERR;
+	} else {
+		D5(fprintf(debug_file, "Template file: %s\n", qt_template));
 	}
 	fseek(qt_header, 0, SEEK_END);
 	size = ftell(qt_header);
 	if (!((q_template = malloc(size + 1)))) {
-		D0(fprintf(debug_file, "Could not allocate %d bytes of memory for Quicktime header template\n", (size + 1)));
+		D0(fprintf(debug_file, "Could not allocate %d bytes of memory for QuickTime header template\n", (size + 1)));
 		fclose(qt_header);
 		return -CAMOGM_FRAME_MALLOC;
 	}
 	fseek(qt_header, 0, SEEK_SET); //rewind
 	if (fread(q_template, size, 1, qt_header) < 1) {
-		D0(fprintf(debug_file, "Could not read %d bytes of Quicktime header template from %s\n", (size + 1), qtSourceFileName));
+		D0(fprintf(debug_file, "Could not read %d bytes of QuickTime header template from %s\n", (size + 1), qt_template));
 		free(q_template);
 		q_template = NULL;
 		fclose(qt_header);

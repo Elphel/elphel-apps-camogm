@@ -70,6 +70,10 @@
 #define COMMAND_LOOP_DELAY        500000
 /** @brief File can be split up to this number of chunks */
 #define FILE_CHUNKS_NUM           8
+/** @brief container_of macro as in the kernel */
+#define container_of(ptr, type, member) ({                      \
+             const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
+             (type *)( (char *)__mptr - offsetof(type,member) );})
 
 /**
  * @enum state_flags
