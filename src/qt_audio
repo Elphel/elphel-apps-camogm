@@ -293,7 +293,7 @@
 #     0017
 #	 0020
 #   }
-#   00000000	# ???
+#   00000000	# optional terminating 32-bit value, see description of User Data Atom
 # }
 }
   !data_size

@@ -50,7 +50,7 @@ void audio_init(struct audio *audio, bool restart)
 	}
 	// set up audio device
 	if (restart) {
-		int err;
+		int err = 0;
 		bool init_ok = false;
 		unsigned int t = audio->audio_rate;
 		unsigned int period_time = 40 * 1000;

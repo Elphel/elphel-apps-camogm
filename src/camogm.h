@@ -222,10 +222,17 @@ typedef struct {
 	double start_after_timestamp;                           ///< delay recording start to after frame timestamp
 	int max_frames;
 	int set_max_frames;
-	int frames_per_chunk;
-	int set_frames_per_chunk;                               ///< quicktime -  index for fast forward?
-	int frameno;
-	int *frame_lengths;
+	int frames_per_chunk;                                   ///< QuickTime, the number of samples (images or audio samples) in a chunk
+	int set_frames_per_chunk;                               ///< QuickTime, index for fast forward (sample-to-chunk atom)
+	int frameno;                                            ///< total image frame counter, does not include audio samples
+	unsigned long *frame_lengths;                           ///< QuickTime; pointer to an array of frame lengths wich includes both image frames
+	                                                        ///< and audio samples if audio recording is enabled. MSB of each entry indicates
+	                                                        ///< the type of frame this length relates to: if MSB = 0 then this is images frame and
+	                                                        ///< if MSB = 1 then this is audio sample. Stealing one bit from the length field
+	                                                        ///< effectively limits the size of one frame to 2 GiB which should be more than enough
+	                                                        ///< for all purposes.
+	long frame_index;                                       ///< QuickTime; total frame counter including audio samples (if enabled), this is used
+	                                                        ///< as an index for frame_lengths array
 	off_t frame_data_start;                                 ///< Quicktime (and else?) - frame data start (0xff 0xd8...)
 	ogg_int64_t time_unit;
 	int formats;                                            ///< bitmask of used (initialized) formats

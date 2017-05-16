@@ -24,11 +24,16 @@
 #include <string.h>
 #include <time.h>
 #include <sys/types.h>
+#include <assert.h>
 
 #include "camogm_mov.h"
 
 /** @brief QuickTime header length (w/o index tables) enough to accommodate static data */
-#define QUICKTIME_MIN_HEADER 0x300
+#define QUICKTIME_MIN_HEADER      0x300
+/** @brief The length in bytes of sample-to-chunk table entry as defined in QuickTime format specification */
+#define S2C_ENTRY_LEN             12
+/** @brief The number of entries in sample-to-chunk table */
+#define S2C_ENTRIES               3
 
 // for the parser
 const char hexStr[] = "0123456789abcdef";
@@ -50,6 +55,10 @@ char * q_template = NULL;
 long headerSize = 0;
 const char *iFile = NULL;
 
+unsigned long audio_rate = 0;
+unsigned short audio_channels = 0;
+int audio_timescale;
+long audio_duration;
 
 int quicktime_template_parser(camogm_state *state,
 		const char * i_iFile,                                   // now - string containing header template
@@ -65,9 +74,12 @@ int quicktime_template_parser(camogm_state *state,
 		int data_start                                          // put zero if the header is written before data (no gap)
 );
 void putBigEndian(unsigned long d, int l);
-int parse_special(void);
+int parse_special(camogm_state *state);
 int parse(camogm_state *state, int top);
 static int camogm_audio_mov(void *buff, int len, int slen);
+static inline bool is_audio_frame(unsigned long len);
+static inline void mark_audio(unsigned long *len);
+static inline void unmark_audio(unsigned long *len);
 
 /**
  * @brief Called when format is changed to MOV (only once) and recording is stopped.
@@ -79,15 +91,13 @@ int camogm_init_mov(camogm_state *state)
 {
 	FILE* qt_header;
 	int size;
-	char *qt_template = qt_template_v;
+	const char *qt_template_file = state->audio.audio_enable ? qt_template_av : qt_template_v;
 
-	if (state->audio.audio_enable)
-		qt_template = qt_template_av;
-	if ((qt_header = fopen(qt_template, "r")) == NULL) {
-		D0(fprintf(debug_file, "Error opening QuickTime header template %s for reading\n", qt_template));
+	if ((qt_header = fopen(qt_template_file, "r")) == NULL) {
+		D0(fprintf(debug_file, "Error opening QuickTime header template %s for reading\n", qt_template_file));
 		return -CAMOGM_FRAME_FILE_ERR;
 	} else {
-		D5(fprintf(debug_file, "Template file: %s\n", qt_template));
+		D5(fprintf(debug_file, "QuickTime template file: %s\n", qt_template_file));
 	}
 	fseek(qt_header, 0, SEEK_END);
 	size = ftell(qt_header);
@@ -98,7 +108,7 @@ int camogm_init_mov(camogm_state *state)
 	}
 	fseek(qt_header, 0, SEEK_SET); //rewind
 	if (fread(q_template, size, 1, qt_header) < 1) {
-		D0(fprintf(debug_file, "Could not read %d bytes of QuickTime header template from %s\n", (size + 1), qt_template));
+		D0(fprintf(debug_file, "Could not read %d bytes of QuickTime header template from %s\n", (size + 1), qt_template_file));
 		free(q_template);
 		q_template = NULL;
 		fclose(qt_header);
@@ -106,9 +116,15 @@ int camogm_init_mov(camogm_state *state)
 	}
 	q_template[size] = 0;
 	state->audio.write_samples = camogm_audio_mov;
+	fclose(qt_header);
+
 	return 0;
 }
 
+/**
+ * Free resources allocated during MOV file recording
+ * @return   None
+ */
 void camogm_free_mov(void)
 {
 	if (q_template) {
@@ -124,6 +140,20 @@ void camogm_free_mov(void)
  */
 int camogm_start_mov(camogm_state *state)
 {
+	int data_offset;
+	struct audio *audio = &state->audio;
+
+	state->frame_index = 0;
+
+	if (audio->audio_enable) {
+		audio->audio_samples_to_chunk = malloc(S2C_ENTRY_LEN * S2C_ENTRIES);
+		if (!audio->audio_samples_to_chunk) {
+			return -CAMOGM_FRAME_MALLOC;
+		}
+		for (int i = 0; i < S2C_ENTRIES; i++) {
+			audio->audio_samples_to_chunk[i] = -1;
+		}
+	}
 
 	// allocate memory for the frame index table
 	if (!((state->frame_lengths = malloc(4 * state->max_frames)))) return -CAMOGM_FRAME_MALLOC;
@@ -133,10 +163,21 @@ int camogm_start_mov(camogm_state *state)
 		D0(fprintf(debug_file, "Error opening %s for writing, returned %d, errno=%d\n", state->path, state->ivf, errno));
 		return -CAMOGM_FRAME_FILE_ERR;
 	}
-	// skip header (plus extra)
-	// Quicktime (and else?) - frame data start (0xff 0xd8...)
-	state->frame_data_start = QUICKTIME_MIN_HEADER + 16 + 4 * (state->max_frames) + ( 4 * (state->max_frames)) / (state->frames_per_chunk); // 8 bytes for "skip" tag
+	/* skip QuickTime header as it will be filled in when the current file is finished and
+	 * set the file pointer to where actual data will be recorded
+	 */
+	data_offset = QUICKTIME_MIN_HEADER + 16;
+	data_offset += 4 * state->max_frames;                       // space for sample size atom - video
+	data_offset += 4 * state->max_frames;                       // space for chunk offsets atom - video
+	if (audio->audio_enable) {
+		data_offset += 4 * state->max_frames;                   // space for chunk offsets atom - audio
+		data_offset += S2C_ENTRY_LEN * S2C_ENTRIES;             // space for samples size atom - audio
+	}
+
+//	state->frame_data_start = QUICKTIME_MIN_HEADER + 16 + 4 * (state->max_frames) + ( 4 * (state->max_frames)) / (state->frames_per_chunk); // 8 bytes for "skip" tag
+	state->frame_data_start = data_offset;
 	lseek(state->ivf, state->frame_data_start, SEEK_SET);
+
 	return 0;
 }
 
@@ -147,6 +188,7 @@ int camogm_start_mov(camogm_state *state)
  */
 int camogm_frame_mov(camogm_state *state)
 {
+	int ret;
 	int i, j;
 	ssize_t iovlen, l;
 	struct iovec chunks_iovec[7];
@@ -160,14 +202,18 @@ int camogm_frame_mov(camogm_state *state)
 	iovlen = writev(state->ivf, chunks_iovec, (state->chunk_index) - 1);
 	if (iovlen < l) {
 		j = errno;
-		D0(fprintf(debug_file, "writev error %d (returned %d, expected %d, file descriptor %d, chn %d)\n", j, iovlen, l, state->ivf, state->port_num));
+		D0(fprintf(debug_file, "writev error %d (returned %d, expected %d, file descriptor %d, chn %ud)\n", j, iovlen, l, state->ivf, state->port_num));
 		perror(strerror(j));
 		close(state->ivf);
 		state->ivf = -1;
 		return -CAMOGM_FRAME_FILE_ERR;
 	}
-	state->frame_lengths[state->frameno] = l;
-	return 0;
+	state->frame_lengths[state->frame_index] = l;
+	state->frame_index++;
+	if (state->frame_index >= state->max_frames)
+		return -CAMOGM_FRAME_CHANGED;
+
+	return ret;
 }
 
 /**
@@ -195,41 +241,28 @@ int camogm_end_mov(camogm_state *state)
 {
 	off_t l;
 	int port = state->port_num;
+
+	assert(state->frame_lengths);
+
 	timescale = 10000;                                                      // frame period measured in 1/10000 of a second?
 	// that was in old code. If that works - try to switch to microseconds
 	l = lseek(state->ivf, 0, SEEK_CUR) - (state->frame_data_start) + 8;     // 4-byte length+"mdat"
 	// fill in the header in the beginning of the file
 	lseek(state->ivf, 0, SEEK_SET);
 	quicktime_template_parser(state,
-			q_template,   // now - string containing header template
-			state->ivf,   // output file descriptor (opened)
-			state->width, // width in pixels
+			q_template,           // string containing header template
+			state->ivf,           // output file descriptor (opened)
+			state->width,         // width in pixels
 			state->height,
-			state->frameno,
+			state->frameno,       // the number of image frames
 			state->frame_period[port] / (1000000 / timescale),
 			state->frames_per_chunk,
 			0,                    // frame size - will look in the table
 			(int)((float)timescale / (state->timescale)),
-			state->frame_lengths, // array of frame lengths to build an index
+//			state->frame_lengths, // array of frame lengths to build an index
+			NULL,                 // array of frame lengths to build an index
 			state->frame_data_start
 	);
-#if 0
-	// now we need to overwrite last mdat tag in the header to the skip the gap, instead of the length 'mdat
-	// put length 'skip length 'mdat
-	he = lseek(state->ivf, 0, SEEK_CUR);    // just after the original header end
-	l = state->frame_data_start - he;       // should be >=
-	D4(fprintf(debug_file, "Remaining gap between Quicktime header and the data is %d (it should be>=8) \n", (int)l));
-	lseek(state->ivf, he - 8, SEEK_SET);
-	read(state->ivf, mdat_tag, 8); //!read calculated length+'mdat' tag
-	lseek(state->ivf, state->frame_data_start - 8, SEEK_SET);
-	write(state->ivf, mdat_tag, 8);
-	skip_tag[0] = (l >> 24) & 0xff;
-	skip_tag[1] = (l >> 16) & 0xff;
-	skip_tag[2] = (l >>  8) & 0xff;
-	skip_tag[3] = (l      ) & 0xff;
-	lseek(state->ivf, he - 8, SEEK_SET);
-	write(state->ivf, skip_tag, 8);
-#endif
 	close(state->ivf);
 	state->ivf = -1;
 	// free memory used for index
@@ -237,6 +270,11 @@ int camogm_end_mov(camogm_state *state)
 		free(state->frame_lengths);
 		state->frame_lengths = NULL;
 	}
+	if (state->audio.audio_samples_to_chunk) {
+		free(state->audio.audio_samples_to_chunk);
+		state->audio.audio_samples_to_chunk = NULL;
+	}
+
 	return 0;
 }
 
@@ -274,7 +312,7 @@ char * sfgets(char * str, int size, const char * stream, int * pos)
 	return str;
 }
 
-int parse_special(void)
+int parse_special(camogm_state *state)
 {
 	time_t ltime;
 	int n, j, l;
@@ -282,20 +320,20 @@ int parse_special(void)
 	char c;
 	int i = 0;
 	int gap;
+	unsigned long k;
 
-	while (((c = iFile[iPos++]) != 0x20) && (c != 0x09) && (c != 0x0a) && (c != 0x0d) && (c != 0x0) && (i < 255) && ( iPos < iFileLen )) str[i++] = c;
+	// non-printable characters from ASCII table
+	while (((c = iFile[iPos++]) != 0x20) && (c != 0x09) && (c != 0x0a) && (c != 0x0d) && (c != 0x0) && (i < 255) && (iPos < iFileLen))
+		str[i++] = c;
 	str[i] = 0;
 
 	D4(fprintf(debug_file, "parse_special, str=!%s\n", str));
 
 	if (strcmp(str, "mdata") == 0) {
 		putBigEndian(headerSize, 4); return 0;
-	}                                                                    // will put zeroes on pass 1
+	}                                                           // will put zeroes on pass 1
 	if (strcmp(str, "height") == 0) {
 		putBigEndian(height, 2); return 0;
-	}
-	if (strcmp(str, "width") == 0) {
-		putBigEndian(width, 2); return 0;
 	}
 	if (strcmp(str, "width") == 0) {
 		putBigEndian(width, 2); return 0;
@@ -314,30 +352,129 @@ int parse_special(void)
 	}
 	if (strcmp(str, "samples_chunk") == 0) {
 		putBigEndian(samplesPerChunk, 4); return 0;
-	}                                                                                 // will put zeroes on pass 1
-	if (strcmp(str, "sample_sizes") == 0) {
-		if (sizes != NULL) for (i = 0; i < nframes; i++) putBigEndian(sizes[i], 4);
-		else for (i = 0; i < nframes; i++) putBigEndian(framesize, 4);
-		return 0;
-	}
-	if (strcmp(str, "chunk_offsets") == 0) {
-		n = (nframes - 1) / samplesPerChunk + 1;
-		putBigEndian(n, 4);
-		if (sizes != NULL) {
-			l = 0; j = 0;
-			for (i = 0; i < nframes; i++) {
-				if (j == 0) putBigEndian(headerSize + l, 4);
-				j++; if (j >= samplesPerChunk) j = 0;
-				l += sizes[i];
-			}
+	}                                                           // will put zeroes on pass 1
 
-		} else for (i = 0; i < n; i++) putBigEndian(headerSize + framesize * samplesPerChunk * i, 4);
+	// atoms related to audio
+	if (strcmp(str, "audio_channels") == 0) {
+		putBigEndian(audio_channels, 2);
 		return 0;
 	}
-	// a hack - invlude length'skip if data position (header size is known and there is a gap)
-	if (strcmp(str, "data_size") == 0) {
+	if (strcmp(str, "audio_rate") == 0) {
+		putBigEndian(audio_rate, 4);
+		return 0;
+	}
+	if (strcmp(str, "audio_timescale") == 0) {
+		putBigEndian(audio_timescale, 4);
+		return 0;
+	}
+	if (strcmp(str, "audio_duration") == 0) {
+		putBigEndian(audio_duration, 4);
+		return 0;
+	}
+	if (strcmp(str, "audio_frames") == 0) {
+		putBigEndian(state->audio.audio_frameno, 4);
+		return 0;
+	}
+	if (strcmp(str, "audio_samples") == 0) {
+		putBigEndian(state->audio.audio_samples, 4);
+		return 0;
+	}
+	if (strcmp(str, "audio_bytes_per_frame") == 0) {
+		putBigEndian(state->audio.audio_channels * 2, 4);
+		return 0;
+	}
+	if (strcmp(str, "audio_stsz") == 0)  {
+		putBigEndian(state->audio.audio_channels * 2, 4);
+		putBigEndian(state->audio.audio_samples, 4);
+		return 0;
+	}
+	if (strcmp(str, "audio_stco") == 0)  {	// (4 + 4 * chunk_count) bytes
+		long offset = 0;
+		n = state->audio.audio_frameno;
+//fprintf(stderr, "chunk_offsets; n == %d; nframes == %d; samplesPerChunk == %d\n", n, nframes, samplesPerChunk);
+		putBigEndian(n, 4);
+		j = 0;
+		for (i = 0; i < state->frame_index; i++) {
+			k = state->frame_lengths[i];
+			if (is_audio_frame(k)) {
+				l = offset;
+				putBigEndian(headerSize + l, 4);
+				j++;
+			}
+			unmark_audio(&k);
+			offset += k;
+		}
+		if (j != n)
+			D0(fprintf(debug_file, "Error MOV: wrong records for \"audio_stco\", have written %d, need to write %d\n", j, n));
+		return 0;
+	}
+	// TODO!!!
+	if (strcmp(str, "audio_stsc") == 0) {
+		n = 0;
+		for (i = 0; i < S2C_ENTRIES; i++) {
+			if (state->audio.audio_samples_to_chunk[i] != -1) {
+				n++;
+			}
+		}
+		putBigEndian(n, 4);
+		putBigEndian(1, 4);
+		putBigEndian(state->audio.audio_samples_to_chunk[0], 4);
+		putBigEndian(01, 4); // TODO: 02 ???
+		n = 2;
+		if (state->audio.audio_samples_to_chunk[1] != -1) {
+			putBigEndian(n, 4);
+			putBigEndian(state->audio.audio_samples_to_chunk[1], 4);
+			putBigEndian(01, 4);
+			n = state->audio.audio_frameno;
+		}
+		if (state->audio.audio_samples_to_chunk[2] != -1) {
+			putBigEndian(n, 4);
+			putBigEndian(state->audio.audio_samples_to_chunk[2], 4);
+			putBigEndian(01, 4);
+		}
+		return 0;
+	}
+	if (strcmp(str, "audio_samples_chunk") == 0) {
+		putBigEndian(1, 4);
+		return 0;
+	}                                                           // will put zeroes on pass 1
+	if (strcmp(str, "sample_sizes") == 0) {                     // 'stsz' video atom
+		// index for video stream only, audio index is build separately
+		j = 0;
+		for (i = 0; i < state->frame_index; i++) {
+			k = state->frame_lengths[i];
+			if (!is_audio_frame(k)) {
+				putBigEndian(k, 4);
+				j++;
+			}
+		}
+		if (j != nframes)
+			D0(fprintf(debug_file, "Error MOV: wrong records for \"samples_sizes\": have write: %d, need to write: %d\n", j, n));
+		return 0;
+	}
+	if (strcmp(str, "chunk_offsets") == 0) {                    // 'stco' video atom
+		int chunks = (nframes - 1) / samplesPerChunk + 1;
+		putBigEndian(chunks, 4);
+		l = 0; j = 0;
+		for (i = 0; i < state->frame_index; i++) {
+			// this chunk offset atom is for video frames only, it is built separately for audio
+			k = state->frame_lengths[i];
+			if (!is_audio_frame(k)) {
+				if (j == 0)
+					putBigEndian(headerSize + l, 4);
+				j++;
+				if (j >= samplesPerChunk)
+					j = 0;
+			}
+			unmark_audio(&k);
+			l += k;
+		}
+		return 0;
+	}
+	// a hack - include length'skip if data position (header size is known and there is a gap)
+	if (strcmp(str, "data_size") == 0) {                        // 'mdat' atom, contains all data
 		gap = headerSize - lseek(ofd, 0, SEEK_CUR) - 8;
-		if (gap > 0) { //it should be exactly 0 if there is no gap or >8 if there is
+		if (gap > 0) {                                          // it should be exactly 0 if there is no gap or >8 if there is
 			D4(fprintf(debug_file, "Inserting a skip tag to compensate for a gap (%d bytes) between the header and the frame data\n", gap));
 			if (gap < 8) {
 				D0(fprintf(debug_file, "not enough room to insret 'skip' tag - %d (need 8)\n", gap));
@@ -347,25 +484,32 @@ int parse_special(void)
 			putBigEndian(gap, 4);
 			D4(fprintf(debug_file, "writing string <%s>\n", "skip"));
 			write(ofd, "skip", 4);
-			lseek(ofd, gap - 8, SEEK_CUR); // lseek over the gap and proceed as before
+			lseek(ofd, gap - 8, SEEK_CUR);                      // lseek over the gap and proceed as before
 		}
-		if (sizes != NULL) {
-			l = 0;
-			for (i = 0; i < nframes; i++) l += sizes[i];
-			D4(fprintf(debug_file, "writing hex %x, %x bytes\n", l, 4));
-			putBigEndian(l, 4);
-		} else putBigEndian(nframes * framesize, 4);
+		// calculate and save the total size of 'mdat atom
+		l = 0;
+		for (i = 0; i < state->frame_index; i++)
+			l += state->frame_lengths[i];
+		D4(fprintf(debug_file, "writing hex %x, %x bytes\n", l, 4));
+		putBigEndian(l, 4);
 		return 0;
 	}
 	if (strcmp(str, "time") == 0) {
 		time(&ltime);
-		ltime += 2082801600;      // 1970->1904// 31,557,600 seconds/year
-		putBigEndian(ltime, 4); return 0;
+		ltime += 2082801600;                                    // 1970->1904// 31,557,600 seconds/year
+		putBigEndian(ltime, 4);
+		return 0;
 	}
 	return -1;
 }
 
-int parse(camogm_state *state, int top)      // if top - will not include length
+/**
+ * Parse QuickTime template and write data to file
+ * @param[in]   state   a pointer to a structure containing current state
+ * @param[in]   top     flag indicating that the length shoulb not be included
+ * @return      0 if all is fine and -1 in case of an error
+ */
+int parse(camogm_state *state, int top)
 {
 	long out_start, out_end;
 	char c;
@@ -382,15 +526,15 @@ int parse(camogm_state *state, int top)      // if top - will not include length
 		// skip white spaces strchr
 		if ((c != ' ') && (c != 0x9) && (c != 0xa) && (c != 0xd)) {
 			if (c == '!') {
-				if (parse_special() < 0) return -1;
+				if (parse_special(state) < 0) return -1;
 			}
 			// children atoms
 			else if (c == '{') {
 				if (parse(state, 0) < 0) return -1;
 				// skip comments
-			} else if (c == '#') sfgets( comStr, sizeof(comStr), iFile, &iPos);
+			} else if (c == '#') sfgets(comStr, sizeof(comStr), iFile, &iPos);
 			else if (c == '\'') {
-				sfgets( comStr, sizeof(comStr), iFile, &iPos);
+				sfgets(comStr, sizeof(comStr), iFile, &iPos);
 				if ((cp = strchr(comStr, 0x0a)) != NULL) cp[0] = 0;
 				if ((cp = strchr(comStr, 0x0d)) != NULL) cp[0] = 0;
 				if ((cp = strchr(comStr, '#')) != NULL) cp[0] = 0;
@@ -405,23 +549,17 @@ int parse(camogm_state *state, int top)      // if top - will not include length
 				do {
 					d = (d << 4) + (strchr(hexStr, c) - hexStr);
 					l++;
-				} while (( iPos < iFileLen ) && (l <= 8) && (strchr(hexStr, (c = iFile[iPos++]))) );
+				} while ((iPos < iFileLen) && (l <= 8) && (strchr(hexStr, (c = iFile[iPos++]))));
 				l = (l) >> 1;
 				putBigEndian(d, l);
-
 				D4(fprintf(debug_file, "writing hex %lx, %lx bytes\n", d, l));
-
-
 			} else if ((c == '}')) {
 				break;
-
 			} else {
 				return -1;
 			}
-
 		}
 		c = iFile[iPos++];
-
 	}
 
 	// fread fseek ftell
@@ -462,16 +600,57 @@ int quicktime_template_parser( camogm_state *state,
 	ofd =             i_ofd;
 	iFileLen =        strlen(iFile);
 	lseek(ofd, 0, SEEK_SET);
-	if (data_start) headerSize = data_start;
+
+	audio_timescale = state->audio.audio_rate;
+	audio_rate = audio_timescale;
+	audio_rate <<= 16;
+	audio_duration = state->audio.audio_samples;
+	audio_channels = state->audio.audio_channels;
+
+	if (data_start)
+		headerSize = data_start;
 	D3(fprintf(debug_file, "PASS I\n"));
 
-	while ( iPos < iFileLen ) parse(state, 1);  // pass 1
+	while (iPos < iFileLen) parse(state, 1);  // pass 1
 	if (!headerSize) headerSize = lseek(ofd, 0, SEEK_CUR);
 	iPos = 0;
 	lseek(ofd, 0, SEEK_SET);
 
 	D3(fprintf(debug_file, "PASS II\n"));
-	while ( iPos < iFileLen ) parse(state, 1);  // pass 2
+	while (iPos < iFileLen) parse(state, 1);  // pass 2
 
 	return 0;
+}
+
+/**
+ * Check if the length value in index table relates to audio frame
+ * @param[in]  len   length value to check
+ * @return     True if the value is related to audio frame and false otherwise
+ */
+static inline bool is_audio_frame(unsigned long len)
+{
+	if ((len & 0x80000000) == 0)
+		return false;
+	else
+		return true;
+}
+
+/**
+ * Mark index table entry as audio frame
+ * @param[in]  len   length value to mark
+ * @return     None
+ */
+static inline void mark_audio(unsigned long *len)
+{
+	*len |= 0x80000000;
+}
+
+/**
+ * Reset audio flag from index table entry
+ * @param[out]   len   length value to clear mark from
+ * @param len
+ */
+static inline void unmark_audio(unsigned long *len)
+{
+	*len &= 0x7fffffff;
 }
