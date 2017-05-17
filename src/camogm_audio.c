@@ -53,8 +53,8 @@ void audio_init(struct audio *audio, bool restart)
 		int err = 0;
 		bool init_ok = false;
 		unsigned int t = audio->audio_rate;
-		unsigned int period_time = 40 * 1000;
-		unsigned int buffer_time = 2000000;
+		unsigned int period_time = SAMPLE_TIME * 1000;
+		unsigned int buffer_time = BUFFER_TIME * 1000;
 		snd_pcm_hw_params_t *hw_params;                         // allocated on stack, do not free
 		snd_pcm_sw_params_t *sw_params;                         // allocated on stack, do not free
 		snd_pcm_status_t *status;                               // allocated on stack, do not free
@@ -65,7 +65,7 @@ void audio_init(struct audio *audio, bool restart)
 		audio->ctx_a.sbuffer_len -= audio->ctx_a.sbuffer_len % 2;
 		// 'while' loop here just to break initialization sequence after an error
 		while (true) {
-			audio->ctx_a.sbuffer = (void *)malloc(audio->ctx_a.sbuffer_len * 8 + AUDIO_SBUFFER_PREFIX);
+			audio->ctx_a.sbuffer = (void *)malloc(audio->ctx_a.sbuffer_len * audio->audio_channels * AUDIO_BPS);
 			if (audio->ctx_a.sbuffer == NULL) {
 				D0(fprintf(debug_file, "error: can not allocate buffer for audio samples: %s\n", strerror(errno)));
 				break;
@@ -170,13 +170,15 @@ void audio_start(struct audio *audio)
  */
 void audio_process(struct audio *audio)
 {
-	int slen;
+	snd_pcm_sframes_t slen;
 	int counter = 0;
 	void *_buf;
-	int _buf_len;
+	long _buf_len;
 	struct timeval tv_sys;
 	snd_timestamp_t ts;
 	snd_pcm_status_t *status;                                   // allocated on stack, do not free
+
+	assert(audio->write_samples);
 
 	if (audio->audio_enable == 0)
 		return;
@@ -193,7 +195,7 @@ void audio_process(struct audio *audio)
 		snd_pcm_status(audio->ctx_a.capture_hnd, status);
 		snd_pcm_status_get_tstamp(status, &ts);
 		avail = snd_pcm_status_get_avail(status);
-		int to_read = audio->ctx_a.sbuffer_len;                 // length in samples
+		snd_pcm_uframes_t to_read = audio->ctx_a.sbuffer_len;                 // length in samples
 		if (audio->ctx_a.rem_samples < 0)
 			audio->ctx_a.rem_samples = 0;
 		if (avail >= audio->ctx_a.sbuffer_len && audio->ctx_a.rem_samples == 0)
@@ -214,7 +216,7 @@ void audio_process(struct audio *audio)
 			}
 		}
 		if (to_push_flag) {
-			slen = snd_pcm_readi(audio->ctx_a.capture_hnd, (void *)(audio->ctx_a.sbuffer + AUDIO_SBUFFER_PREFIX), to_read);
+			slen = snd_pcm_readi(audio->ctx_a.capture_hnd, (void *)audio->ctx_a.sbuffer, to_read);
 			if (slen > 0) {
 				int flag = 1;
 				long offset = 0;
@@ -238,12 +240,12 @@ void audio_process(struct audio *audio)
 						break;
 					}
 				}
-				// we need to skip some samples in a new session, but if we just switch the frames than
+				// we need to skip some samples in a new session, but if we just switch the frames then
 				// we need to split new samples in the buffer into two parts - for the previous file,
 				// and the next one...
 				// so we can just save in the first file new data, and in the next use "skip_samples" field
 				if (audio->ctx_a.audio_skip_samples != 0) {
-					D5(fprintf(debug_file, "skip_samples = %lld, available samples = %d\n", audio->ctx_a.audio_skip_samples, slen));
+					D5(fprintf(debug_file, "skip_samples = %lld, available samples = %ld\n", audio->ctx_a.audio_skip_samples, slen));
 					if (audio->ctx_a.audio_skip_samples >= slen) {
 						audio->ctx_a.audio_skip_samples -= slen;
 						flag = 0;
@@ -255,11 +257,10 @@ void audio_process(struct audio *audio)
 				if (flag) {
 					long samples = slen - offset;
 					audio->ctx_a.audio_count += samples;
-					_buf = (void *) (audio->ctx_a.sbuffer + AUDIO_SBUFFER_PREFIX);
-					_buf = (void *) ((char *) _buf + offset * 2 * audio->audio_channels);
-					_buf_len = samples * 2 * audio->audio_channels;
-					assert(audio->write_samples);
-					audio->write_samples(_buf, _buf_len, samples);
+					_buf = (void *)audio->ctx_a.sbuffer;
+					_buf = (void *)((char *) _buf + offset * AUDIO_BPS * audio->audio_channels);
+					_buf_len = samples * AUDIO_BPS * audio->audio_channels;
+					audio->write_samples(audio, _buf, _buf_len, samples);
 
 					float tr = 1.0 / audio->audio_rate;
 					float l = tr * audio->ctx_a.audio_count;
@@ -274,6 +275,7 @@ void audio_process(struct audio *audio)
 				}
 			}
 		} else {
+			D3(fprintf(debug_file, "error reading from ALSA buffer, error code %ld\n", slen));
 			break;
 		}
 	}

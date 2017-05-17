@@ -177,7 +177,7 @@
 		 !time # Creation time
 		 !time # Modification time
 !audio_timescale # Time Scale - 44100				// ???
-!audio_duration # Duration							// ???
+!audio_duration # Duration in units of the time scale
 		  0000 # Language
 		  0000 # Quality
 		} # 'mdhd
@@ -187,7 +187,6 @@
 		'mhlr  # Component type
 		'soun  # Component subtype
 	  00000000 # Component manufacturer
-#		'niko  # Component manufacturer
 	  00000000 # Component Flags
 	  00000000 # Component Flags Mask
 			00 # Component name
@@ -233,8 +232,6 @@
 				000000 # Flags
 			  00000001 # Number of entries
 					 {'sowt # 16 bit LE, Data format
-#					  0001 # Version
-#					  0000 # Revision
 			 00000000 0000 # (reserved)
 					  0001 # Data reference index
 					  0001 # Version
@@ -268,15 +265,15 @@
 				000000 # Flags
 		   !audio_stsc #
 #			  00000000 # Number of entries
-#[			  00000000 # first chunk
-#...		  00000000 # samples per chunk
-#]			  00000000 # samples description ID - 01 or 02 ?
+#[			  00000000 # the first chunk number using this table entry (it starts from 1 in video)
+#...		  00000000 # the number of samples per chunk
+#]			  00000000 # sample description ID; defines the entry in stsd table which describes this chunk (it starts from 1 in video)
 				}
 				{'stsz	# Sample size atom
 					00 # version
 				000000 # Flags
-		   !audio_stsz # Sample Size - 2 for Mono, 4 for Stereo - ?
-#			  00000000 # Number of entries - empty
+		   !audio_stsz # Sample Size - 2 for Mono, 4 for Stereo
+#			  00000000 # Number of entries; this table should be empty if all the samples are the same size
 				}
 				{'stco	# Chunk offset atom
 					00 # version

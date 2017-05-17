@@ -32,7 +32,7 @@
 #define QUICKTIME_MIN_HEADER      0x300
 /** @brief The length in bytes of sample-to-chunk table entry as defined in QuickTime format specification */
 #define S2C_ENTRY_LEN             12
-/** @brief The number of entries in sample-to-chunk table */
+/** @brief The number of entries in sample-to-chunk table. See camogm_start_mov for the reason why we need 3 entries. */
 #define S2C_ENTRIES               3
 
 // for the parser
@@ -76,7 +76,7 @@ int quicktime_template_parser(camogm_state *state,
 void putBigEndian(unsigned long d, int l);
 int parse_special(camogm_state *state);
 int parse(camogm_state *state, int top);
-static int camogm_audio_mov(void *buff, int len, int slen);
+static int camogm_audio_mov(struct audio *audio, void *buff, long len, long slen);
 static inline bool is_audio_frame(unsigned long len);
 static inline void mark_audio(unsigned long *len);
 static inline void unmark_audio(unsigned long *len);
@@ -146,6 +146,12 @@ int camogm_start_mov(camogm_state *state)
 	state->frame_index = 0;
 
 	if (audio->audio_enable) {
+		/* Allocate memory for sample-to-chunk buffers. For simplicity, all audio chunks must be the same size and
+		 * we enforce this by reading from ALSA buffer (see camogm_audio.c ) only when it contains the appropriate
+		 * number of samples. Such approach simplifies the building of sample-to-chunk atoms, although there are
+		 * two corner cases: the first and the last chunks in file can contain different number of samples, thus we
+		 * need 3 entries in total (first, last and all in between). That is why S2C_ENTRIES = 3.
+		 */
 		audio->audio_samples_to_chunk = malloc(S2C_ENTRY_LEN * S2C_ENTRIES);
 		if (!audio->audio_samples_to_chunk) {
 			return -CAMOGM_FRAME_MALLOC;
@@ -168,7 +174,7 @@ int camogm_start_mov(camogm_state *state)
 	 */
 	data_offset = QUICKTIME_MIN_HEADER + 16;
 	data_offset += 4 * state->max_frames;                       // space for sample size atom - video
-	data_offset += 4 * state->max_frames;                       // space for chunk offsets atom - video
+	data_offset += (4 * state->max_frames) / state->frames_per_chunk; // space for chunk offsets atom - video
 	if (audio->audio_enable) {
 		data_offset += 4 * state->max_frames;                   // space for chunk offsets atom - audio
 		data_offset += S2C_ENTRY_LEN * S2C_ENTRIES;             // space for samples size atom - audio
@@ -188,7 +194,7 @@ int camogm_start_mov(camogm_state *state)
  */
 int camogm_frame_mov(camogm_state *state)
 {
-	int ret;
+	int ret = 0;
 	int i, j;
 	ssize_t iovlen, l;
 	struct iovec chunks_iovec[7];
@@ -218,16 +224,42 @@ int camogm_frame_mov(camogm_state *state)
 
 /**
  * Write audio samples to file.
- * @param buff
- * @param len
- * @param slen
- * @return
+ * @param[in]   buff   pointer to buffer containing audio samples
+ * @param[in]   len    the size of buffer, in bytes
+ * @param[in]   slen   the number of audio samples in buffer
+ * @return      0 if data was recorded successfully and negative error code otherwise
  */
-static int camogm_audio_mov(void *buff, int len, int slen)
+static int camogm_audio_mov(struct audio *audio, void *buff, long len, long slen)
 {
 	int ret_val = 0;
+	unsigned long k;
+	ssize_t wr_len;
+	camogm_state *state = container_of(audio, camogm_state, audio);
 
 	D6(fprintf(debug_file, "write audio sample, len = %d, slen = %d\n", len, slen));
+
+	wr_len = write(state->ivf, buff, len);
+	if (wr_len < len) {
+		D0(fprintf(debug_file, "audio samples write error: %s; returned %d, expected %d\n", strerror(errno), wr_len, len));
+		close(state->ivf);
+		state->ivf = -1;
+		return CAMOGM_FRAME_FILE_ERR;
+	}
+	k = len;
+	mark_audio(&k);
+	state->frame_lengths[state->frame_index] = k;
+	state->frame_index++;
+
+	if (audio->audio_samples_to_chunk[0] == -1) {
+		// this slot contains the number of samples in first chunk in file
+		audio->audio_samples_to_chunk[0] = slen;
+	} else {
+		// these slots contain the number of samples in the last and in the one before last chunks
+		audio->audio_samples_to_chunk[1] = audio->audio_samples_to_chunk[2];
+		audio->audio_samples_to_chunk[2] = slen;
+	}
+	audio->audio_frameno++;
+	audio->audio_samples += slen;
 
 	return ret_val;
 }
@@ -350,7 +382,7 @@ int parse_special(camogm_state *state)
 	if (strcmp(str, "frame_duration") == 0) {
 		putBigEndian(sample_dur, 4); return 0;
 	}
-	if (strcmp(str, "samples_chunk") == 0) {
+	if (strcmp(str, "samples_chunk") == 0) {                    // 'stsc' video atom
 		putBigEndian(samplesPerChunk, 4); return 0;
 	}                                                           // will put zeroes on pass 1
 
@@ -383,15 +415,17 @@ int parse_special(camogm_state *state)
 		putBigEndian(state->audio.audio_channels * 2, 4);
 		return 0;
 	}
-	if (strcmp(str, "audio_stsz") == 0)  {
+	if (strcmp(str, "audio_stsz") == 0) {
 		putBigEndian(state->audio.audio_channels * 2, 4);
-		putBigEndian(state->audio.audio_samples, 4);
+		/* sample size table in 'stsz' atom contains entry for every sample, sound samples are
+		 * all the same size thus this table is not needed - put 0 as the number of entries here
+		 */
+		putBigEndian(0, 4);
 		return 0;
 	}
-	if (strcmp(str, "audio_stco") == 0)  {	// (4 + 4 * chunk_count) bytes
+	if (strcmp(str, "audio_stco") == 0) {
 		long offset = 0;
 		n = state->audio.audio_frameno;
-//fprintf(stderr, "chunk_offsets; n == %d; nframes == %d; samplesPerChunk == %d\n", n, nframes, samplesPerChunk);
 		putBigEndian(n, 4);
 		j = 0;
 		for (i = 0; i < state->frame_index; i++) {
@@ -408,18 +442,19 @@ int parse_special(camogm_state *state)
 			D0(fprintf(debug_file, "Error MOV: wrong records for \"audio_stco\", have written %d, need to write %d\n", j, n));
 		return 0;
 	}
-	// TODO!!!
 	if (strcmp(str, "audio_stsc") == 0) {
 		n = 0;
-		for (i = 0; i < S2C_ENTRIES; i++) {
-			if (state->audio.audio_samples_to_chunk[i] != -1) {
+		for (int entry = 0; entry < S2C_ENTRIES; entry++) {
+			if (state->audio.audio_samples_to_chunk[entry] != -1) {
 				n++;
 			}
 		}
 		putBigEndian(n, 4);
+		// first table entry refers to first audio chunk in file
 		putBigEndian(1, 4);
 		putBigEndian(state->audio.audio_samples_to_chunk[0], 4);
-		putBigEndian(01, 4); // TODO: 02 ???
+		putBigEndian(01, 4);
+		// second table entry, most chunks in file refer here
 		n = 2;
 		if (state->audio.audio_samples_to_chunk[1] != -1) {
 			putBigEndian(n, 4);
@@ -427,6 +462,7 @@ int parse_special(camogm_state *state)
 			putBigEndian(01, 4);
 			n = state->audio.audio_frameno;
 		}
+		// last table entry corresponds to the last audio chunk in file
 		if (state->audio.audio_samples_to_chunk[2] != -1) {
 			putBigEndian(n, 4);
 			putBigEndian(state->audio.audio_samples_to_chunk[2], 4);
@@ -434,10 +470,6 @@ int parse_special(camogm_state *state)
 		}
 		return 0;
 	}
-	if (strcmp(str, "audio_samples_chunk") == 0) {
-		putBigEndian(1, 4);
-		return 0;
-	}                                                           // will put zeroes on pass 1
 	if (strcmp(str, "sample_sizes") == 0) {                     // 'stsz' video atom
 		// index for video stream only, audio index is build separately
 		j = 0;
@@ -449,7 +481,7 @@ int parse_special(camogm_state *state)
 			}
 		}
 		if (j != nframes)
-			D0(fprintf(debug_file, "Error MOV: wrong records for \"samples_sizes\": have write: %d, need to write: %d\n", j, n));
+			D0(fprintf(debug_file, "Error MOV: wrong records for \"samples_sizes\": have write: %d, need to write: %d\n", j, nframes));
 		return 0;
 	}
 	if (strcmp(str, "chunk_offsets") == 0) {                    // 'stco' video atom
@@ -602,7 +634,7 @@ int quicktime_template_parser( camogm_state *state,
 	lseek(ofd, 0, SEEK_SET);
 
 	audio_timescale = state->audio.audio_rate;
-	audio_rate = audio_timescale;
+	audio_rate = audio_timescale;                               // QuickTime defines sample rate as unsigned 16.16 fixed-point number
 	audio_rate <<= 16;
 	audio_duration = state->audio.audio_samples;
 	audio_channels = state->audio.audio_channels;

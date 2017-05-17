@@ -27,14 +27,15 @@
 
 #define SAMPLE_RATE               44100
 #define SAMPLE_CHANNELS           2
-#define SAMPLE_TIME               200
+#define SAMPLE_TIME               200                           ///< restrict ALSA to have this period, in milliseconds
+#define BUFFER_TIME               1000                          ///< approximate ALSA buffer duration, in milliseconds
 #define DEFAULT_SND_DEVICE        "plughw:0,0"
-#define AUDIO_SBUFFER_PREFIX      16
 #define AUDIO_CHANNELS_MIN        1
 #define AUDIO_CHANNELS_MAX        2
 #define AUDIO_RATE_MIN            11025
 #define AUDIO_RATE_MAX            44100
 #define DEFAULT_AUDIO_VOLUME      0xffff
+#define AUDIO_BPS                 2                             ///< bytes per sample for a single channel (can be 1 or 2)
 
 struct context_audio {
 	char *sbuffer;                                              ///< buffer for audio samples
@@ -78,7 +79,7 @@ struct audio {
 	int frame_period;                                           ///< video frame period, used to calculate time stamps for audio samples
 
 	void (*get_fpga_time)(const struct audio *audio, struct timeval *tv);//< callback function which can get FPGA time
-	int (*write_samples)(void *buff, int len, int slen);        ///< callback function which actually write data to file, this must be set
+	int (*write_samples)(struct audio *audio, void *buff, long len, long slen); ///< callback function which actually write data to file, this must be set
 	                                                            ///< in the camogm_init_* function when appropriate format is selected
 };
 
