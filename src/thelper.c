@@ -51,3 +51,22 @@ int time_comp(struct timeval *t1, struct timeval *t2)
 	}
 	return -1;
 }
+
+/**
+ * Subtract one time value from another and return the difference
+ * @param   tv1   time value to subtract from
+ * @param   tv2   time value to be subtracted
+ * @return  tv1 - tv2
+ */
+struct timeval time_sub(const struct timeval *tv1, const struct timeval *tv2)
+{
+	struct timeval ret_val = *tv1;
+
+	ret_val.tv_sec -= 1;
+	ret_val.tv_usec += 1000000;
+	ret_val.tv_sec -= tv2->tv_sec;
+	ret_val.tv_usec -= tv2->tv_usec;
+	time_normalize(&ret_val);
+
+	return ret_val;
+}
