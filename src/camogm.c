@@ -334,9 +334,9 @@ int camogm_start(camogm_state *state)
 	state->frameno = 0;
 
 	// do not trigger overrun alert on successfull (from GUI) restarts
-//	if (state->prog_state != STATE_RESTARTING)
-//		for (int p = 0; p < SENSOR_PORTS; p++)
-//			state->buf_overruns[p] = -1;
+	if (state->prog_state != STATE_RESTARTING)
+		for (int p = 0; p < SENSOR_PORTS; p++)
+			state->buf_overruns[p] = -1;
 
 	state->timescale = state->set_timescale; // current timescale, default 1
 // debug
