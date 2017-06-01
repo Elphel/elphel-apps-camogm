@@ -332,6 +332,12 @@ int camogm_start(camogm_state *state)
 	D1(fprintf(debug_file, "Starting recording\n"));
 	double dtime_stamp;
 	state->frameno = 0;
+
+	// do not trigger overrun alert on successfull (from GUI) restarts
+//	if (state->prog_state != STATE_RESTARTING)
+//		for (int p = 0; p < SENSOR_PORTS; p++)
+//			state->buf_overruns[p] = -1;
+
 	state->timescale = state->set_timescale; // current timescale, default 1
 // debug
 	int * ifp =      (int*)&(state->frame_params[port]);
@@ -1606,6 +1612,7 @@ int listener_loop(camogm_state *state)
 				// restart the file
 				D3(fprintf(debug_file,"%s:line %d - sendImageFrame() returned -%d\n", __FILE__, __LINE__, rslt));
 				camogm_stop(state);
+				state->prog_state = STATE_RESTARTING;
 				camogm_start(state);
 				break;
 			case  CAMOGM_FRAME_FILE_ERR:    // error with file I/O
