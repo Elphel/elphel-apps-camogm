@@ -413,7 +413,7 @@ function process_recording(xmldoc) {
 	var file_name = xmldoc.getElementsByTagName('file_name')[0].firstChild.data;
 	
 	if (state=='"stopped"'){
-		clearInterval(update_intvl);
+		clearTimeout(update_intvl);
 	} else {
 		var frame_period = 0;
 		var rates = xmldoc.getElementsByTagName('frame_period');
@@ -427,8 +427,8 @@ function process_recording(xmldoc) {
 		} else {
 			frame_period = 1000;
 		}
-		clearInterval(update_intvl);
-		update_intvl = setInterval(update_state, frame_period);
+		clearTimeout(update_intvl);
+		update_intvl = setTimeout(update_state, frame_period);
 	}
 	//Update HTML
 	document.getElementById('ajax_state').innerHTML = state.substring(1, state.length-1);
@@ -536,8 +536,8 @@ function toggle_recording() {
 		document.getElementById('record_text').innerHTML = "<img src=\"images/stop.gif\" style=\"position:relative; bottom:-5px;\"> STOP";
 		document.getElementById('sitecoloumn').style.backgroundColor = "#AF2020";
 		
-		clearInterval(update_intvl);
-		update_intvl = setInterval(update_state,1000);
+		clearTimeout(update_intvl);
+		update_intvl = setTimeout(update_state,1000);
 	}
 	//update_state();
 }
