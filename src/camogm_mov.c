@@ -26,7 +26,11 @@
 #include <sys/types.h>
 #include <assert.h>
 
+// for debug only
+#include <math.h>
+
 #include "camogm_mov.h"
+#include "thelper.h"
 
 /** @brief QuickTime header length (w/o index tables) enough to accommodate static data */
 #define QUICKTIME_MIN_HEADER      0x300
@@ -236,11 +240,11 @@ static int camogm_audio_mov(struct audio *audio, void *buff, long len, long slen
 	ssize_t wr_len;
 	camogm_state *state = container_of(audio, camogm_state, audio);
 
-	D6(fprintf(debug_file, "write audio sample, len = %d, slen = %d\n", len, slen));
+	D6(fprintf(debug_file, "write audio sample, len = %ld, slen = %ld\n", len, slen));
 
 	wr_len = write(state->ivf, buff, len);
 	if (wr_len < len) {
-		D0(fprintf(debug_file, "audio samples write error: %s; returned %d, expected %d\n", strerror(errno), wr_len, len));
+		D0(fprintf(debug_file, "audio samples write error: %s; returned %d, expected %ld\n", strerror(errno), wr_len, len));
 		close(state->ivf);
 		state->ivf = -1;
 		return CAMOGM_FRAME_FILE_ERR;
@@ -295,6 +299,9 @@ int camogm_end_mov(camogm_state *state)
 			NULL,                 // array of frame lengths to build an index
 			state->frame_data_start
 	);
+	// === debug code ===
+	fprintf(debug_file, "total # of video frames: %d, total # of audio samples: %ld\n", state->frameno, state->audio.audio_samples);
+	// === end of debug ===
 	close(state->ivf);
 	state->ivf = -1;
 	// free memory used for index
@@ -632,6 +639,11 @@ int quicktime_template_parser( camogm_state *state,
 	ofd =             i_ofd;
 	iFileLen =        strlen(iFile);
 	lseek(ofd, 0, SEEK_SET);
+
+	// === debug ===
+	struct timeval m_len = state->audio.m_len; // duration of movie
+fprintf(debug_file, "frameno: %d, duration: %ld:%06ld, audio_samples: %ld\n", state->frameno, m_len.tv_sec, m_len.tv_usec, state->audio.audio_samples);
+	// === ebd of debug ===
 
 	audio_timescale = state->audio.audio_rate;
 	audio_rate = audio_timescale;                               // QuickTime defines sample rate as unsigned 16.16 fixed-point number

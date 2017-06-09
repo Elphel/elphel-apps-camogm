@@ -27,5 +27,36 @@
 void time_normalize(struct timeval *tv);
 int time_comp(struct timeval *t1, struct timeval *t2);
 struct timeval time_sub(const struct timeval *tv1, const struct timeval *tv2);
+struct timeval time_add(const struct timeval *tv1, const struct timeval *tv2);
+
+/**
+ * Convert time represented by timeval structure to time in microseconds
+ * @param   tv   time value to convert
+ * @return  time in microseconds
+ */
+inline unsigned long long time_to_us(const struct timeval *tv)
+{
+	unsigned long long t;
+
+	t = tv->tv_sec * 1000000;
+	t += tv->tv_usec;
+
+	return t;
+}
+
+/**
+ * Convert time in microseconds to time represented by timeval structure
+ * @param   us   time in microseconds
+ * @return  time in timeval structure
+ */
+inline struct timeval us_to_time(unsigned long us)
+{
+	struct timeval tv;
+
+	tv.tv_sec = us / 1000000;
+	tv.tv_usec = us % 1000000;
+
+	return tv;
+}
 
 #endif /* _THELPER_H */

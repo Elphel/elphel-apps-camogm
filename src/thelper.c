@@ -70,3 +70,17 @@ struct timeval time_sub(const struct timeval *tv1, const struct timeval *tv2)
 
 	return ret_val;
 }
+
+/**
+ * Add one time value to another and return the sum
+ */
+struct timeval time_add(const struct timeval *tv1, const struct timeval *tv2)
+{
+	struct timeval ret_val = *tv1;
+
+	ret_val.tv_sec += tv2->tv_sec;
+	ret_val.tv_usec += tv2->tv_usec;
+	time_normalize(&ret_val);
+
+	return ret_val;
+}

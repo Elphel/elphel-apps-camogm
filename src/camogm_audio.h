@@ -35,16 +35,15 @@
 #define AUDIO_RATE_MIN            11025
 #define AUDIO_RATE_MAX            44100
 #define DEFAULT_AUDIO_VOLUME      0xffff
-#define AUDIO_BPS                 2                             ///< bytes per sample for a single channel (can be 1 or 2)
 
 struct context_audio {
 	char *sbuffer;                                              ///< buffer for audio samples
 	long sbuffer_len;                                           ///< the length of samples buffer in samples
-	long sample_time;                                           ///< duration of one audio sample in ms
-	long long audio_count;                                      ///< total number of audio samples
+	long sample_time;                                           ///< duration of one chunk of audio data, in ms
+	long long audio_count;                                      ///< total number of audio frames
 
 	struct timeval time_start;                                  ///< start time, set only when stream starts and updated with each new file
-	struct timeval time_last;                                   ///< time of last audio sample
+	struct timeval time_last;                                   ///< calculated time of last audio sample (this value is not taken from ALSA)
 	long rem_samples;                                           ///< remaining samples
 
 	int begin_of_stream_with_audio;                             ///<
@@ -55,8 +54,8 @@ struct context_audio {
 };
 
 struct audio {
-	int audio_enable;                                           ///< flag indicating if audio is enabled
-	int audio_rate;                                             ///< sample rate
+	int audio_enable;                                           ///< flag indicating that audio is enabled
+	int audio_rate;                                             ///< sample rate, in Hz
 	int audio_channels;                                         ///< number of channels
 	int audio_volume;                                           ///< volume set in range [0..0xFFFF]
 
@@ -76,11 +75,21 @@ struct audio {
 	struct timeval ts_audio;                                    ///< time stamp when audio stream started
 	struct timeval ts_video;                                    ///< time stamp of each new frame
 	struct timeval ts_video_start;                              ///< time stamp of starting video frame
-	int frame_period;                                           ///< video frame period, used to calculate time stamps for audio samples
+	int frame_period;                                           ///< video frame period, in microseconds
+	snd_pcm_format_t audio_format;                              ///< format of audio samples as defined in 'enum snd_pcm_format_t'
 
 	void (*get_fpga_time)(const struct audio *audio, struct timeval *tv);//< callback function which can get FPGA time
 	int (*write_samples)(struct audio *audio, void *buff, long len, long slen); ///< callback function which actually write data to file, this must be set
 	                                                            ///< in the camogm_init_* function when appropriate format is selected
+	// === debug ===
+	struct timeval sf_timediff; // system to fpga time difference at the beginning of the stream
+	struct timeval m_len;
+	struct timeval sys_fpga_timediff;
+	int avail_samples;
+	long calc_frames;                                           // calculated number of frames by current video frame
+	struct timeval prev_ts_video;
+	long long skip_samples;
+	// === end of debug ===
 };
 
 void audio_init(struct audio *audio, bool restart);

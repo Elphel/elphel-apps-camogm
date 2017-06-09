@@ -18,7 +18,7 @@
   00000000 # Selection Time
   00000000 # Selection Duration
   00000000 # Current Time
-  00000002 # Next Track ID
+  00000003 # Next Track ID
 } # 'mvhd
 {'trak
    {'tkhd
@@ -283,6 +283,11 @@
 			} # 'stbl
 		} # 'minf
 	} #'mdia
+	{'tref # Track reference atom, identifies this track as related to video track
+		{'sync
+			  00000001 # ID of the related video track
+		} # 'sync
+	} # 'tref	     
 } #'trak
 
 # {'udta
