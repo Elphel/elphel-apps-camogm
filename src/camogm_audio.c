@@ -128,7 +128,6 @@ void audio_init(struct audio *audio, bool restart)
 
 			audio->ctx_a.begin_of_stream_with_audio = 1;
 			audio->ctx_a.audio_trigger = 1;
-			audio->ctx_a.audio_count = 0;
 			audio->ctx_a.audio_skip_samples = 0;
 
 			struct timeval fpga_tv, sys_tv;
@@ -169,7 +168,6 @@ void audio_start(struct audio *audio)
 	audio->ctx_a.rem_samples = 0;
 	audio->ctx_a.time_last.tv_sec = 0;
 	audio->ctx_a.time_last.tv_usec = 0;
-	audio->ctx_a.audio_count = 0;
 }
 
 /**
@@ -297,14 +295,13 @@ void audio_process(struct audio *audio)
 				}
 				if (flag) {
 					long samples = slen - offset;
-					audio->ctx_a.audio_count += samples;
 					_buf = (void *)audio->ctx_a.sbuffer;
 					_buf = (void *)((char *) _buf + offset * audio->audio_channels * (snd_pcm_format_physical_width(audio->audio_format) / 8));
 					_buf_len = samples * audio->audio_channels * (snd_pcm_format_physical_width(audio->audio_format) / 8);
 					audio->write_samples(audio, _buf, _buf_len, samples);
 
 					float tr = 1.0 / audio->audio_rate;
-					float l = tr * audio->ctx_a.audio_count;
+					float l = tr * audio->audio_samples;
 					unsigned long s = (unsigned long) l;
 					l -= s;
 					l *= 1000000;

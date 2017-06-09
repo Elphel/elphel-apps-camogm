@@ -40,7 +40,6 @@ struct context_audio {
 	char *sbuffer;                                              ///< buffer for audio samples
 	long sbuffer_len;                                           ///< the length of samples buffer in samples
 	long sample_time;                                           ///< duration of one chunk of audio data, in ms
-	long long audio_count;                                      ///< total number of audio frames
 
 	struct timeval time_start;                                  ///< start time, set only when stream starts and updated with each new file
 	struct timeval time_last;                                   ///< calculated time of last audio sample (this value is not taken from ALSA)
