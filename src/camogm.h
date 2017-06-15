@@ -223,6 +223,7 @@ typedef struct {
 	int max_frames;
 	int set_max_frames;
 	int frames_per_chunk;                                   ///< QuickTime, the number of samples (images or audio samples) in a chunk
+	unsigned int chunk_frame_cntr;                          ///< QuickTime, number of video frames recorded in current chunk
 	int set_frames_per_chunk;                               ///< QuickTime, index for fast forward (sample-to-chunk atom)
 	int frameno;                                            ///< total image frame counter, does not include audio samples
 	unsigned long *frame_lengths;                           ///< QuickTime; pointer to an array of frame lengths wich includes both image frames

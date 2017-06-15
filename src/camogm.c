@@ -168,6 +168,7 @@ static void camogm_set_dummy_read(camogm_state *state, int d);
 static void camogm_set_audio_state(camogm_state *state, char *args);
 static void camogm_set_audio_volume(camogm_state *state, char *args);
 static void camogm_set_audio_format(camogm_state *state, char *args);
+static void camogm_select_sync_port(camogm_state *state);
 
 void put_uint16(void *buf, u_int16_t val)
 {
@@ -356,7 +357,11 @@ int camogm_start(camogm_state *state, bool restart)
 	int * ifp_this = (int*)&(state->this_frame_params[port]);
 	if (state->kml_enable) camogm_init_kml();  // do nothing
 
-	audio_init(&state->audio, restart);
+	if (state->frames_skip > 0) {
+		state->audio.audio_enable = 0;
+		D0(fprintf(debug_file, "Audio recording is not supported in time lapse mode, audio disabled\n"));
+	}
+	audio_init_hw(&state->audio, restart);
 	if (state->format != state->set_format) {
 		state->format =  state->set_format;
 		switch (state->format) {
@@ -501,8 +506,12 @@ int camogm_start(camogm_state *state, bool restart)
 		}
 	}
 
+	// init audio stuff
+	camogm_select_sync_port(state);
+	state->audio.frame_period_us = state->frame_period[state->audio.sync_port];
+	audio_init_sw(&state->audio, restart, state->frames_per_chunk);
+
 	// here we are ready to initialize Ogm (or other) file
-	audio_start(&state->audio);
 	switch (state->format) {
 	case CAMOGM_FORMAT_NONE: rslt = 0;  break;
 	case CAMOGM_FORMAT_OGM:  rslt = camogm_start_ogm(state);  break;
@@ -539,12 +548,6 @@ int sendImageFrame(camogm_state *state)
 	int * ifp_this = (int*)&(state->this_frame_params[state->port_num]);
 	int fp;
 	int port = state->port_num;
-
-	// === debug code ===
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	fprintf(debug_file, "start time %ld:%06ld\n", tv.tv_sec, tv.tv_usec);
-	// === end of debug ===
 
 // This is probably needed only for Quicktime (not to exceed already allocated frame index)
 	if (!state->rawdev_op && (state->frameno >= (state->max_frames))) {
@@ -630,11 +633,6 @@ int sendImageFrame(camogm_state *state)
 		return -CAMOGM_FRAME_NOT_READY; // the required frame is not ready
 	}
 
-	// === debug code ===
-	gettimeofday(&tv, NULL);
-	fprintf(debug_file, " time %ld:%06ld ", tv.tv_sec, tv.tv_usec);
-	// === end of debug ===
-
 	D3(fprintf(debug_file, "_4_"));
 	if (state->exif) {
 		D3(fprintf(debug_file, "_5_"));
@@ -697,10 +695,10 @@ int sendImageFrame(camogm_state *state)
 	state->audio.ts_video.tv_usec = state->this_frame_params[port].timestamp_usec;
 	int sync_ok = 1;
 	// synchronize audio and video before recording has started, this need to be done only once
-	if (state->audio.ctx_a.begin_of_stream_with_audio) {
+	if (state->audio.begin_of_stream_with_audio) {
 		D6(fprintf(debug_file, "\n"));
-		if (state->audio.ctx_a.audio_trigger) {
-			state->audio.ctx_a.audio_trigger = 0;
+		if (state->audio.audio_trigger) {
+			state->audio.audio_trigger = 0;
 			// calculate how many audio frames we need to skip to synch with the next video frame
 			state->audio.ts_video_start = state->audio.ts_audio;
 			struct timeval tv = state->audio.ts_video; // next frame right after audio started
@@ -708,18 +706,19 @@ int sendImageFrame(camogm_state *state)
 				tv.tv_usec += state->frame_period[port];
 				time_normalize(&tv);
 			}
-			struct timeval skip_audio_time = time_sub(&tv, &state->audio.ts_audio); // audio time we need to skip to the next frame
+			struct timeval skip_audio_time;                     // audio time we need to skip to the next frame
+			timersub(&tv, &state->audio.ts_audio, &skip_audio_time);
 			unsigned long long skip_audio_us = time_to_us(&skip_audio_time);
 			double s = state->audio.audio_rate;
 			s /= 1000.0;
 			s *= skip_audio_us;
 			s /= 1000.0;
-			state->audio.ctx_a.audio_skip_samples = (long) s;
+			state->audio.audio_skip_samples = (long) s;
 			state->audio.ctx_a.time_start = tv;
-			D6(fprintf(debug_file , "audio started at: %ld:%06ld; we need to record it from: %ld:%06ld; audio_to_skip_us == %lld; "
-					"audio samples to skip == %lld\n",
+			D6(fprintf(debug_file , "audio started at: %ld:%06ld; we need to record it from: %ld:%06ld; skip_audio_us == %lld; "
+					"audio samples to skip == %lu\n",
 					state->audio.ts_audio.tv_sec, state->audio.ts_audio.tv_usec, tv.tv_sec, tv.tv_usec, skip_audio_us,
-					state->audio.ctx_a.audio_skip_samples));
+					state->audio.audio_skip_samples));
 		}
 		D6(fprintf(debug_file, "audio (start): %ld:%06ld; video (current): %ld:%06ld; frame period is: %d us\n",
 				state->audio.ts_audio.tv_sec, state->audio.ts_audio.tv_usec, state->audio.ts_video.tv_sec, state->audio.ts_video.tv_usec,
@@ -729,14 +728,10 @@ int sendImageFrame(camogm_state *state)
 			sync_ok = 0;
 		} else {
 			D6(fprintf(debug_file, "save video frame with time: %ld:%06ld\n", state->audio.ts_video.tv_sec, state->audio.ts_video.tv_usec));
-			state->audio.ctx_a.begin_of_stream_with_audio = 0;
+			state->audio.begin_of_stream_with_audio = 0;
+			state->chunk_frame_cntr = state->frames_per_chunk;
 		}
 	}
-
-	// === debug code ===
-	gettimeofday(&tv, NULL);
-	fprintf(debug_file, " time %ld:%06ld ", tv.tv_sec, tv.tv_usec);
-	// === end of debug ===
 
 	if (sync_ok) {
 		switch (state->format) {
@@ -750,11 +745,6 @@ int sendImageFrame(camogm_state *state)
 		// skip only first video frames that are ahead of audio stream
 		rslt = 0;
 	}
-
-	// === debug code ===
-	gettimeofday(&tv, NULL);
-	fprintf(debug_file, " time %ld:%06ld ", tv.tv_sec, tv.tv_usec);
-	// === end of debug ===
 
 	if (rslt) {
 		D3(fprintf(debug_file, "sendImageFrame:12: camogm_frame_***() returned %d\n", rslt));
@@ -1444,14 +1434,7 @@ char * getLineFromPipe(FILE* npipe)
 	if (!cmdbufp) cmdbuf[cmdbufp] = 0;  //null-terminate first access (probably not needed for the static buffer
 	nlp = strpbrk(cmdbuf, ";\n");
 	if (!nlp) { //no complete string, try to read more
-
-		// === debug code (around fread) ===
-		struct timeval tv1, tv2;
-		gettimeofday(&tv1, NULL);
 		fl = fread(&cmdbuf[cmdbufp], 1, sizeof(cmdbuf) - cmdbufp - 1, npipe);
-		gettimeofday(&tv2, NULL);
-		fprintf(debug_file, "pipe read time: start %ld:%06ld, end %ld:%06ld\n", tv1.tv_sec, tv1.tv_usec, tv2.tv_sec, tv2.tv_usec);
-		// === end of debug ===
 		cmdbuf[cmdbufp + fl] = 0;
 // is there any complete string in a buffer after reading?
 		nlp = strpbrk(&cmdbuf[cmdbufp], ";\n"); // there were no new lines before cmdbufp
@@ -1761,63 +1744,43 @@ int listener_loop(camogm_state *state)
 		} else if (state->prog_state == STATE_RUNNING) { // no commands in queue, started
 			switch ((rslt = -sendImageFrame(state))) {
 			case 0: {
-
-				// === debug ===
-				double fps = 1000000 / state->frame_period[state->port_num];
-				double avg_rate = 0;
-				double ratio = 0;
-				struct timeval tv;
-				int samples;
-				if (state->frameno != 0) {
-					avg_rate = ((double)(state->audio.audio_samples + state->audio.avail_samples) / (double)state->frameno) * fps;
-					ratio = (double)state->audio.audio_rate / avg_rate;
-				}
-				samples = ((double)state->frameno / fps) * state->audio.audio_rate;
-				fprintf(debug_file, "frames recorded: %d, average sampling rate: %f, ratio: %f, expected sample count: %d\n",
-						state->frameno, avg_rate, ratio, samples);
-				gettimeofday(&tv, NULL);
-				fprintf(debug_file, "system time %ld:%06ld\n", tv.tv_sec, tv.tv_usec);
-				// === end of debug ===
-
-				// skip audio processing while sync video frame is not found
-				if (state->format == CAMOGM_FORMAT_MOV && !state->audio.ctx_a.begin_of_stream_with_audio) {
+				// skip audio processing while not in sync with video
+				if (state->format == CAMOGM_FORMAT_MOV &&
+						state->audio.audio_enable &&
+						!state->audio.begin_of_stream_with_audio) {
+					state->chunk_frame_cntr--;
+					if (state->chunk_frame_cntr == 0) {
+						state->audio.save_data = true;
+						state->chunk_frame_cntr = state->frames_per_chunk;
+					} else {
+						D6(fprintf(debug_file, "not recording audio samples after this frame\n"));
+					}
 					audio_process(&state->audio);
-					// === debug code ===
-					float fps = 1000000 / state->frame_period[state->port_num];
-					int samples;
-					samples = ((float)state->frameno / fps) * state->audio.audio_rate;
-					float r = (float)state->audio.audio_samples / (float)samples;
-					fprintf(debug_file, "(recorded samples / expected samples) = %f\n", r);
-					long calc_diff = samples - state->audio.calc_frames;
-					fprintf(debug_file, "calc_frames_diff = %ld\n", calc_diff);
-					// === end of debug ===
-					state->audio.frame_period = state->frame_period[state->port_num];
 				}
 			}
 				break;                      // frame sent OK, nothing to do (TODO: check file length/duration)
 			case CAMOGM_FRAME_NOT_READY:    // just wait for the frame to appear at the current pointer
 				// we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
-				// TODO - add another wait with (short) timeout?
-				fp0 = lseek(state->fd_circ[curr_port], 0, SEEK_CUR);
-				if (fp0 < 0) {
-					D0(fprintf(debug_file, "%s:line %d got broken frame (%d) before waiting for ready\n", __FILE__, __LINE__, fp0));
-					rslt = CAMOGM_FRAME_BROKEN;
-				} else {
-
-					// === debug code (around lseek) ===
-					struct timeval tv1, tv2;
-					gettimeofday(&tv1, NULL);
-					fp1 = lseek(state->fd_circ[curr_port], LSEEK_CIRC_WAIT, SEEK_END);
-					gettimeofday(&tv2, NULL);
-					fprintf(debug_file,"time in sleep: start %ld:%06ld, end %ld:%06ld\n", tv1.tv_sec, tv1.tv_usec, tv2.tv_sec, tv2.tv_usec);
-					// === end of debug ===
-
-					if (fp1 < 0) {
-						D0(fprintf(debug_file, "%s:line %d got broken frame (%d) while waiting for ready. Before that fp0=0x%x\n", __FILE__, __LINE__, fp1, fp0));
+				if (state->audio.audio_enable == 0 || state->audio.sleep_period_us == 0) {
+					fp0 = lseek(state->fd_circ[curr_port], 0, SEEK_CUR);
+					if (fp0 < 0) {
+						D0(fprintf(debug_file, "%s:line %d got broken frame (%d) before waiting for ready\n", __FILE__, __LINE__, fp0));
 						rslt = CAMOGM_FRAME_BROKEN;
 					} else {
-						break;
+						fp1 = lseek(state->fd_circ[curr_port], LSEEK_CIRC_WAIT, SEEK_END);
+						if (fp1 < 0) {
+							D0(fprintf(debug_file, "%s:line %d got broken frame (%d) while waiting for ready. Before that fp0=0x%x\n", __FILE__, __LINE__, fp1, fp0));
+							rslt = CAMOGM_FRAME_BROKEN;
+						} else {
+							break;
+						}
 					}
+				} else {
+					// frame period is too long for sleep in lseek, use shorter sleep periods and process audio buffer in between
+					audio_process(&state->audio);
+					D6(fprintf(debug_file, "usleep(%u)\n", state->audio.sleep_period_us));
+					usleep(state->audio.sleep_period_us);
+					break;
 				}
 				// no break
 			case  CAMOGM_FRAME_CHANGED:     // frame parameters have changed
@@ -2093,12 +2056,6 @@ unsigned int select_port(camogm_state *state)
 	if (state->prog_state == STATE_STARTING || state->prog_state == STATE_RUNNING)
 		D6(fprintf(debug_file, "Selecting sensor port, buffer free size: "));
 	for (int i = 0; i < SENSOR_PORTS; i++) {
-
-		// === debug code ===
-		struct timeval tv;
-		gettimeofday(&tv, NULL);
-		fprintf(debug_file, " time: %ld:%06ld ", tv.tv_sec, tv.tv_usec);
-		// === end of debug ===
 
 		if (is_chn_active(state, i)) {
 			file_pos = lseek(state->fd_circ[i], 0, SEEK_CUR);
@@ -2402,4 +2359,18 @@ static void get_fpga_time_w(const struct audio *audio, struct timeval *tv)
 
 	port = state->port_num;
 	*tv = get_fpga_time(state->fd_fparmsall[port], port);
+}
+
+/**
+ * @brief Select sensor port to which audio will be synchronized.
+ *
+ * This function selects the first active sensor port and sets it as synchronization port for
+ * audio stream. Audio data is recorded when new video frame from this port becomes available.
+ * @param[in,out] state   a pointer to a structure containing current state
+ */
+static void camogm_select_sync_port(camogm_state *state)
+{
+	for (int i = 0; i < SENSOR_PORTS; i++)
+		if (is_chn_active(state, i))
+			state->audio.sync_port = i;
 }

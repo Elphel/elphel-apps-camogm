@@ -26,8 +26,6 @@
 
 void time_normalize(struct timeval *tv);
 int time_comp(struct timeval *t1, struct timeval *t2);
-struct timeval time_sub(const struct timeval *tv1, const struct timeval *tv2);
-struct timeval time_add(const struct timeval *tv1, const struct timeval *tv2);
 
 /**
  * Convert time represented by timeval structure to time in microseconds

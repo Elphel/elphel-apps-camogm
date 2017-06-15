@@ -25,8 +25,8 @@
 #include <sys/time.h>
 #include <alsa/asoundlib.h>
 
-#define SAMPLE_RATE               44100
-#define SAMPLE_CHANNELS           2
+#define SAMPLE_RATE               44100                         ///< default sampling rate
+#define SAMPLE_CHANNELS           2                             ///< default number of audio channels
 #define SAMPLE_TIME               200                           ///< restrict ALSA to have this period, in milliseconds
 #define BUFFER_TIME               1000                          ///< approximate ALSA buffer duration, in milliseconds
 #define DEFAULT_SND_DEVICE        "plughw:0,0"
@@ -36,27 +36,34 @@
 #define AUDIO_RATE_MAX            44100
 #define DEFAULT_AUDIO_VOLUME      0xffff
 
+/**
+ * @brief Audio recording context related to stream management.
+ * Members of this structure should not be used outside audio module.
+ */
 struct context_audio {
 	char *sbuffer;                                              ///< buffer for audio samples
-	long sbuffer_len;                                           ///< the length of samples buffer in samples
+	long sbuffer_len;                                           ///< total length of audio buffer, in audio frames
+	long sbuffer_pos;                                           ///< pointer to current write position in audio buffer, in frames
+	long read_frames;                                           ///< read granularity, in frames
 	long sample_time;                                           ///< duration of one chunk of audio data, in ms
 
 	struct timeval time_start;                                  ///< start time, set only when stream starts and updated with each new file
 	struct timeval time_last;                                   ///< calculated time of last audio sample (this value is not taken from ALSA)
 	long rem_samples;                                           ///< remaining samples
 
-	int begin_of_stream_with_audio;                             ///<
-	int audio_trigger;                                          ///< indicates the beginning of audio recording to make some initial set ups
-	long long audio_skip_samples;                               ///<
-
+	snd_pcm_format_t audio_format;                              ///< format of audio samples as defined in 'enum snd_pcm_format_t'
 	snd_pcm_t *capture_hnd;                                     ///< ALSA PCM handle
 };
 
+/**
+ * @brief Various parameters related to audio recording.
+ */
 struct audio {
 	int audio_enable;                                           ///< flag indicating that audio is enabled
 	int audio_rate;                                             ///< sample rate, in Hz
 	int audio_channels;                                         ///< number of channels
 	int audio_volume;                                           ///< volume set in range [0..0xFFFF]
+	int sync_port;                                              ///< synch audio stream to this sensor port
 
 	int set_audio_enable;                                       ///< temporary storage for new value
 	int set_audio_rate;                                         ///< temporary storage for new value
@@ -74,27 +81,24 @@ struct audio {
 	struct timeval ts_audio;                                    ///< time stamp when audio stream started
 	struct timeval ts_video;                                    ///< time stamp of each new frame
 	struct timeval ts_video_start;                              ///< time stamp of starting video frame
-	int frame_period;                                           ///< video frame period, in microseconds
-	snd_pcm_format_t audio_format;                              ///< format of audio samples as defined in 'enum snd_pcm_format_t'
+	int frame_period_us;                                        ///< video frame period measured for #sync_port, in microseconds
+
+	unsigned long audio_skip_samples;                           ///< skip this number audio frames to sync to video
+	int begin_of_stream_with_audio;                             ///< flag indicating that A/V sync is in progress
+	int audio_trigger;                                          ///< indicates the beginning of audio recording to make some initial set ups
+	bool save_data;                                             ///< flag indicating that audio data should be recorded, otherwise audio frames should be
+	                                                            ///< stored in buffer for delayed recording
+	unsigned int sleep_period_us;                               ///< sleep period between frames while processing audio stream, in microseconds
 
 	void (*get_fpga_time)(const struct audio *audio, struct timeval *tv);//< callback function which can get FPGA time
 	int (*write_samples)(struct audio *audio, void *buff, long len, long slen); ///< callback function which actually write data to file, this must be set
-	                                                            ///< in the camogm_init_* function when appropriate format is selected
-	// === debug ===
-	struct timeval sf_timediff; // system to fpga time difference at the beginning of the stream
-	struct timeval m_len;
-	struct timeval sys_fpga_timediff;
-	int avail_samples;
-	long calc_frames;                                           // calculated number of frames by current video frame
-	struct timeval prev_ts_video;
-	long long skip_samples;
-	// === end of debug ===
 };
 
-void audio_init(struct audio *audio, bool restart);
-void audio_start(struct audio *audio);
+void audio_init_hw(struct audio *audio, bool restart);
+void audio_init_sw(struct audio *audio, bool restart, int frames);
 void audio_process(struct audio *audio);
 void audio_finish(struct audio *audio, bool reset);
 void audio_set_volume(int nvolume);
+unsigned long audio_get_hw_buffer_max(void);
 
 #endif /* _CAMOGM_AUDIO_H */
