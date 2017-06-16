@@ -170,7 +170,6 @@ void audio_init_sw(struct audio *audio, bool restart, int frames)
 	audio->ctx_a.time_last.tv_sec = 0;
 	audio->ctx_a.time_last.tv_usec = 0;
 	audio->ctx_a.sample_time = SAMPLE_TIME;
-	audio->ctx_a.sbuffer_pos = 0;
 
 	if (audio->audio_enable == 0)
 		return;
@@ -181,6 +180,8 @@ void audio_init_sw(struct audio *audio, bool restart, int frames)
 		float v_chunk_time;                                     // duration of one video chunk, in seconds
 
 		assert(audio->ctx_a.sbuffer == NULL);
+
+		audio->ctx_a.sbuffer_pos = 0;
 
 		/* decide if camogm can sleep using lseek into video buffer: if audio HW buffer size is less than
 		 * video frame period then we need to process audio stream between video frames and must use shorter

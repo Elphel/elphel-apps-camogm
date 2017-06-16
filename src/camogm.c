@@ -373,6 +373,7 @@ int camogm_start(camogm_state *state, bool restart)
 		state->formats |= 1 << (state->format);
 		// exit on unknown formats?
 	}
+	state->chunk_frame_cntr = state->frames_per_chunk;
 	state->max_frames =       state->set_max_frames;
 	state->frames_per_chunk = state->set_frames_per_chunk;
 	pthread_mutex_lock(&state->mutex);
@@ -729,7 +730,6 @@ int sendImageFrame(camogm_state *state)
 		} else {
 			D6(fprintf(debug_file, "save video frame with time: %ld:%06ld\n", state->audio.ts_video.tv_sec, state->audio.ts_video.tv_usec));
 			state->audio.begin_of_stream_with_audio = 0;
-			state->chunk_frame_cntr = state->frames_per_chunk;
 		}
 	}
 
@@ -1812,7 +1812,7 @@ int listener_loop(camogm_state *state)
 		} else if (state->prog_state == STATE_STARTING) { // no commands in queue,starting (but not started yet)
 
 			// retry starting
-			switch ((rslt = -camogm_start(state, true))) {
+			switch ((rslt = -camogm_start(state, false))) {
 			case 0:
 				break;                      // file started OK, nothing to do
 			case CAMOGM_TOO_EARLY:

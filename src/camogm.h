@@ -226,7 +226,7 @@ typedef struct {
 	unsigned int chunk_frame_cntr;                          ///< QuickTime, number of video frames recorded in current chunk
 	int set_frames_per_chunk;                               ///< QuickTime, index for fast forward (sample-to-chunk atom)
 	int frameno;                                            ///< total image frame counter, does not include audio samples
-	unsigned long *frame_lengths;                           ///< QuickTime; pointer to an array of frame lengths wich includes both image frames
+	unsigned long *frame_lengths;                           ///< QuickTime; pointer to an array of frame lengths which includes both image frames
 	                                                        ///< and audio samples if audio recording is enabled. MSB of each entry indicates
 	                                                        ///< the type of frame this length relates to: if MSB = 0 then this is images frame and
 	                                                        ///< if MSB = 1 then this is audio sample. Stealing one bit from the length field

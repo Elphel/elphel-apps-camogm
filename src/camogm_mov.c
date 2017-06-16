@@ -266,6 +266,9 @@ static int camogm_audio_mov(struct audio *audio, void *buff, long len, long slen
 
 /**
  * @brief Move to the start of the file and insert generated header
+ * Asserts:
+ *  array of frame lengths is not defined;
+ *  array of sample-to-chunk audio atoms is not defined;
  * @param[in]   state   pointer to the #camogm_state structure for current sensor port
  * @return      this function is always successful and returns 0
  */
@@ -275,6 +278,7 @@ int camogm_end_mov(camogm_state *state)
 	int port = state->port_num;
 
 	assert(state->frame_lengths);
+	assert(state->audio.audio_samples_to_chunk);
 
 	timescale = 10000;                                                      // frame period measured in 1/10000 of a second?
 	// that was in old code. If that works - try to switch to microseconds
