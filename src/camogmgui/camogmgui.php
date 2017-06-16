@@ -58,6 +58,24 @@
 	$mode = 0777;
 	$sensor_ports = elphel_num_sensors();
 	$default_imgsrv_port = 2323;
+	
+	// audio file for test playback; the directory with several test files should be installed with ALSA
+	$test_audio_file = "/usr/share/sounds/alsa/Front_Center.wav";
+	
+	// the list of audio volume values
+	$audio_vol_list = array(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100);
+	
+	/** Find closest value from the list of audio volumes */
+	function get_closest_volume($vol)
+	{
+		global $audio_vol_list;
+		$closest = null;
+		foreach ($audio_vol_list as $elem) {
+			if ($closest === null || abs($vol - $closest) > abs($elem - $vol))
+				$closest = $elem;
+		}
+		return $closest;
+	}
 
 	/** Draw single buffer usage bar */
 	function draw_buffer_bar($port, $ports_num)
@@ -220,9 +238,8 @@
 			fprintf($fcmd, "audio=off;\n");
 			
 		fprintf($fcmd, "audio_format=%s/%s;\n", $_POST['audio_sample_rate'], $_POST['audio_channels']);
+		fprintf($fcmd, "audio_volume=%s;\n", $_POST['audio_volume']);
 
-		// TODO: set volume here!
-				
 		if ($_POST['audio_syncmode'] == "normal")
 			fprintf($fcmd, "allow_sync=disable;\n");
 		else
@@ -322,10 +339,10 @@
 		$xml_geotagging_period = substr($logdata[0]['kml_period'], 0, strlen($logdata[0]['kml_period']));
 				
 		// Audio Recording 
-		$xml_audiorecording_enabled = substr($logdata[0]['audio_enable'], 1, strlen($logdata[0]['audio_enable'])-2);
-		$xml_audio_channels = substr($logdata[0]['audio_channels'], 1, strlen($logdata[0]['audio_channels'])-2);
-		$xml_audio_rate = substr($logdata[0]['audio_rate'], 1, strlen($logdata[0]['audio_rate'])-2);
-		$xml_audio_volume = substr($logdata[0]['audio_volume'], 1, strlen($logdata[0]['audio_volume'])-2);
+		$xml_audiorecording_enabled = substr($logdata[0]['audio_enable'], 0, strlen($logdata[0]['audio_enable']));
+		$xml_audio_channels = substr($logdata[0]['audio_channels'], 0, strlen($logdata[0]['audio_channels']));
+		$xml_audio_rate = substr($logdata[0]['audio_rate'], 0, strlen($logdata[0]['audio_rate']));
+		$xml_audio_volume = substr($logdata[0]['audio_volume'], 0, strlen($logdata[0]['audio_volume']));
 		$xml_audio_syncmode = substr($logdata[0]['allow_sync'], 1, strlen($logdata[0]['allow_sync'])-2);
 
 		// Get per sensor port parameters
@@ -652,11 +669,10 @@
             <div class="TabbedPanelsContent">
 	            <!-- Sound -->
                 <b>Audio Recording:</b><br />
-                <div class="small">requires external USB soundcard</div>
-		<p style="color:red;">not operational yet!</p>
+                <div class="small">requires external USB soundcard or headset</div>
                 Detected Audio Hardware: <span id="ajax_detected_audio_hardware">loading...</span> <a href="#" onClick="check_audio_hardware();"><img src="images/reload.png" style="bottom:-2px; position:relative;"></a><br />
                 <br />
-                Test Audio Playback: <a href="#" onClick="test_audio_playback('/var/hdd/Congas.wav');"><img src="images/play_audio.png" style="position:relative; top:3px;"></a><br />
+                Test Audio Playback: <a href="#" onClick="test_audio_playback(' <?php echo $test_audio_file; ?> ');"><img src="images/play_audio.png" style="position:relative; top:3px;"></a><br />
                 <br />
                 <form method="POST" id="audioform">
                 <table cellspacing="5px">
@@ -670,24 +686,23 @@
                 </td></tr>
                 <tr><td>Channels:</td><td>
 				<select  name="audio_channels" id="audio_channels" disabled>
-                    <option <? if ($xml_audio_channels == 2) echo "selected"; ?>>stereo</option>
-                    <option <? if ($xml_audio_channels == 1) echo "selected"; ?>>mono</option>
+                    <option <? if ($xml_audio_channels == 2) echo "selected"; ?> value="2">stereo</option>
+                    <option <? if ($xml_audio_channels == 1) echo "selected"; ?> value="1">mono</option>
                 </select>
                 </td></tr>
                 <tr><td>Volume:</td><td>
 				<select  name="audio_volume" id="audio_volume" disabled>
-                    <option value="100" <? if ($xml_audio_volume == 100) echo "selected"; ?>>100%</option>
-                    <option value="90" <? if ($xml_audio_volume == 90) echo "selected"; ?>>90%</option>
-                    <option value="80" <? if ($xml_audio_volume == 80) echo "selected"; ?>>80%</option>
-                    <option value="70" <? if ($xml_audio_volume == 70) echo "selected"; ?>>70%</option>
-                    <option value="60" <? if ($xml_audio_volume == 60) echo "selected"; ?>>60%</option>
-                    <option value="50" <? if ($xml_audio_volume == 50) echo "selected"; ?>>50%</option>      
-                    <option value="40" <? if ($xml_audio_volume == 40) echo "selected"; ?>>40%</option>    
-                    <option value="30" <? if ($xml_audio_volume == 30) echo "selected"; ?>>30%</option>    
-                    <option value="20" <? if ($xml_audio_volume == 20) echo "selected"; ?>>20%</option>                                         
-                    <option value="10" <? if ($xml_audio_volume == 10) echo "selected"; ?>>10%</option>    
-                    <option value="0" <? if ($xml_audio_volume == 0) echo "selected"; ?>>0%</option>                        
-                </select> volume not working, please ignore
+                    <?php
+                    $closest = get_closest_volume($xml_audio_volume);
+                    foreach (array_reverse($audio_vol_list) as $vol) {
+                    	if ($closest == $vol)
+                    		$sel = "selected";
+                    	else
+                    		$sel = "";
+                    	echo "<option value=\"" . $vol . "\" " . $sel . ">" . $vol . "%</option>\n";
+                    }
+                    ?>                        
+                </select>
                 </td></tr>
                 <tr><td>Sync Mode:</td><td>
 				<select  name="audio_syncmode" id="audio_syncmode" disabled>

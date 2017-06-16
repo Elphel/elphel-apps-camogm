@@ -34,7 +34,7 @@
 #define AUDIO_CHANNELS_MAX        2
 #define AUDIO_RATE_MIN            11025
 #define AUDIO_RATE_MAX            44100
-#define DEFAULT_AUDIO_VOLUME      0xffff
+#define DEFAULT_AUDIO_VOLUME      0xffff                        ///< absolute maximum audio volume
 
 /**
  * @brief Audio recording context related to stream management.

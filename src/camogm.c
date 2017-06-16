@@ -31,6 +31,7 @@
 #include <ctype.h>
 #include <elphel/ahci_cmd.h>
 
+#include "camogm.h"
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
 #include "camogm_mov.h"
@@ -288,6 +289,7 @@ void camogm_init(camogm_state *state, char *pipe_name, uint16_t port_num)
 	state->audio.set_audio_channels = SAMPLE_CHANNELS;
 	state->audio.set_audio_rate = SAMPLE_RATE;
 	state->audio.set_audio_volume = DEFAULT_AUDIO_VOLUME;
+	state->audio.audio_volume = DEFAULT_AUDIO_VOLUME;
 	state->audio.get_fpga_time = get_fpga_time_w;
 }
 
@@ -1042,16 +1044,21 @@ static void camogm_set_audio_state(camogm_state *state, char *args)
 	}
 }
 
-/** @brief Set audio volume */
+/** @brief Set audio volume
+ *  @param[in]   state   a pointer to a structure containing current state
+ *  @param[in]   args    string containing audio volume, in percent
+ */
 static void camogm_set_audio_volume(camogm_state *state, char *args)
 {
 	int vol = atoi(args);
 
-	if (vol > 65535)
-		vol = 65535;
+	if (vol > 100)
+		vol = 100;
 	if (vol < 0)
 		vol = 0;
-	state->audio.set_audio_volume = vol;
+	state->audio.set_audio_volume = (vol * DEFAULT_AUDIO_VOLUME) / 100;
+	if (state->prog_state == STATE_STOPPED)
+		state->audio.audio_volume = state->audio.set_audio_volume;
 }
 
 /** @brief Set audio sample rate and number of channels */
@@ -1113,6 +1120,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	int _sec_skip = 0;
 	char *_kml_enable, *_kml_used, *_kml_height_mode;
 	char *_audio_en;
+	int _audio_vol, _format;
 	unsigned int _percent_done;
 	off_t save_p;
 
@@ -1184,9 +1192,13 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 	default:
 		_state = "stopped";
 	}
-	_output_format = state->format ? ((state->format == CAMOGM_FORMAT_OGM) ? "ogm" :
-					  ((state->format == CAMOGM_FORMAT_JPEG) ? "jpeg" :
-					   ((state->format == CAMOGM_FORMAT_MOV) ? "mov" :
+	if (state->format == state->set_format)
+		_format = state->format;
+	else
+		_format = state->set_format;
+	_output_format = _format ? ((_format == CAMOGM_FORMAT_OGM) ? "ogm" :
+					  ((_format == CAMOGM_FORMAT_JPEG) ? "jpeg" :
+					   ((_format == CAMOGM_FORMAT_MOV) ? "mov" :
 					       "other"))) : "none";
 	_using_exif =    state->exif ? "yes" : "no";
 	_using_global_pointer = state->save_gp ? "yes" : "no";
@@ -1196,6 +1208,8 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		_percent_done = 0;
 
 	_audio_en = state->audio.set_audio_enable ? "yes" : "no";
+	// convert volume to relative value in percent
+	_audio_vol = (state->audio.audio_volume * 100) / DEFAULT_AUDIO_VOLUME;
 	if (xml) {
 		fprintf(f, "<?xml version=\"1.0\"?>\n" \
 			"<camogm_state>\n" \
@@ -1257,7 +1271,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 			state->rawdev.overrun, state->rawdev.curr_pos_w, state->rawdev.curr_pos_r, _percent_done,
 			state->writer_params.lba_start, state->writer_params.lba_current, state->writer_params.lba_end,
 
-			_audio_en, state->audio.set_audio_channels, state->audio.set_audio_rate, state->audio.set_audio_volume);
+			_audio_en, state->audio.set_audio_channels, state->audio.set_audio_rate, _audio_vol);
 
 		FOR_EACH_PORT(int, chn) {
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";
@@ -1341,7 +1355,7 @@ void  camogm_status(camogm_state *state, char * fn, int xml)
 		fprintf(f, "audio_enable       \t%s\n",        _audio_en);
 		fprintf(f, "audio_channels     \t%d\n",        state->audio.set_audio_channels);
 		fprintf(f, "audio_rate         \t%d\n",        state->audio.set_audio_rate);
-		fprintf(f, "audio_volume       \t%d\n",        state->audio.set_audio_volume);
+		fprintf(f, "audio_volume       \t%d\n",        _audio_vol);
 		fprintf(f, "\n");
 		FOR_EACH_PORT(int, chn) {
 			char *_active = is_chn_active(state, chn) ? "yes" : "no";

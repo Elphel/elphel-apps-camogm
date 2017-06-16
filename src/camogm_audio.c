@@ -414,13 +414,13 @@ void audio_set_volume(int nvolume)
 		long volume_max = 0;
 		if (snd_mixer_selem_get_capture_volume_range(selem, &volume_min, &volume_max) == 0) {
 			// set volume only for capture
-			if (nvolume > 65535)
-				nvolume = 65535;
+			if (nvolume > DEFAULT_AUDIO_VOLUME)
+				nvolume = DEFAULT_AUDIO_VOLUME;
 			if (nvolume < 0)
 				nvolume = 0;
 			long long vol_new = volume_max;
 			vol_new *= nvolume;
-			vol_new /= 65535;
+			vol_new /= DEFAULT_AUDIO_VOLUME;
 			long vol = 0;
 			snd_mixer_selem_get_capture_volume(selem, SND_MIXER_SCHN_FRONT_LEFT, &vol);
 			snd_mixer_selem_set_capture_volume_all(selem, vol_new);
