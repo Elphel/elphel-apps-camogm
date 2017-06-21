@@ -40,6 +40,10 @@ static void audio_deinit(struct audio *audio);
 static bool skip_audio(struct audio *audio, snd_pcm_uframes_t frames);
 static long frames_to_bytes(const struct audio *audio, long frames);
 static void record_buffer(struct audio *audio, int opt);
+static void recover_stream(struct audio *audio, snd_pcm_sframes_t err, snd_pcm_uframes_t xrun);
+static void dummy_read(struct audio *audio);
+static void write_silence(struct audio *audio);
+static int realloc_buffers(struct context_audio *ctx);
 
 /**
  * Initialize HW part of audio interface.
@@ -114,12 +118,10 @@ void audio_init_hw(struct audio *audio, bool restart)
 			break;
 		}
 		if (init_ok) {
-			char tmp_buff[32];
 			snd_pcm_prepare(audio->ctx_a.capture_hnd);
 			snd_pcm_reset(audio->ctx_a.capture_hnd);
 			audio_set_volume(audio->audio_volume);
-			// read some frames to force the driver to start reporting correct number of available frames
-			snd_pcm_readi(audio->ctx_a.capture_hnd, tmp_buff, 8);
+			dummy_read(audio);
 			snd_pcm_status_alloca(&status);
 			snd_pcm_status(audio->ctx_a.capture_hnd, status);
 			snd_pcm_status_get_tstamp(status, &audio_ts);
@@ -180,6 +182,7 @@ void audio_init_sw(struct audio *audio, bool restart, int frames)
 		float v_chunk_time;                                     // duration of one video chunk, in seconds
 
 		assert(audio->ctx_a.sbuffer == NULL);
+		assert(audio->ctx_a.xrun_buffer == NULL);
 
 		audio->ctx_a.sbuffer_pos = 0;
 
@@ -213,11 +216,12 @@ void audio_init_sw(struct audio *audio, bool restart, int frames)
 		audio->ctx_a.read_frames = def_buff_frames;
 		buff_size = audio->ctx_a.sbuffer_len * audio->audio_channels * (snd_pcm_format_physical_width(audio->ctx_a.audio_format) / 8);
 		audio->ctx_a.sbuffer = malloc(buff_size);
-		if (audio->ctx_a.sbuffer == NULL) {
+		audio->ctx_a.xrun_buffer = malloc(buff_size);
+		if (audio->ctx_a.sbuffer == NULL || audio->ctx_a.xrun_buffer == NULL) {
 			audio->set_audio_enable = 0;
 			audio->audio_enable = 0;
 			snd_pcm_close(audio->ctx_a.capture_hnd);
-			D0(fprintf(debug_file, "error: can not allocate %u bytes for audio buffer: %s\n", buff_size, strerror(errno)));
+			D0(fprintf(debug_file, "error: can not allocate %u bytes for audio buffer: %s. Audio disabled\n", buff_size, strerror(errno)));
 		}
 		D6(fprintf(debug_file, "allocated audio buffer for %ld frames, read granularity is %ld frames\n",
 				audio->ctx_a.sbuffer_len, audio->ctx_a.read_frames));
@@ -256,14 +260,23 @@ void audio_process(struct audio *audio)
 		snd_pcm_status_get_tstamp(status, &ts);
 		avail = snd_pcm_status_get_avail(status);
 
-		D6(fprintf(debug_file, "\navailable audio frames: %ld\n", avail));
+		D6(fprintf(debug_file, "\navailable audio frames: %ld, audio timestamp: %ld:%06ld\n", avail, ts.tv_sec, ts.tv_usec));
 		assert(audio->ctx_a.rem_samples >= 0);
 
 		snd_pcm_uframes_t to_read = audio->ctx_a.read_frames;   // length in audio frames
-		if (avail >= audio->ctx_a.read_frames && audio->ctx_a.rem_samples == 0) {
+		if (audio->ctx_a.xrun_append > 0) {
+			// finish xrun recovery process and fill the buffer with new frames untill it is full
+			to_read = audio->ctx_a.xrun_append;
+
+			// === debug code ===
+			fprintf(debug_file, "append %ld audio frames\n", to_read);
+			// === end of debug ===
+		}
+		if (avail >= to_read && audio->ctx_a.rem_samples == 0) {
 			if (skip_audio(audio, avail))
 				continue;
 			to_push_flag = AUDIO_PROCESS;
+			audio->ctx_a.xrun_append = 0;
 		}
 		if (audio->ctx_a.rem_samples > 0) {
 			if (audio->ctx_a.rem_samples > audio->ctx_a.read_frames) {
@@ -282,8 +295,19 @@ void audio_process(struct audio *audio)
 		}
 
 		if (to_push_flag) {
-
-			assert((to_read + audio->ctx_a.sbuffer_pos) <= audio->ctx_a.sbuffer_len);
+			if ((to_read + audio->ctx_a.sbuffer_pos) > audio->ctx_a.sbuffer_len) {
+				/* looks like we spent too much time somewhere and now driver has
+				 * more audio frames than we can store in buffer, but overrun has not occured.
+				 * We can not record all these frames as it is not proper time yet, but we can increase
+				 * buffer size and continue with a bigger buffer.
+				 */
+				int err_code = realloc_buffers(&audio->ctx_a);
+				if (err_code < 0) {
+					D0(fprintf(debug_file, "error (%d), could not reallocate audio buffer\n", err_code));
+					audio->set_audio_enable = 0;
+					audio_deinit(audio);
+				}
+			}
 
 			char *buff_ptr = audio->ctx_a.sbuffer + frames_to_bytes(audio, audio->ctx_a.sbuffer_pos);
 			slen = snd_pcm_readi(audio->ctx_a.capture_hnd, buff_ptr, to_read);
@@ -293,20 +317,7 @@ void audio_process(struct audio *audio)
 					record_buffer(audio, to_push_flag);
 				}
 			} else {
-				// TODO: recovery below does not work as expected, snd_pcm_status_get_avail() always returns 0 after buffer overflow; need to be fixed
-				if (slen == -EPIPE || slen == -ESTRPIPE) {
-					int err;
-					D0(fprintf(debug_file, "snd_pcm_readi returned error: %ld\n", (long)slen));
-					err = snd_pcm_recover(audio->ctx_a.capture_hnd, slen, 0);
-					snd_pcm_reset(audio->ctx_a.capture_hnd);
-					if (err != 0) {
-						D0(fprintf(debug_file, "error: ALSA could not recover audio buffer, error code: %s\n", snd_strerror(err)));
-						// TODO: restart audio interface
-						break;
-					} else {
-						D0(fprintf(debug_file, "audio error recover complete, trying to restart the stream\n"));
-					}
-				}
+				recover_stream(audio, slen, avail);
 			}
 		} else {
 			// no audio frames for processing, return
@@ -444,6 +455,9 @@ static void audio_deinit(struct audio *audio)
 	free(audio->ctx_a.sbuffer);
 	audio->ctx_a.sbuffer = NULL;
 	audio->ctx_a.sbuffer_pos = 0;
+	free(audio->ctx_a.xrun_buffer);
+	audio->ctx_a.xrun_buffer = NULL;
+	audio->ctx_a.xrun_pos = 0;
 
 	gettimeofday(&tv, NULL);
 	D4(fprintf(debug_file, "audio deinitialized at %ld:%06ld\n", tv.tv_sec, tv.tv_usec));
@@ -498,6 +512,20 @@ static void record_buffer(struct audio *audio, int opt)
 	long frames;
 	long rem_frames;
 
+	/* check if xrun has occurred and write audio frames that were saved before xrun,
+	 * then add silence equal in time to lost frames
+	 */
+	 if(audio->ctx_a.lost_frames > 0) {
+		 _buf = audio->ctx_a.xrun_buffer;
+		 _buf_len = frames_to_bytes(audio, audio->ctx_a.xrun_pos);
+		 frames = audio->ctx_a.xrun_pos;
+		 audio->write_samples(audio, _buf, _buf_len, frames);
+		 audio->ctx_a.xrun_pos = 0;
+		 D6(fprintf(debug_file, "record %ld audio frames which were saved before xrun\n", frames));
+
+		 write_silence(audio);
+	 }
+
 	_buf = audio->ctx_a.sbuffer;
 	rem_frames = audio->ctx_a.sbuffer_pos;
 	while (rem_frames >= audio->ctx_a.read_frames || opt == AUDIO_LAST_CHUNK) {
@@ -528,4 +556,113 @@ static void record_buffer(struct audio *audio, int opt)
 		D6(fprintf(debug_file, "copy remaining %ld bytes to the beginning of audio buffer\n", _buf_len));
 	}
 	audio->ctx_a.sbuffer_pos = rem_frames;
+}
+
+/**
+ * Try to recover audio stream after buffer overflow.
+ * @param   audio   pointer to a structure containing audio parameters and buffers
+ * @param   err     error code received after overflow event
+ * @param   xrun    the number of audio frames returned by snd_pcm_format_get_avail() after xrun
+ */
+static void recover_stream(struct audio *audio, snd_pcm_sframes_t err, snd_pcm_uframes_t xrun)
+{
+	int ret;
+	long prepend_frames;
+
+	if (err == -EPIPE || err == -ESTRPIPE) {
+		D0(fprintf(debug_file, "snd_pcm_readi returned error: %ld\n", err));
+		ret = snd_pcm_recover(audio->ctx_a.capture_hnd, err, 0);
+		if (ret != 0) {
+			D0(fprintf(debug_file, "error: ALSA could not recover audio stream, error code: %s\n", snd_strerror(err)));
+			// TODO: complete restart of audio interface
+		} else {
+			if (audio->ctx_a.sbuffer_pos > 0) {
+				/* buffer contains some data which was saved before xrun,
+				 * move the data to a temporary storage in order to free the buffer for current use
+				 */
+				size_t bytes = frames_to_bytes(audio, audio->ctx_a.sbuffer_pos);
+				memcpy(audio->ctx_a.xrun_buffer, audio->ctx_a.sbuffer, bytes);
+				audio->ctx_a.xrun_pos = audio->ctx_a.sbuffer_pos;
+				audio->ctx_a.sbuffer_pos = 0;
+			}
+
+			dummy_read(audio);
+
+			prepend_frames = xrun % audio->ctx_a.read_frames;
+			audio->ctx_a.lost_frames = xrun - prepend_frames;
+			snd_pcm_format_set_silence(audio->ctx_a.audio_format, audio->ctx_a.sbuffer, prepend_frames * audio->audio_channels);
+			audio->ctx_a.sbuffer_pos = prepend_frames;
+			audio->ctx_a.xrun_append = audio->ctx_a.read_frames - prepend_frames;
+			D0(fprintf(debug_file, "audio error recover complete, trying to restart the stream\n"));
+
+			// === debug code ===
+			snd_pcm_status_t *s;
+			snd_timestamp_t ts;
+			snd_pcm_status_alloca(&s);
+			snd_pcm_status(audio->ctx_a.capture_hnd, s);
+			snd_pcm_status_get_tstamp(s, &ts);
+			fprintf(debug_file, "xrun = %lu, prepend_frames = %ld, lost_frames = %ld, xrun_append = %ld\n",
+					xrun, prepend_frames, audio->ctx_a.lost_frames, audio->ctx_a.xrun_append);
+			fprintf(debug_file, "audio tstamp: %ld:%06ld\n", ts.tv_sec, ts.tv_usec);
+			// === end of debug ===
+		}
+	}
+}
+
+/**
+ * For some reason, ALSA reports incorrect number of frames (always 0) when audio stream has just started or
+ * been recoverded after xrun. Reading small number of frames seems to restore normal operation.
+ * @param   audio   pointer to a structure containing audio parameters and buffers
+ */
+static void dummy_read(struct audio *audio)
+{
+	char tmp_buff[32];
+	snd_pcm_readi(audio->ctx_a.capture_hnd, tmp_buff, 8);
+}
+
+/**
+ * Pad audio stream with silence frames instead of lost frames after buffer overflow not lose sync with video.
+ * This function reuses xrun_buffer for silence frames and data from this buffer should be
+ * recorded by the moment.
+ * @param   audio   pointer to a structure containing audio parameters and buffers
+ * @return  None
+ */
+static void write_silence(struct audio *audio)
+{
+	void *_buf;
+	long _buf_len;
+	long rem_frames;
+
+	_buf = audio->ctx_a.xrun_buffer;
+	_buf_len = frames_to_bytes(audio, audio->ctx_a.read_frames);
+	snd_pcm_format_set_silence(audio->ctx_a.audio_format, _buf, audio->ctx_a.read_frames * audio->audio_channels);
+	rem_frames = audio->ctx_a.lost_frames;
+	while (rem_frames >= audio->ctx_a.read_frames) {
+		audio->write_samples(audio, _buf, _buf_len, audio->ctx_a.read_frames);
+		rem_frames -= audio->ctx_a.read_frames;
+	}
+	D6(fprintf(debug_file, "recorded %ld audio frames of silence\n", audio->ctx_a.lost_frames));
+	assert(rem_frames == 0);
+	audio->ctx_a.lost_frames = 0;
+}
+
+/**
+ * Allocate new audio buffer with double size of the previous buffer
+ * @param   ctx   pointer to current audio context
+ * @return  0 in case buffers were reallocated and negative error code otherwise
+ */
+static int realloc_buffers(struct context_audio *ctx)
+{
+	int ret_val = 0;
+	ssize_t new_size = snd_pcm_frames_to_bytes(ctx->capture_hnd, 2 * ctx->sbuffer_len);
+
+	ctx->sbuffer = realloc(ctx->sbuffer, new_size);
+	ctx->xrun_buffer = realloc(ctx->xrun_buffer, new_size);
+	if (ctx->sbuffer == NULL || ctx->xrun_buffer == NULL) {
+		ret_val = -CAMOGM_FRAME_MALLOC;
+	} else {
+		ctx->sbuffer_len = 2 * ctx->sbuffer_len;
+		D1(fprintf(debug_file, "audio buffer reallocated, new size is %ld frames\n", ctx->sbuffer_len));
+	}
+	return ret_val;
 }

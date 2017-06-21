@@ -51,6 +51,12 @@ struct context_audio {
 	struct timeval time_last;                                   ///< calculated time of last audio sample (this value is not taken from ALSA)
 	long rem_samples;                                           ///< remaining samples
 
+	long lost_frames;                                           ///< the number of frames lost after buffer overrun
+	char *xrun_buffer;                                          ///< temporary storage for the data saved in buffer befor xrun
+	long xrun_pos;                                              ///< number of samples in xrun buffer
+	long xrun_append;                                           ///< save in buffer this number of frames after xrun, all other frames in chunk
+	                                                            ///< will be silence
+
 	snd_pcm_format_t audio_format;                              ///< format of audio samples as defined in 'enum snd_pcm_format_t'
 	snd_pcm_t *capture_hnd;                                     ///< ALSA PCM handle
 };

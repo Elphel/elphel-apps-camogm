@@ -1769,6 +1769,11 @@ int listener_loop(camogm_state *state)
 					} else {
 						D6(fprintf(debug_file, "not recording audio samples after this frame\n"));
 					}
+
+					// === debug code ===
+					fprintf(debug_file, "video frames recorded: %d\n", state->frameno);
+					// ===end of debug ===
+
 					audio_process(&state->audio);
 				}
 			}
