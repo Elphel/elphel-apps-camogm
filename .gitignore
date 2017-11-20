@@ -13,4 +13,8 @@ sysroots
 bitbake-logs
 camogm
 camogm_test
-image
+
+doxygen.tag
+/image
+/scripts
+/html

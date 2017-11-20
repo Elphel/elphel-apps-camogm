@@ -18,7 +18,7 @@
 					<folderInfo id="0.531211255." name="/" resourcePath="">
 						<toolChain id="cdt.managedbuild.toolchain.gnu.base.975445528" name="Linux GCC" superClass="cdt.managedbuild.toolchain.gnu.base">
 							<targetPlatform archList="all" binaryParser="org.eclipse.cdt.core.ELF" id="cdt.managedbuild.target.gnu.platform.base.1160083683" name="Debug Platform" osList="linux,hpux,aix,qnx" superClass="cdt.managedbuild.target.gnu.platform.base" />
-							<builder arguments="apps-camogm" cleanBuildTarget="-c clean -f" command="${workspace_loc:/elphel-apps-camogm/run_bitbake.sh}" enableCleanBuild="false" id="cdt.managedbuild.target.gnu.builder.base.1606892613" incrementalBuildTarget="-c compile -f" keepEnvironmentInBuildfile="false" managedBuildOn="false" name="Gnu Make Builder" superClass="cdt.managedbuild.target.gnu.builder.base" />
+							<builder arguments="apps-camogm" cleanBuildTarget="-c clean -f" command="${workspace_loc:/elphel-apps-camogm/scripts/run_bitbake.sh}" enableCleanBuild="false" id="cdt.managedbuild.target.gnu.builder.base.1606892613" incrementalBuildTarget="-c compile -f" keepEnvironmentInBuildfile="false" managedBuildOn="false" name="Gnu Make Builder" superClass="cdt.managedbuild.target.gnu.builder.base" />
 							<tool id="cdt.managedbuild.tool.gnu.archiver.base.1444842340" name="GCC Archiver" superClass="cdt.managedbuild.tool.gnu.archiver.base" />
 							<tool id="cdt.managedbuild.tool.gnu.cpp.compiler.base.834332499" name="GCC C++ Compiler" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.base">
 								<inputType id="cdt.managedbuild.tool.gnu.cpp.compiler.input.2002029678" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.input" />
