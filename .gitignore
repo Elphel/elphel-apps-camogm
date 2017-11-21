@@ -13,6 +13,9 @@ sysroots
 bitbake-logs
 camogm
 camogm_test
+all_sources.lst
+excluding.lst
+including.lst
 
 doxygen.tag
 /image
