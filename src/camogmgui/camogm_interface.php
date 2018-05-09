@@ -79,15 +79,15 @@ $start_str = "camogm -n " . $cmd_pipe . " -p " . $cmd_port;
 
 function check_camogm_running(){
   global $start_str;
-  
+
   $camogm_running = false;
   exec('ps | grep "camogm"', $arr);
   $check = implode("<br/>",$arr);
-  
+
   if (strstr($check, $start_str)){
     $camogm_running = true;
   }
-  
+
   return $camogm_running;
 }
 
@@ -96,13 +96,13 @@ if ($cmd == "run_camogm")
 	if (isset($_GET['state_file'])){
 		$state_file = $_GET['state_file'];
 	}
-	
+
 	if(!check_camogm_running()) {
-	
+
                 echo "camogm is not running, starting\n";
-	
+
                 $start_str = $start_str . " -s " . $state_file;
-	
+
                 // clean
 		exec("rm " . $cmd_pipe);
 		exec("rm " . $cmd_state);
@@ -121,7 +121,7 @@ if ($cmd == "run_camogm")
 		    fprintf($fcmd,"debuglev=$debuglev");
 		    fclose($fcmd);
 		}
-		
+
 		// set fast recording mode if there is at least one suitable partition or revert to legacy 'mov' mode
 		$partitions = get_raw_dev();
 		if (!empty($partitions)) {
@@ -151,23 +151,23 @@ else if ($cmd == "status")
 		$fcmd=fopen($cmd_pipe,"w");
 		fprintf($fcmd, "xstatus=%s\n",$pipe);
 		fclose($fcmd);
-	
+
 		$status=file_get_contents($pipe);
 	}else{
 		$status = "<?xml version='1.0'?><camogm_state>\n<state>".$camogm_running."</state>\n</camogm_state>";
 	}
-		
+
 	header("Content-Type: text/xml");
 	header("Content-Length: ".strlen($status)."\n");
 	header("Pragma: no-cache\n");
 	printf("%s", $status);
 }
 else if ($cmd == "run_status")
-{	
-	
+{
+
 	if (check_camogm_running()) $camogm_running = "on";
 	else                        $camogm_running = "off";
-	
+
 	$status="<?xml version='1.0'?><camogm_state>\n<state>".$camogm_running."</state>\n</camogm_state>";
 
 	header("Content-Type: text/xml");
@@ -180,10 +180,10 @@ else if ($cmd=="get_hdd_space"){
 		$mountpoint = $_GET['mountpoint'];
 	else
 		$mountpoint = '/mnt/sda1';
-		
+
         if (is_dir($mountpoint)) $res = disk_free_space($mountpoint);
         else                     $res = 0;
-		
+
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
@@ -195,7 +195,7 @@ else if ($cmd=="get_hdd_space"){
 else if ($cmd=="mount") { // mount media like HDD
 	if (isset($_GET['partition']))
 		$partition = $_GET['partition'];
-	else 
+	else
                 $partition = '/dev/sda1';
 		//$partition = '/dev/hda1';
 
@@ -203,7 +203,7 @@ else if ($cmd=="mount") { // mount media like HDD
 		$mountpoint = $_GET['mountpoint'];
 	else
 		$mountpoint = '/mnt/sda1';
-	
+
 	exec('mkdir '.$mountpoint);
 	//exec('mkdir /mnt/sda1');
 	exec('mount '.$partition." ".$mountpoint);
@@ -247,7 +247,7 @@ else if ($cmd=="set_quality") {
 	echo elphel_get_P_value($sensor_port,ELPHEL_QUALITY);
 	echo "</".$cmd.">";
 	xml_footer();
-	
+
 }
 else if ($cmd=="get_quality") {
         $sensor_port = $_GET['sensor_port'];
@@ -265,7 +265,7 @@ else if ($cmd=="set_parameter") {
 
 	//elphel_skip_frames($sensor_port,1);
 	$thisFrameNumber=elphel_get_frame($sensor_port);
-	
+
 	if (isset($_GET['pframe'])) {
 		$pframe = intval($_GET['pframe']);
 	} else {
@@ -354,11 +354,11 @@ else if ($cmd=="list_partitions"){
 else
 {
 	$fcmd = fopen($cmd_pipe, "w");
-	
+
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
-	
+
 	switch ($cmd)
 	{
 		case "start":
@@ -367,14 +367,14 @@ else
 		case "stop":
 			fprintf($fcmd,"stop;\n");
 			exec('sync');
-			break;	
+			break;
 		case "exit":
 			fprintf($fcmd,"exit;\n");
 			exec('sync');
 			break;
 		case "file_rename":
 			// Now requires full path (like "/mnt/sda1/test1.mov") for file_old
-			// and either a full path or just a filename for file_new 
+			// and either a full path or just a filename for file_new
 			if ((!isset($_GET['file_old'])) || (!isset($_GET['file_new']))) {
 				echo "wrong arguments";
 				break;
@@ -382,7 +382,7 @@ else
 
 			$old_name = $_GET['file_old'];
 			$new_name = $_GET['file_new'];
-			
+
 			if (!strrpos($new_name, "/")) {
 				$new_name = substr($old_name, 0, strrpos($old_name, "/")+1).$new_name;
 			}
@@ -391,7 +391,7 @@ else
 				echo "filenames match";
 				break;
 			}
-			
+
 			if (file_exists($new_name)) {
 				echo "file_new already exists";
 				break;
@@ -401,8 +401,8 @@ else
 				break;
 			}
 
-			// no errors found, so do the rename			
-			if (rename($old_name, $new_name)) 
+			// no errors found, so do the rename
+			if (rename($old_name, $new_name))
 				echo "done";
 			else
 				echo "undefined error";
@@ -421,7 +421,7 @@ else
 				if (!strpos($arr1[$i], "mtdblock") && !strpos($arr1[$i], "ram")) {
 					$temp = $arr1[$i];
 					while(strstr($temp, "  ")) {
-						$temp = str_replace(chr(9), " ", $temp); 
+						$temp = str_replace(chr(9), " ", $temp);
 						$temp = str_replace("  ", " ", $temp);
 					}
 					if (preg_match_all('/ +[a-z]{3,3}[0-9]{1,1}$/', $temp, $available_partitons) > 0) {
@@ -466,7 +466,7 @@ else
 						echo "<filesystem>".$filesystem."</filesystem>";
 						$filesystem = "";
 					} else {
-						echo "<filesystem>none</filesystem>";					
+						echo "<filesystem>none</filesystem>";
 					}
 					echo "</item>";
 				}
@@ -485,7 +485,7 @@ else
 		case "is_hdd_mounted":
 			if (isset($_GET['partition']))
 				$partition = $_GET['partition'];
-			else 
+			else
                                 $partition = '/dev/sda1';
 				//$partition = '/dev/hda1';
 
@@ -499,10 +499,10 @@ else
 			break;
 		case "create_symlink":
 			//exec('ln -s /mnt/sda1 /mnt/flash/html/hdd');
-			
+
 			if (isset($_GET['mountpoint'])) $mountpoint = $_GET['mountpoint'];
 			else                            $mountpoint = "/mnt/sda1";
-			
+
 			exec("rm /www/pages/hdd");
 			exec("ln -sf $mountpoint /www/pages/hdd");
 			break;
@@ -512,7 +512,7 @@ else
 // 			    echo "the path is not set";
 // 			    break;
 // 			}
-// 
+//
 // 			if (is_dir($path)) {
 // 			    $files = scandir($path);
 // 			    foreach ($files as $file){
@@ -522,7 +522,7 @@ else
 // 			    echo "directory not found";
 // 			    break;
 // 			}
-// 
+//
 // 			break;
 		case "list_files":
 			if (!file_exists('/www/pages/hdd')) {
@@ -530,7 +530,7 @@ else
 			break;
 			}
 			$dir = $_GET["dir"];
-			
+
 			if (isset($dir) && ($dir != "") && ($dir != "/./") && ($dir != "/"))  // show "one level up" item if we are not in "home" directory
 			{
 				echo "<file>";
@@ -540,7 +540,7 @@ else
 				$file_pos_of_second_last_slash = strrpos($file_remove_last_slash, "/");
 				$up_file = substr($dir, 0, $file_pos_of_second_last_slash+1);
 				while(strpos($up_file, "//")) {
-					$up_file = str_replace("//", "/", $up_file); 
+					$up_file = str_replace("//", "/", $up_file);
 				}
 				if ($up_file == "")
 					echo "<path>/</path>";
@@ -550,18 +550,18 @@ else
 				echo "<date>0</date>";
 				echo "</file>";
 			}
-			
+
 			if ($handle = opendir('/www/pages/hdd/'.$dir)) {
 				while ($file = readdir($handle))
 				{
 					if ($file != "." && $file != "..")
-					{	
+					{
 						echo "<file>";
 						echo "<type>";
 						if (is_dir("/www/pages/hdd/".$dir.$file))
 							echo "dir";
 						else
-							echo $extension = substr($file, strrpos($file, '.')+1, strlen($file)); 
+							echo $extension = substr($file, strrpos($file, '.')+1, strlen($file));
 						echo "</type>";
 						echo "<name>".$file."</name>";
 						echo "<path>".substr($dir, 1).$file."</path>";
@@ -585,7 +585,7 @@ else
 			fprintf($fcmd, "prefix=%s;\n", $prefix);
 			setcookie("directory", $prefix);
 			break;
-			
+
 		case "set_debuglev":
 			$debuglev = $_GET['debuglev'];
 			fprintf($fcmd, "debuglev=%s;\n", $debuglev);
@@ -610,7 +610,7 @@ else
 			$start_after_timestamp = $_GET['start_after_timestamp'];
 			// Allow setting start timestamp as relative time with "p3" = plus 3 second
 			// This allows triggering recording in the future without first reading current camera time
-			if (substr($start_after_timestamp, 0, 1) == "p") { 
+			if (substr($start_after_timestamp, 0, 1) == "p") {
 				$start_after_timestamp = elphel_get_fpga_time() + substr($start_after_timestamp, 1) ;
 				//echo "now: ".elphel_get_fpga_time()." relative: ".$start_after_timestamp; //debug
 			}
@@ -634,9 +634,9 @@ else
 			if ($audio_hardware == "")
 				echo "no Audio Hardware detected";
 			else
-			{	
+			{
 				$message = substr($audio_hardware, strpos($audio_hardware, "],")+2);
-				$message = substr($message, 1, strpos($message, "[")-2); 
+				$message = substr($message, 1, strpos($message, "[")-2);
 				echo $message;
 			}
 			break;
@@ -671,8 +671,10 @@ else
 }
 
 function xml_header() {
-	header("Content-type: text/xml"); 
+	header("Content-type: text/xml");
 	header("Pragma: no-cache\n");
+	// allow CORS: needed for multi cams unified control
+	header('Access-Control-Allow-Origin: *');
 	echo "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>\n";
 	echo "<camogm_interface>\n";
 }
@@ -702,7 +704,7 @@ function get_partitions()
 
 /** Get a list of disk devices which have file system and can be mounted. This function
  *  uses 'blkid' command from busybox.
- */ 
+ */
 function get_mnt_dev()
 {
 	$partitions = get_partitions();
@@ -721,7 +723,7 @@ function get_mnt_dev()
 			$i++;
 		}
 	}
-	
+
 	return array("devices" => $devices, "types" => $fs_types);
 }
 
@@ -730,12 +732,12 @@ function get_raw_dev()
 {
 	$j = 0;
 	$ret = get_mnt_dev();
-	$devices = $ret["devices"]; 
+	$devices = $ret["devices"];
 	$types = $ret["types"];
 
 	$names = get_partitions();
-	
-	// filter out partitions with file system 
+
+	// filter out partitions with file system
 	$i = 0;
 	$raw_devices = array();
 
@@ -751,7 +753,7 @@ function get_raw_dev()
 			$i++;
 		}
 	}
-	
+
 	//special case
 	if (count($raw_devices)>1) {
             foreach($raw_devices as $k=>$v){
@@ -769,7 +771,7 @@ function get_state_path()
 {
 	global $default_state;
 	$prefix = '/tmp/rootfs.ro';
-	
+
 	if (file_exists($prefix)) {
 		$ret = $prefix . $default_state;
 	} else {
@@ -783,7 +785,7 @@ function get_state_path()
 function write_cmd_pipe($cmd_str)
 {
 	global $cmd_pipe;
-	
+
 	$fcmd = fopen($cmd_pipe, 'w');
 	if ($fcmd !== false) {
 		fprintf($fcmd, $cmd_str);
