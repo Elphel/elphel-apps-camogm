@@ -93,6 +93,10 @@ function check_camogm_running(){
 
 if ($cmd == "run_camogm")
 {
+
+	// allow CORS: needed for multi cams unified control
+	header('Access-Control-Allow-Origin: *');
+
 	if (isset($_GET['state_file'])){
 		$state_file = $_GET['state_file'];
 	}
@@ -141,7 +145,7 @@ else if ($cmd == "status")
 	if (check_camogm_running()) $camogm_running = "on";
 	else                        $camogm_running = "off";
 
-	if ($camogm_running){
+	if ($camogm_running=="on"){
 		$pipe="/var/state/camogm.state";
 		$mode=0777;
 		if(!file_exists($pipe)) {
@@ -160,6 +164,8 @@ else if ($cmd == "status")
 	header("Content-Type: text/xml");
 	header("Content-Length: ".strlen($status)."\n");
 	header("Pragma: no-cache\n");
+	// allow CORS: needed for multi cams unified control
+	header('Access-Control-Allow-Origin: *');
 	printf("%s", $status);
 }
 else if ($cmd == "run_status")
@@ -173,6 +179,8 @@ else if ($cmd == "run_status")
 	header("Content-Type: text/xml");
 	header("Content-Length: ".strlen($status)."\n");
 	header("Pragma: no-cache\n");
+	// allow CORS: needed for multi cams unified control
+	header('Access-Control-Allow-Origin: *');
 	printf("%s", $status);
 }
 else if ($cmd=="get_hdd_space"){
