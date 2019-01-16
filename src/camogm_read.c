@@ -1017,8 +1017,8 @@ void *reader(void *arg)
 			.sockfd_const = &sockfd,
 			.sockfd_temp = &fd
 	};
-	memset(&index_dir, 0, sizeof(struct disk_index));
-	memset(&index_sparse, 0, sizeof(struct disk_index));
+	memset(&index_dir, 0, sizeof(struct disk_idir));
+	memset(&index_sparse, 0, sizeof(struct disk_idir));
 
 	prep_socket(&sockfd, state->sock_port);
 	pthread_cleanup_push(exit_thread, &exit_state);

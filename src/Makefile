@@ -1,6 +1,9 @@
 GUIDIR     = camogmgui
 PROGS      = camogm
-TEST_PROG  = camogm_test
+TEST_PROG  = camogm_test 
+TEST_PROG1  = camogm_fifo_writer
+TEST_PROG2  = camogm_fifo_reader
+ 
 PHPSCRIPTS = camogmstate.php $(GUIDIR)/camogmgui.php $(GUIDIR)/camogmgui.css $(GUIDIR)/camogmgui.js $(GUIDIR)/camogm_interface.php \
              $(GUIDIR)/SpryTabbedPanels.css $(GUIDIR)/SpryTabbedPanels.js $(GUIDIR)/xml_simple.php $(GUIDIR)/SpryCollapsiblePanel.css \
              $(GUIDIR)/SpryCollapsiblePanel.js
@@ -12,7 +15,10 @@ IMAGES     = $(GUIDIR)/images/filebrowser-01.gif $(GUIDIR)/images/filebrowser-bo
 
 
 SRCS = camogm.c camogm_ogm.c camogm_jpeg.c camogm_mov.c camogm_kml.c camogm_read.c index_list.c camogm_align.c
-TEST_SRC = camogm_test.c
+TEST_SRC = camogm_test.c 
+TEST_SRC1 = camogm_fifo_writer.c 
+TEST_SRC2 = camogm_fifo_reader.c
+
 OBJS = $(SRCS:.c=.o)
 
 CFLAGS    += -Wall -I$(STAGING_DIR_HOST)/usr/include-uapi
@@ -28,17 +34,21 @@ BINDIR     = /usr/bin/
 WWW_PAGES  = /www/pages
 IMAGEDIR   = $(WWW_PAGES)/images
 
-all: $(PROGS) $(TEST_PROG)
+all: $(PROGS) $(TEST_PROG) $(TEST_PROG1) $(TEST_PROG2)
 
 $(PROGS): $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-$(TEST_PROG): $(TEST_SRC:.c=.o)
+$(TEST_PROG): $(TEST_SRC:.c=.o) 
+$(TEST_PROG1): $(TEST_SRC1:.c=.o)
+$(TEST_PROG2): $(TEST_SRC2:.c=.o)
 
 install: $(PROGS) $(PHPSCRIPTS) $(CONFIGS)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(BINDIR)
 	$(INSTALL) $(OWN) -m $(INSTMODE) $(PROGS)      $(DESTDIR)$(BINDIR)
 	$(INSTALL) $(OWN) -m $(INSTMODE) $(TEST_PROG)  $(DESTDIR)$(BINDIR)
+	$(INSTALL) $(OWN) -m $(INSTMODE) $(TEST_PROG1)  $(DESTDIR)$(BINDIR)
+	$(INSTALL) $(OWN) -m $(INSTMODE) $(TEST_PROG2)  $(DESTDIR)$(BINDIR)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(SYSCONFDIR)
 	$(INSTALL) $(OWN) -m $(INSTDOCS) $(CONFIGS)    $(DESTDIR)$(SYSCONFDIR)
 	$(INSTALL) $(OWN) -d $(DESTDIR)$(WWW_PAGES)
