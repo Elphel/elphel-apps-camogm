@@ -1630,104 +1630,108 @@ int listener_loop(camogm_state *state)
 		ret = poll(&pfd,1,DEFAULT_POLL_TIMEOUT);
 
 		if (ret==0){
-			D6(fprintf(debug_file, "Waiting for commands...\n"));
+			D6(fprintf(debug_file, "Waiting for commands..., state->prog_state = %d, pfd.revents=%d\n",state->prog_state, (int) pfd.revents));
 		}
 
 		if (pfd.revents & POLLIN){
 			cmd = parse_cmd(state, cmd_file);
 			if (cmd) {
 				if (cmd < 0) D0(fprintf(debug_file, "Unrecognized command\n"));
-			} else if (state->prog_state == STATE_RUNNING) { // no commands in queue, started
-				switch ((rslt = -sendImageFrame(state))) {
-				case 0:
-					break;                      // frame sent OK, nothing to do (TODO: check file length/duration)
-				case CAMOGM_FRAME_NOT_READY:    // just wait for the frame to appear at the current pointer
-					// we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
-					// TODO - add another wait with (short) timeout?
-					fp0 = lseek(state->fd_circ[curr_port], 0, SEEK_CUR);
-					if (fp0 < 0) {
-						D0(fprintf(debug_file, "%s:line %d got broken frame (%d) before waiting for ready\n", __FILE__, __LINE__, fp0));
-						rslt = CAMOGM_FRAME_BROKEN;
-					} else {
-						fp1 = lseek(state->fd_circ[curr_port], LSEEK_CIRC_WAIT, SEEK_END);
-						if (fp1 < 0) {
-							D0(fprintf(debug_file, "%s:line %d got broken frame (%d) while waiting for ready. Before that fp0=0x%x\n", __FILE__, __LINE__, fp1, fp0));
-							rslt = CAMOGM_FRAME_BROKEN;
-						} else {
-							break;
-						}
-					}
-					// no break
-				case  CAMOGM_FRAME_CHANGED:     // frame parameters have changed
-				case  CAMOGM_FRAME_NEXTFILE:    // next file needed (need to switch to a new file (time/size exceeded limit)
-				case  CAMOGM_FRAME_INVALID:     // invalid frame pointer
-				case  CAMOGM_FRAME_BROKEN:      // frame broken (buffer overrun)
-					// restart the file
-					D3(fprintf(debug_file,"%s:line %d - sendImageFrame() returned -%d\n", __FILE__, __LINE__, rslt));
-					camogm_stop(state);
-					state->prog_state = STATE_RESTARTING;
-					camogm_start(state);
-					break;
-				case  CAMOGM_FRAME_FILE_ERR:    // error with file I/O
-				case  CAMOGM_FRAME_OTHER:       // other errors
-					D0(fprintf(debug_file, "%s:line %d - error=%d\n", __FILE__, __LINE__, rslt));
-					break;
-				default:
-					D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
-					clean_up(state);
-					exit(-1);
-				} // switch sendImageFrame()
+			}
+		} else if (state->prog_state == STATE_RUNNING) { // no commands in queue, started
 
-				// collect error statistics
-				if (rslt > 0 && rslt < CAMOGM_ERRNUM)
-					state->error_stat[curr_port][rslt]++;
-
-				if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED))
-					// add port number to error code to facilitate debugging
-					state->last_error_code = rslt + 100 * state->port_num;
-			} else if (state->prog_state == STATE_STARTING) { // no commands in queue,starting (but not started yet)
-
-				// retry starting
-				switch ((rslt = -camogm_start(state))) {
-				case 0:
-					break;                      // file started OK, nothing to do
-				case CAMOGM_TOO_EARLY:
-					lseek(state->fd_circ[curr_port], LSEEK_CIRC_TOWP, SEEK_END);       // set pointer to the frame to wait for
-					lseek(state->fd_circ[curr_port], LSEEK_CIRC_WAIT, SEEK_END);       // It already passed CAMOGM_FRAME_NOT_READY, so compressor may be running already
-					break;                                                  // no need to wait extra
-				case CAMOGM_FRAME_NOT_READY:                                // just wait for the frame to appear at the current pointer
+			D6(fprintf(debug_file, "state->prog_state == STATE_RUNNING "));
+			switch ((rslt = -sendImageFrame(state))) {
+			D6(fprintf(debug_file, " ==> %d",rslt));
+			case 0:
+				break;                      // frame sent OK, nothing to do (TODO: check file length/duration)
+			case CAMOGM_FRAME_NOT_READY:    // just wait for the frame to appear at the current pointer
 				// we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
 				// TODO - add another wait with (short) timeout?
-				case  CAMOGM_FRAME_CHANGED:     // frame parameters have changed
-				case  CAMOGM_FRAME_NEXTFILE:
-				case  CAMOGM_FRAME_INVALID:     // invalid frame pointer
-				case  CAMOGM_FRAME_BROKEN:      // frame broken (buffer overrun)
-					usleep(COMMAND_LOOP_DELAY); // it should be not too long so empty buffer will not be overrun
-					break;
-				case  CAMOGM_FRAME_FILE_ERR:    // error with file I/O
-				case  CAMOGM_FRAME_OTHER:       // other errors
-					D0(fprintf(debug_file, "%s:line %d - error=%d\n", __FILE__, __LINE__, rslt));
-					break;
-				default:
-					D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
-					clean_up(state);
-					exit(-1);
-				} // switch camogm_start()
+				fp0 = lseek(state->fd_circ[curr_port], 0, SEEK_CUR);
+				if (fp0 < 0) {
+					D0(fprintf(debug_file, "%s:line %d got broken frame (%d) before waiting for ready\n", __FILE__, __LINE__, fp0));
+					rslt = CAMOGM_FRAME_BROKEN;
+				} else {
+					fp1 = lseek(state->fd_circ[curr_port], LSEEK_CIRC_WAIT, SEEK_END);
+					if (fp1 < 0) {
+						D0(fprintf(debug_file, "%s:line %d got broken frame (%d) while waiting for ready. Before that fp0=0x%x\n", __FILE__, __LINE__, fp1, fp0));
+						rslt = CAMOGM_FRAME_BROKEN;
+					} else {
+						break;
+					}
+				}
+				// no break
+			case  CAMOGM_FRAME_CHANGED:     // frame parameters have changed
+			case  CAMOGM_FRAME_NEXTFILE:    // next file needed (need to switch to a new file (time/size exceeded limit)
+			case  CAMOGM_FRAME_INVALID:     // invalid frame pointer
+			case  CAMOGM_FRAME_BROKEN:      // frame broken (buffer overrun)
+				// restart the file
+				D3(fprintf(debug_file,"%s:line %d - sendImageFrame() returned -%d\n", __FILE__, __LINE__, rslt));
+				camogm_stop(state);
+				state->prog_state = STATE_RESTARTING;
+				camogm_start(state);
+				break;
+			case  CAMOGM_FRAME_FILE_ERR:    // error with file I/O
+			case  CAMOGM_FRAME_OTHER:       // other errors
+				D0(fprintf(debug_file, "%s:line %d - error=%d\n", __FILE__, __LINE__, rslt));
+				break;
+			default:
+				D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
+				clean_up(state);
+				exit(-1);
+			} // switch sendImageFrame()
 
-				// collect error statistics
-				if (rslt > 0 && rslt < CAMOGM_ERRNUM)
-					state->error_stat[curr_port][rslt]++;
+			// collect error statistics
+			if (rslt > 0 && rslt < CAMOGM_ERRNUM)
+				state->error_stat[curr_port][rslt]++;
 
-				if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) )
-					// add port number to error code to facilitate debugging
-					state->last_error_code = rslt + 100 * state->port_num;
-			} else if (state->prog_state == STATE_READING) {
-				usleep(COMMAND_LOOP_DELAY);
-			} else {                            // not running, not starting
-				state->rawdev.thread_state = STATE_RUNNING;
-				usleep(COMMAND_LOOP_DELAY);     // make it longer but interruptible by signals?
-			}
-		} // if pfd.revents & POLLIN
+			if ((rslt != 0) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED))
+				// add port number to error code to facilitate debugging
+				state->last_error_code = rslt + 100 * state->port_num;
+		} else if (state->prog_state == STATE_STARTING) { // no commands in queue,starting (but not started yet)
+
+			// retry starting
+			switch ((rslt = -camogm_start(state))) {
+			case 0:
+				break;                      // file started OK, nothing to do
+			case CAMOGM_TOO_EARLY:
+				lseek(state->fd_circ[curr_port], LSEEK_CIRC_TOWP, SEEK_END);       // set pointer to the frame to wait for
+				lseek(state->fd_circ[curr_port], LSEEK_CIRC_WAIT, SEEK_END);       // It already passed CAMOGM_FRAME_NOT_READY, so compressor may be running already
+				break;                                                  // no need to wait extra
+			case CAMOGM_FRAME_NOT_READY:                                // just wait for the frame to appear at the current pointer
+			// we'll wait for a frame, not to waste resources. But if the compressor is stopped this program will not respond to any commands
+			// TODO - add another wait with (short) timeout?
+			case  CAMOGM_FRAME_CHANGED:     // frame parameters have changed
+			case  CAMOGM_FRAME_NEXTFILE:
+			case  CAMOGM_FRAME_INVALID:     // invalid frame pointer
+			case  CAMOGM_FRAME_BROKEN:      // frame broken (buffer overrun)
+				usleep(COMMAND_LOOP_DELAY); // it should be not too long so empty buffer will not be overrun
+				break;
+			case  CAMOGM_FRAME_FILE_ERR:    // error with file I/O
+			case  CAMOGM_FRAME_OTHER:       // other errors
+				D0(fprintf(debug_file, "%s:line %d - error=%d\n", __FILE__, __LINE__, rslt));
+				break;
+			default:
+				D0(fprintf(debug_file, "%s:line %d - should not get here (rslt=%d)\n", __FILE__, __LINE__, rslt));
+				clean_up(state);
+				exit(-1);
+			} // switch camogm_start()
+
+			// collect error statistics
+			if (rslt > 0 && rslt < CAMOGM_ERRNUM)
+				state->error_stat[curr_port][rslt]++;
+
+			if ((rslt != 0) && (rslt != CAMOGM_TOO_EARLY) && (rslt != CAMOGM_FRAME_NOT_READY) && (rslt != CAMOGM_FRAME_CHANGED) )
+				// add port number to error code to facilitate debugging
+				state->last_error_code = rslt + 100 * state->port_num;
+		} else if (state->prog_state == STATE_READING) {
+			usleep(COMMAND_LOOP_DELAY);
+		} else {                            // not running, not starting
+			state->rawdev.thread_state = STATE_RUNNING;
+			usleep(COMMAND_LOOP_DELAY);     // make it longer but interruptible by signals?
+		}
+//		} // if pfd.revents & POLLIN
 	} // while (process)
 
 	// normally, we should not be here
