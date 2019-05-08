@@ -21,3 +21,6 @@ doxygen.tag
 /image
 /scripts
 /html
+
+/src/camogm_fifo_reader
+/src/camogm_fifo_writer
