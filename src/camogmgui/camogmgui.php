@@ -620,9 +620,9 @@
                     else
                     	echo "<input type=\"radio\" id=\"radioMov\" style=\"top:3px; position:relative;\" name=\"container\" value=\"mov\" onChange=\"format_changed(this);\">  Apple Quicktime Movie<br />";
                     if ($xml_format == "jpeg")
-                    	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\" checked> JPEG Sequence<br />";
+                    	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\" checked> JPEG/Tiff Sequence<br />";
                     else
-                    	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\"> JPEG Sequence<br />";
+                    	echo "<input type=\"radio\" id=\"radioJpg\" style=\"top:3px; position:relative;\" name=\"container\" value=\"jpg\" onChange=\"format_changed(this);\"> JPEG/Tiff Sequence<br />";
                     if ($xml_rawdev_path != "") {
                     	$fastrec_checked = "checked";
                     } else {

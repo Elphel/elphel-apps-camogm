@@ -291,8 +291,12 @@ int camogm_frame_jpeg(camogm_state *state)
 	struct iovec chunks_iovec[8];
 	int port = state->port_num;
 	time_t curr_time;
-
-	sprintf(state->path, "%s%d_%010ld_%06ld.jpeg", state->path_prefix, port, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
+	int is_tiff = state->this_frame_params[port].color == COLORMODE_RAW;
+    if (is_tiff) {
+    	sprintf(state->path, "%s%d_%010ld_%06ld.tiff", state->path_prefix, port, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
+    } else {
+    	sprintf(state->path, "%s%d_%010ld_%06ld.jpeg", state->path_prefix, port, state->this_frame_params[port].timestamp_sec, state->this_frame_params[port].timestamp_usec);
+    }
 	if (!state->rawdev_op) {
 		l = 0;
 		for (i = 0; i < (state->chunk_index) - 1; i++) {
