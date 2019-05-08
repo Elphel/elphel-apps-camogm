@@ -518,7 +518,7 @@
             	<?php 
             	for ($i = 0; $i < $sensor_ports; $i++) {
             		echo "<td id=\"ajax_qual\">";
-            		if (elphel_get_P_value($i, ELPHEL_QUALITY) == 15){ // TIFF
+            		if (elphel_get_P_value($i, ELPHEL_COLOR) == 15){ // TIFF
             		   echo "TIFF".elphel_get_P_value($i, ELPHEL_BITS); 
             		} else {
 					   echo elphel_get_P_value($i, ELPHEL_QUALITY) . " %";
