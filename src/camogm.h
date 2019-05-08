@@ -182,6 +182,7 @@ typedef struct {
 	int fd_head[SENSOR_PORTS];                              ///< file descriptor for JPEG header
 	int fd_fparmsall[SENSOR_PORTS];                         ///< file descriptor for sensor/compressor parameters
 	int fd_exif[SENSOR_PORTS];                              ///< file descriptor for Exif data
+	int fd_tiff[SENSOR_PORTS];                              ///< file descriptor for Tiff data
 	int head_size[SENSOR_PORTS];                            ///< JPEG header size
 	unsigned char jpegHeader[SENSOR_PORTS][JPEG_HEADER_MAXSIZE];
 	int metadata_start;
@@ -205,7 +206,7 @@ typedef struct {
 	int ivf;                                                ///< video file (jpeg, mov - open)
 	int last;                                               ///< last packet in a file
 
-	int exif;                                               ///< flag indicating that Exif headers should be calculated and included in each frame
+	int exif;                                               ///< flag indicating that Exif (or Tiff for raw data) headers should be calculated and included in each frame
 	int exifSize[SENSOR_PORTS];                             ///< signed
 	unsigned char ed[SENSOR_PORTS][MAX_EXIF_SIZE];
 

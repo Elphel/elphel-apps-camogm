@@ -71,6 +71,9 @@ char trailer[TRAILER_SIZE] = { 0xff, 0xd9 };
 const char *exifFileNames[] = { DEV393_PATH(DEV393_EXIF0), DEV393_PATH(DEV393_EXIF1),
                                 DEV393_PATH(DEV393_EXIF2), DEV393_PATH(DEV393_EXIF3)
 };
+const char *tiffFileNames[] = { DEV393_PATH(DEV393_TIFF0), DEV393_PATH(DEV393_TIFF1),
+                                DEV393_PATH(DEV393_TIFF2), DEV393_PATH(DEV393_TIFF3)
+};
 
 const char *headFileNames[] = { DEV393_PATH(DEV393_JPEGHEAD0), DEV393_PATH(DEV393_JPEGHEAD1),
                                 DEV393_PATH(DEV393_JPEGHEAD2), DEV393_PATH(DEV393_JPEGHEAD3)
@@ -528,6 +531,7 @@ int sendImageFrame(camogm_state *state)
 	int timestamp_start;
 	int * ifp_this = (int*)&(state->this_frame_params[state->port_num]);
 	int fp;
+	int fd_exif_tiff; // switching between TIFF and Exif depending on coloe mode
 	int port = state->port_num;
 	struct timeval start_time, end_time;
 
@@ -621,12 +625,13 @@ int sendImageFrame(camogm_state *state)
 	D3(fprintf(debug_file, "_4_"));
 	if (state->exif) {
 		D3(fprintf(debug_file, "_5_"));
+		fd_exif_tiff = (state->this_frame_params[port].color == COLORMODE_RAW)? state->fd_tiff[port] : state->fd_exif[port];
 // update the Exif header with the current frame metadata
-		state->exifSize[port] = lseek(state->fd_exif[port], 1, SEEK_END); // at the beginning of page 1 - position == page length
+		state->exifSize[port] = lseek(fd_exif_tiff, 1, SEEK_END); // at the beginning of page 1 - position == page length
 		if (state->exifSize[port] > 0) {
 //state->this_frame_params.meta_index
-			lseek(state->fd_exif[port], state->this_frame_params[port].meta_index, SEEK_END); // select meta page to use (matching frame)
-			rslt = read(state->fd_exif[port], state->ed[port], state->exifSize[port]);
+			lseek(fd_exif_tiff, state->this_frame_params[port].meta_index, SEEK_END); // select meta page to use (matching frame)
+			rslt = read(fd_exif_tiff, state->ed[port], state->exifSize[port]);
 			if (rslt < 0) rslt = 0;
 			state->exifSize[port] = rslt;
 		} else state->exifSize[port] = 0;
@@ -638,14 +643,21 @@ int sendImageFrame(camogm_state *state)
 	state->chunk_index = 0;
 	state->packetchunks[state->chunk_index  ].bytes = 1;
 	state->packetchunks[state->chunk_index++].chunk = &frame_packet_type;
-	if (state->exif > 0) { // insert Exif
+	if (state->exif > 0) { // insert Exif/Tiff
 		D3(fprintf(debug_file, "_7_"));
-		state->packetchunks[state->chunk_index  ].bytes = 2;
-		state->packetchunks[state->chunk_index++].chunk = state->jpegHeader[port];
-		state->packetchunks[state->chunk_index  ].bytes = state->exifSize[port];
-		state->packetchunks[state->chunk_index++].chunk = state->ed[port];
-		state->packetchunks[state->chunk_index  ].bytes = state->head_size[port] - 2;
-		state->packetchunks[state->chunk_index++].chunk = &(state->jpegHeader[port][2]);
+		if (state->this_frame_params[port].color == COLORMODE_RAW) { // Tiff
+			D3(fprintf(debug_file, "_8a_"));
+			state->packetchunks[state->chunk_index  ].bytes = state->exifSize[port]; // Tiff Header length
+			state->packetchunks[state->chunk_index++].chunk = state->ed[port];       // Tiff Header
+
+		} else { // JPEG/JP4
+			state->packetchunks[state->chunk_index  ].bytes = 2;
+			state->packetchunks[state->chunk_index++].chunk = state->jpegHeader[port];
+			state->packetchunks[state->chunk_index  ].bytes = state->exifSize[port];
+			state->packetchunks[state->chunk_index++].chunk = state->ed[port];
+			state->packetchunks[state->chunk_index  ].bytes = state->head_size[port] - 2;
+			state->packetchunks[state->chunk_index++].chunk = &(state->jpegHeader[port][2]);
+		}
 	} else {
 		D3(fprintf(debug_file, "_8_"));
 		state->packetchunks[state->chunk_index  ].bytes = state->head_size[port];
@@ -653,7 +665,7 @@ int sendImageFrame(camogm_state *state)
 	}
 	D3(fprintf(debug_file, "_9_"));
 
-/* JPEG image data may be split in two segments (rolled over buffer end) - process both variants */
+/* Jpeg/Tiff image data may be split in two segments (rolled over buffer end) - process both variants */
 	if ((state->cirbuf_rp[port] + state->jpeg_len) > state->circ_buff_size[port]) { // two segments
 /* copy from the beginning of the frame to the end of the buffer */
 		D3(fprintf(debug_file, "_10_"));
@@ -1523,6 +1535,8 @@ void clean_up(camogm_state *state)
 	for (int port = 0; port < SENSOR_PORTS; port++) {
 		if (is_fd_valid(state->fd_exif[port]))
 			close(state->fd_exif[port]);
+		if (is_fd_valid(state->fd_tiff[port]))
+			close(state->fd_tiff[port]);
 		if (is_fd_valid(state->fd_head[port]))
 			close(state->fd_head[port]);
 		if (is_fd_valid(state->fd_circ[port]))
@@ -1989,6 +2003,14 @@ int open_files(camogm_state *state)
 		state->fd_exif[port] = open(exifFileNames[port], O_RDONLY);
 		if (state->fd_exif[port] < 0) { // check control OK
 			D0(fprintf(debug_file, "Error opening %s\n", exifFileNames[port]));
+			clean_up(state);
+			return -1;
+		}
+
+		// open Tiff header file
+		state->fd_tiff[port] = open(tiffFileNames[port], O_RDONLY);
+		if (state->fd_tiff[port] < 0) { // check control OK
+			D0(fprintf(debug_file, "Error opening %s\n", tiffFileNames[port]));
 			clean_up(state);
 			return -1;
 		}
