@@ -29,9 +29,9 @@
 #include <getopt.h>
 #include <ctype.h>
 #include <elphel/ahci_cmd.h>
-
-#include <poll.h>
-
+#ifdef USE_POLL
+   #include <poll.h>
+#endif
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
 #include "camogm_mov.h"
@@ -168,6 +168,9 @@ inline int is_chn_active(camogm_state *s, unsigned int port);
 void clean_up(camogm_state *state);
 static void camogm_err_stat(const camogm_state *state, int port, FILE *f, bool xml);
 static void camogm_set_dummy_read(camogm_state *state, int d);
+
+//static void dbg_show_packetchunks(camogm_state *state);
+
 
 void put_uint16(void *buf, u_int16_t val)
 {
@@ -651,6 +654,7 @@ int sendImageFrame(camogm_state *state)
 			state->packetchunks[state->chunk_index++].chunk = state->ed[port];       // Tiff Header
 
 		} else { // JPEG/JP4
+//			D3(fprintf(debug_file, "_8b_"));
 			state->packetchunks[state->chunk_index  ].bytes = 2;
 			state->packetchunks[state->chunk_index++].chunk = state->jpegHeader[port];
 			state->packetchunks[state->chunk_index  ].bytes = state->exifSize[port];
@@ -685,8 +689,14 @@ int sendImageFrame(camogm_state *state)
 	}
 	D3(fprintf(debug_file, "\tcirbuf_rp = 0x%x\t", state->cirbuf_rp[port]));
 	D3(fprintf(debug_file, "_12_"));
-	state->packetchunks[state->chunk_index  ].bytes = 2;
-	state->packetchunks[state->chunk_index++].chunk = (unsigned char*)trailer;
+//	if (state->this_frame_params[port].color != COLORMODE_RAW) { // Tiff
+		state->packetchunks[state->chunk_index  ].bytes = 2;
+		state->packetchunks[state->chunk_index++].chunk = (unsigned char*)trailer;
+//	}
+
+//	dbg_show_packetchunks(state);
+
+
 
 	switch (state->format) {
 	case CAMOGM_FORMAT_NONE: rslt = 0; break;
@@ -730,6 +740,16 @@ int sendImageFrame(camogm_state *state)
 
 	return 0;
 }
+/*
+static void dbg_show_packetchunks(camogm_state *state)
+{
+	int i;
+	for (i = 0; i < FILE_CHUNKS_NUM; i++) {
+		D4(fprintf(debug_file, "packetchunk[%d]: ptr = %p, size = %d\n", i, state->packetchunks[i].chunk, state->packetchunks[i].bytes));
+	}
+}
+*/
+
 
 /**
  * @brief Stop current recording. If recording was not started, this function has no effect. This function
@@ -1319,7 +1339,11 @@ char * getLineFromPipe(FILE* npipe)
 	if (!nlp) { //no complete string, try to read more
 		// 2019/01/16: this change is related to switching to poll()
 		//fl = fread(&cmdbuf[cmdbufp], 1, sizeof(cmdbuf) - cmdbufp - 1, npipe);
+#ifdef USE_POLL
 		fl = read(npipe, &cmdbuf[cmdbufp], sizeof(cmdbuf) - cmdbufp - 1);
+#else
+		fl = fread(&cmdbuf[cmdbufp], 1, sizeof(cmdbuf) - cmdbufp - 1, npipe);
+#endif
 		cmdbuf[cmdbufp + fl] = 0;
 // is there any complete string in a buffer after reading?
 		nlp = strpbrk(&cmdbuf[cmdbufp], ";\n"); // there were no new lines before cmdbufp
@@ -1567,9 +1591,9 @@ int listener_loop(camogm_state *state)
 	int process = 1;
 	int curr_port = 0;
 	const char *pipe_name = state->pipe_name;
-
+#ifdef USE_POLL
 	struct pollfd pfd;
-
+#endif
 	// create a named pipe
 	// always delete the pipe if it existed, start a fresh one
 	f_ok = access(pipe_name, F_OK);
@@ -1589,17 +1613,7 @@ int listener_loop(camogm_state *state)
 		}
 	}
 
-	/* old */
-	/*
-	// now open the pipe - will block until something will be written (or just open for writing,
-	// reads themselves will not block)
-	if (!((cmd_file = fopen(pipe_name, "r")))) {
-		D0(fprintf(debug_file, "Can not open command file %s\n", pipe_name));
-		clean_up(state);
-		return -5;
-	}
-	*/
-
+#ifdef USE_POLL
 	/* new: 2019/01/16 */
 
 	// Adding poll() because supposedly read calls (read, fread)
@@ -1618,7 +1632,16 @@ int listener_loop(camogm_state *state)
 	// ready to read
 	pfd.events = POLLIN;
 	pfd.fd     = cmd_file;
-
+	/* old */
+#else
+	// now open the pipe - will block until something will be written (or just open for writing,
+	// reads themselves will not block)
+	if (!((cmd_file = fopen(pipe_name, "r")))) {
+		D0(fprintf(debug_file, "Can not open command file %s\n", pipe_name));
+		clean_up(state);
+		return -5;
+	}
+#endif
 	D0(fprintf(debug_file, "Pipe %s open for reading\n", pipe_name)); // to make sure something is sent out
 
 	// enter main processing loop
@@ -1627,17 +1650,19 @@ int listener_loop(camogm_state *state)
 		state->port_num = curr_port;
 		// look at command queue first
 
+#ifdef USE_POLL
 		ret = poll(&pfd,1,DEFAULT_POLL_TIMEOUT);
-
 		if (ret==0){
 			D6(fprintf(debug_file, "Waiting for commands..., state->prog_state = %d, pfd.revents=%d\n",state->prog_state, (int) pfd.revents));
 		}
-
 		if (pfd.revents & POLLIN){
+#endif
 			cmd = parse_cmd(state, cmd_file);
 			if (cmd) {
 				if (cmd < 0) D0(fprintf(debug_file, "Unrecognized command\n"));
+#ifdef USE_POLL
 			}
+#endif
 		} else if (state->prog_state == STATE_RUNNING) { // no commands in queue, started
 
 			D6(fprintf(debug_file, "state->prog_state == STATE_RUNNING "));
@@ -1731,7 +1756,9 @@ int listener_loop(camogm_state *state)
 			state->rawdev.thread_state = STATE_RUNNING;
 			usleep(COMMAND_LOOP_DELAY);     // make it longer but interruptible by signals?
 		}
+#ifdef USE_POLL
 //		} // if pfd.revents & POLLIN
+#endif
 	} // while (process)
 
 	// normally, we should not be here

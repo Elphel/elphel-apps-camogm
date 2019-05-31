@@ -18,7 +18,7 @@
 
 #ifndef _CAMOGM_H
 #define _CAMOGM_H
-
+//#define  USE_POLL
 #include <pthread.h>
 #include <stdbool.h>
 #include <ogg/ogg.h>
