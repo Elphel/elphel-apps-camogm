@@ -32,12 +32,15 @@ static inline size_t get_size_from(const struct iovec *vects, int index, size_t 
 static inline size_t align_bytes_num(size_t data_len, size_t align_len);
 static inline void vectcpy(struct iovec *dest, void *src, size_t len);
 static inline void vectshrink(struct iovec *vec, size_t len);
+static inline void vectshrinkhead(struct iovec *vec, size_t len);
 static inline unsigned char *vectrpos(struct iovec *vec, size_t offset);
-static void dev_dbg(const char *prefix, const char *format, ...);
+//static void dev_dbg(const char *prefix, const char *format, ...);
 static void remap_vectors(camogm_state *state, struct iovec *chunks);
 static size_t get_blocks_num(struct iovec *sgl, size_t n_elem);
 /* debug functions */
 static int check_chunks(struct iovec *vects);
+static void dev_dbg(const char *prefix, const char *format, ...);
+
 
 /** Replace debug function with the same name from driver code with debug macro to reduce changes */
 static void dev_dbg(const char *prefix, const char *format, ...)
@@ -65,6 +68,17 @@ static inline void vectshrink(struct iovec *vec, size_t len)
 		vec->iov_len -= len;
 	}
 }
+
+/** Shrink vector length by @len bytes from the head */
+static inline void vectshrinkhead(struct iovec *vec, size_t len)
+{
+	if (vec->iov_len >= len) {
+		vec->iov_len -= len;
+		unsigned char * p = (unsigned char * ) vec->iov_base; // += len;
+		vec->iov_base = p + len;
+	}
+}
+
 
 /** This helper function is used to position a pointer @e offset bytes from the end
  * of a buffer. */
@@ -110,28 +124,49 @@ static inline size_t align_bytes_num(size_t data_len, size_t align_len)
 static void remap_vectors(camogm_state *state, struct iovec *chunks)
 {
 	int chunk_index = 1;
-
+    int is_tiff = state->this_frame_params[state->port_num].color == COLORMODE_RAW;
 	if (state->exif > 0) {
-		chunks[CHUNK_LEADER].iov_base = (void *)state->packetchunks[chunk_index].chunk;
-		chunks[CHUNK_LEADER].iov_len = state->packetchunks[chunk_index++].bytes;
-		chunks[CHUNK_EXIF].iov_base = (void *)state->packetchunks[chunk_index].chunk;
-		chunks[CHUNK_EXIF].iov_len = state->packetchunks[chunk_index++].bytes;
-		chunks[CHUNK_HEADER].iov_base = (void *)state->packetchunks[chunk_index].chunk;
-		chunks[CHUNK_HEADER].iov_len = state->packetchunks[chunk_index++].bytes;
+		if (is_tiff) { // Tiff
+			chunks[CHUNK_EXIF].iov_base =   (void *)state->packetchunks[chunk_index].chunk;
+			chunks[CHUNK_EXIF].iov_len =            state->packetchunks[chunk_index++].bytes;
+			// set length of unused chunks to zero, and pointer to any valid pointer
+			chunks[CHUNK_LEADER].iov_base = chunks[CHUNK_EXIF].iov_base;
+			chunks[CHUNK_LEADER].iov_len = 0;
+			chunks[CHUNK_HEADER].iov_base = chunks[CHUNK_EXIF].iov_base;
+			chunks[CHUNK_HEADER].iov_len = 0;
+		} else { // JPEG/JP4
+			chunks[CHUNK_LEADER].iov_base = (void *)state->packetchunks[chunk_index].chunk;
+			chunks[CHUNK_LEADER].iov_len =          state->packetchunks[chunk_index++].bytes;
+			chunks[CHUNK_EXIF].iov_base =   (void *)state->packetchunks[chunk_index].chunk;
+			chunks[CHUNK_EXIF].iov_len =            state->packetchunks[chunk_index++].bytes;
+			chunks[CHUNK_HEADER].iov_base = (void *)state->packetchunks[chunk_index].chunk;
+			chunks[CHUNK_HEADER].iov_len =          state->packetchunks[chunk_index++].bytes;
+		}
 	} else {
 		chunks[CHUNK_LEADER].iov_base = (void *)state->packetchunks[chunk_index].chunk;
-		chunks[CHUNK_LEADER].iov_len = JPEG_MARKER_LEN;
+		chunks[CHUNK_LEADER].iov_len  =          JPEG_MARKER_LEN;
 		chunks[CHUNK_HEADER].iov_base = (void *)(state->packetchunks[chunk_index].chunk + JPEG_MARKER_LEN);
-		chunks[CHUNK_HEADER].iov_len = state->packetchunks[chunk_index++].bytes - JPEG_MARKER_LEN;
+		chunks[CHUNK_HEADER].iov_len  =          state->packetchunks[chunk_index++].bytes - JPEG_MARKER_LEN;
+		// set to zero length and valid pointer
+		chunks[CHUNK_EXIF].iov_base   = chunks[CHUNK_HEADER].iov_base;
+		chunks[CHUNK_EXIF].iov_len    = 0;
 	}
 	chunks[CHUNK_DATA_0].iov_base = (void *)state->packetchunks[chunk_index].chunk;
 	chunks[CHUNK_DATA_0].iov_len = state->packetchunks[chunk_index++].bytes;
 	if (state->writer_params.segments == 2) {
 		chunks[CHUNK_DATA_1].iov_base = (void *)state->packetchunks[chunk_index].chunk;
 		chunks[CHUNK_DATA_1].iov_len = state->packetchunks[chunk_index++].bytes;
+	} else{
+		chunks[CHUNK_DATA_1].iov_base = chunks[CHUNK_DATA_0].iov_base;
+		chunks[CHUNK_DATA_1].iov_len =  0;
 	}
 	chunks[CHUNK_TRAILER].iov_base = (void *)state->packetchunks[chunk_index].chunk;
-	chunks[CHUNK_TRAILER].iov_len = state->packetchunks[chunk_index].bytes;
+	if (is_tiff) { // Tiff
+		chunks[CHUNK_TRAILER].iov_len = 0;
+	} else {
+		chunks[CHUNK_TRAILER].iov_len = state->packetchunks[chunk_index].bytes;
+	}
+
 
 	/* some data may be left from previous frame, copy it to special buffer */
 	if (chunks[CHUNK_REM].iov_len != 0) {
@@ -164,6 +199,10 @@ static int check_chunks(struct iovec *vects)
 	}
 	return ret;
 }
+
+
+
+
 
 /** Calculate the number of blocks this frame will occupy. The frame must be aligned to block size */
 static size_t get_blocks_num(struct iovec *sgl, size_t n_elem)
@@ -249,26 +288,28 @@ void align_frame(camogm_state *state)
 	remap_vectors(state, chunks);
 
 	total_sz = get_size_from(chunks, 0, 0, INCLUDE_REM) + rbuff->iov_len;
+	D4(fprintf(debug_file, "total_sz = %d\n", total_sz));
 	if (total_sz < PHY_BLOCK_SIZE) {
 		/* the frame length is less than sector size, delay this frame */
 		if (rbuff->iov_len != 0) {
 			/* some data may be left from previous frame */
 			vectcpy(&chunks[CHUNK_REM], rbuff->iov_base, rbuff->iov_len);
 			vectshrink(rbuff, rbuff->iov_len);
+			D4(fprintf(debug_file, "copied rbuff->iov_len = %d\n", rbuff->iov_len));
 		}
 		dev_dbg(dev, "frame size is less than sector size: %u bytes; delay recording\n", total_sz);
-		vectcpy(&chunks[CHUNK_REM], chunks[CHUNK_LEADER].iov_base, chunks[CHUNK_LEADER].iov_len);
-		vectshrink(&chunks[CHUNK_LEADER], chunks[CHUNK_LEADER].iov_len);
-		vectcpy(&chunks[CHUNK_REM], chunks[CHUNK_EXIF].iov_base, chunks[CHUNK_EXIF].iov_len);
-		vectshrink(&chunks[CHUNK_EXIF], chunks[CHUNK_EXIF].iov_len);
-		vectcpy(&chunks[CHUNK_REM], chunks[CHUNK_HEADER].iov_base, chunks[CHUNK_HEADER].iov_len);
-		vectshrink(&chunks[CHUNK_HEADER], chunks[CHUNK_HEADER].iov_len);
-		vectcpy(&chunks[CHUNK_REM], chunks[CHUNK_DATA_0].iov_base, chunks[CHUNK_DATA_0].iov_len);
-		vectshrink(&chunks[CHUNK_DATA_0], chunks[CHUNK_DATA_0].iov_len);
-		vectcpy(&chunks[CHUNK_REM], chunks[CHUNK_DATA_1].iov_base, chunks[CHUNK_DATA_1].iov_len);
-		vectshrink(&chunks[CHUNK_DATA_1], chunks[CHUNK_DATA_1].iov_len);
-		vectcpy(&chunks[CHUNK_REM], chunks[CHUNK_TRAILER].iov_base, chunks[CHUNK_TRAILER].iov_len);
-		vectshrink(&chunks[CHUNK_TRAILER], chunks[CHUNK_TRAILER].iov_len);
+		vectcpy    (&chunks[CHUNK_REM],     chunks[CHUNK_LEADER].iov_base,  chunks[CHUNK_LEADER].iov_len);
+		vectshrink (&chunks[CHUNK_LEADER],  chunks[CHUNK_LEADER].iov_len);
+		vectcpy    (&chunks[CHUNK_REM],     chunks[CHUNK_EXIF].iov_base,    chunks[CHUNK_EXIF].iov_len);
+		vectshrink (&chunks[CHUNK_EXIF],    chunks[CHUNK_EXIF].iov_len);
+		vectcpy    (&chunks[CHUNK_REM],     chunks[CHUNK_HEADER].iov_base,  chunks[CHUNK_HEADER].iov_len);
+		vectshrink (&chunks[CHUNK_HEADER],  chunks[CHUNK_HEADER].iov_len);
+		vectcpy    (&chunks[CHUNK_REM],     chunks[CHUNK_DATA_0].iov_base,  chunks[CHUNK_DATA_0].iov_len);
+		vectshrink (&chunks[CHUNK_DATA_0],  chunks[CHUNK_DATA_0].iov_len);
+		vectcpy    (&chunks[CHUNK_REM],     chunks[CHUNK_DATA_1].iov_base,  chunks[CHUNK_DATA_1].iov_len);
+		vectshrink (&chunks[CHUNK_DATA_1],  chunks[CHUNK_DATA_1].iov_len);
+		vectcpy    (&chunks[CHUNK_REM],     chunks[CHUNK_TRAILER].iov_base, chunks[CHUNK_TRAILER].iov_len);
+		vectshrink (&chunks[CHUNK_TRAILER], chunks[CHUNK_TRAILER].iov_len);
 		return;
 	}
 
@@ -280,11 +321,13 @@ void align_frame(camogm_state *state)
 		vectshrink(rbuff, rbuff->iov_len);
 	}
 
-	/* copy JPEG marker */
-	len = chunks[CHUNK_LEADER].iov_len;
-	vectcpy(cbuff, chunks[CHUNK_LEADER].iov_base, len);
-	vectshrink(&chunks[CHUNK_LEADER], chunks[CHUNK_LEADER].iov_len);
-
+	/* copy JPEG marker if present */
+	if (chunks[CHUNK_LEADER].iov_len != 0) {
+		len = chunks[CHUNK_LEADER].iov_len;
+		dev_dbg(dev, "copy %u bytes from LEADER to common buffer\n", len);
+		vectcpy(cbuff, chunks[CHUNK_LEADER].iov_base, len);
+		vectshrink(&chunks[CHUNK_LEADER], chunks[CHUNK_LEADER].iov_len);
+	}
 	/* copy Exif if present */
 	if (chunks[CHUNK_EXIF].iov_len != 0) {
 		len = chunks[CHUNK_EXIF].iov_len;
@@ -293,22 +336,34 @@ void align_frame(camogm_state *state)
 		vectshrink(&chunks[CHUNK_EXIF], chunks[CHUNK_EXIF].iov_len);
 	}
 
-	/* align common buffer to ALIGNMENT boundary, APP15 marker should be placed before header data */
-	data_len = cbuff->iov_len + chunks[CHUNK_HEADER].iov_len;
-	len = align_bytes_num(data_len, ALIGNMENT_SIZE);
-	if (len < (JPEG_MARKER_LEN + JPEG_SIZE_LEN) && len != 0) {
-		/* the number of bytes needed for alignment is less than the length of the marker itself, increase the number of stuffing bytes */
-		len += ALIGNMENT_SIZE;
-	}
-	dev_dbg(dev, "total number of stuffing bytes in APP15 marker: %u\n", len);
-	app15[3] = len - JPEG_MARKER_LEN;
-	vectcpy(cbuff, app15, len);
 
-	/* copy JPEG header */
-	len = chunks[CHUNK_HEADER].iov_len;
-	dev_dbg(dev, "copy %u bytes from HEADER to common buffer\n", len);
-	vectcpy(cbuff, chunks[CHUNK_HEADER].iov_base, len);
-	vectshrink(&chunks[CHUNK_HEADER], chunks[CHUNK_HEADER].iov_len);
+	if (chunks[CHUNK_LEADER].iov_len != 0){ // only if it is not TIFF
+		/* align common buffer to ALIGNMENT boundary, APP15 marker should be placed before header data */
+		data_len = cbuff->iov_len + chunks[CHUNK_HEADER].iov_len;
+
+		len = align_bytes_num(data_len, ALIGNMENT_SIZE);
+		if (len < (JPEG_MARKER_LEN + JPEG_SIZE_LEN) && len != 0) {
+			/* the number of bytes needed for alignment is less than the length of the marker itself, increase the number of stuffing bytes */
+			len += ALIGNMENT_SIZE;
+		}
+		dev_dbg(dev, "total number of stuffing bytes in APP15 marker: %u\n", len);
+		app15[3] = len - JPEG_MARKER_LEN;
+		vectcpy(cbuff, app15, len);
+		/* copy JPEG header */
+		len = chunks[CHUNK_HEADER].iov_len;
+		dev_dbg(dev, "copy %u bytes from HEADER to common buffer\n", len);
+		vectcpy(cbuff, chunks[CHUNK_HEADER].iov_base, len);
+		vectshrink(&chunks[CHUNK_HEADER], chunks[CHUNK_HEADER].iov_len);
+	} else { // for Tiff (may be the same for Jpeg too - borrow data from the image data, copy up to 31 bytes to the end of the common buffer,
+		// move start of the data_0 accordingly
+		data_len = cbuff->iov_len;
+		len = align_bytes_num(data_len, ALIGNMENT_SIZE);
+		if (len){ // assuming image data > 32 bits
+			vectcpy(cbuff, chunks[CHUNK_DATA_0].iov_base, len);
+			vectshrinkhead(&chunks[CHUNK_DATA_0],len);
+		}
+	}
+
 
 	/* check if there is enough data to continue - JPEG data length can be too short */
 	len = get_size_from(chunks, CHUNK_DATA_0, 0, EXCLUDE_REM);
@@ -514,6 +569,7 @@ int prep_last_block(camogm_state *state)
 
 /** Convert LBA to byte offset used for lseek */
 off64_t lba_to_offset(uint64_t lba)
+//uint64_t lba_to_offset(uint64_t lba)
 {
 	return lba * PHY_BLOCK_SIZE;
 }

@@ -79,4 +79,7 @@ int get_data_buffers(camogm_state *state, struct iovec *mapped, size_t all_sz);
 int prep_last_block(camogm_state *state);
 off64_t lba_to_offset(uint64_t lba);
 
+
+//uint64_t lba_to_offset(uint64_t lba);
+
 #endif /* _CAMOGM_ALIGN_H */
