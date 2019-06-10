@@ -344,7 +344,7 @@
 					fprintf($fcmd, "prefix=%s;\n", $xml_directory);
 				}
 				else
-					fprintf($fcmd, "prefix=%s;\n", "/var/hdd/");
+					fprintf($fcmd, "prefix=%s;\n", "/mnt/sda1/");
 			}
 		}
 				
@@ -660,7 +660,7 @@
 		<p style="color:red;">not operational yet!</p>
                 Detected Audio Hardware: <span id="ajax_detected_audio_hardware">loading...</span> <a href="#" onClick="check_audio_hardware();"><img src="images/reload.png" style="bottom:-2px; position:relative;"></a><br />
                 <br />
-                Test Audio Playback: <a href="#" onClick="test_audio_playback('/var/hdd/Congas.wav');"><img src="images/play_audio.png" style="position:relative; top:3px;"></a><br />
+                Test Audio Playback: <a href="#" onClick="test_audio_playback('/mnt/sda1/Congas.wav');"><img src="images/play_audio.png" style="position:relative; top:3px;"></a><br />
                 <br />
                 <form method="POST" id="audioform">
                 <table cellspacing="5px">

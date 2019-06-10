@@ -40,7 +40,7 @@ function reload() {
 }
 function mount_hdd(callback) {
 	makeRequest('camogm_interface.php','?cmd=mount',callback);
-	document.getElementById('directory').value = "/var/hdd/";
+	document.getElementById('directory').value = "/mnt/sda1/";
 	document.getElementById('mount_hdd_button').style.display = "none";
 }
 
@@ -56,7 +56,7 @@ function process_mount_hdd(xmldoc) {
 function mount_custom_partition(partition) {
 	if (document.getElementById("mount_point").value != "") {
 		makeRequest('camogm_interface.php','?cmd=mount&partition='+partition+'&mountpoint='+document.getElementById("mount_point").value,"scan_devices()");
-		document.getElementById('directory').value = "/var/hdd/";
+		document.getElementById('directory').value = "/mnt/sda1/";
 		document.getElementById('mount_hdd_button').style.display = "none";
 	}
 }
@@ -137,7 +137,7 @@ function process_scan_devices(xmldoc) {
 					content += "<tr><td></td><td>"+partition+"</td><td><input id='mount_point' size='8' type='text'";
 					//if (partition=="/dev/hda1"){
                                         if (partition=="/dev/sda1"){
-						content += " value='/var/hdd'";
+						content += " value='/mnt/sda1'";
                                         }
 					content += "></td><td>" + xmldoc.getElementsByTagName('size')[i].firstChild.data + "</td><td>" + '</td><td><a href="#" onClick="mount_custom_partition(\''+partition+'\');">mount</a></td></tr>';
 				} else { 
@@ -158,7 +158,7 @@ function process_scan_devices(xmldoc) {
 
 function find_selected_device(){
     for(var i=0;i<devices.length;i++){
-        if (devices[i]=="/dev/hda1") selected_device = devices[i];
+        if (devices[i]=="/dev/sda1") selected_device = devices[i];
         if (devices[i]=="/dev/sda1") selected_device = devices[i];
         break;
     }
