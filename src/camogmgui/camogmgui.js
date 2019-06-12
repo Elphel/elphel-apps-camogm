@@ -159,7 +159,6 @@ function process_scan_devices(xmldoc) {
 function find_selected_device(){
     for(var i=0;i<devices.length;i++){
         if (devices[i]=="/dev/sda1") selected_device = devices[i];
-        if (devices[i]=="/dev/sda1") selected_device = devices[i];
         break;
     }
 }
