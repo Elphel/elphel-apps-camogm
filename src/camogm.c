@@ -29,14 +29,17 @@
 #include <getopt.h>
 #include <ctype.h>
 #include <elphel/ahci_cmd.h>
-#ifdef USE_POLL
-   #include <poll.h>
-#endif
+
 #include "camogm_ogm.h"
 #include "camogm_jpeg.h"
 #include "camogm_mov.h"
 #include "camogm_kml.h"
 #include "camogm_read.h"
+
+#include "camogm.h"
+#ifdef USE_POLL
+   #include <poll.h>
+#endif
 
 /** @brief Default debug level */
 #define DEFAULT_DEBUG_LVL         6
