@@ -37,6 +37,7 @@
 #include "camogm_read.h"
 
 #include "camogm.h"
+
 #ifdef USE_POLL
    #include <poll.h>
 #endif
@@ -1346,6 +1347,11 @@ char * getLineFromPipe(FILE* npipe)
 		fl = read(npipe, &cmdbuf[cmdbufp], sizeof(cmdbuf) - cmdbufp - 1);
 #else
 		fl = fread(&cmdbuf[cmdbufp], 1, sizeof(cmdbuf) - cmdbufp - 1, npipe);
+
+		// reset EOF
+		if (feof(npipe)) {
+			clearerr(npipe);
+		}
 #endif
 		cmdbuf[cmdbufp + fl] = 0;
 // is there any complete string in a buffer after reading?
