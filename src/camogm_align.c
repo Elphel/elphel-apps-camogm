@@ -336,8 +336,7 @@ void align_frame(camogm_state *state)
 		vectshrink(&chunks[CHUNK_EXIF], chunks[CHUNK_EXIF].iov_len);
 	}
 
-
-	if (chunks[CHUNK_LEADER].iov_len != 0){ // only if it is not TIFF
+	if (chunks[CHUNK_HEADER].iov_len != 0){ // only if it is not TIFF
 		/* align common buffer to ALIGNMENT boundary, APP15 marker should be placed before header data */
 		data_len = cbuff->iov_len + chunks[CHUNK_HEADER].iov_len;
 
