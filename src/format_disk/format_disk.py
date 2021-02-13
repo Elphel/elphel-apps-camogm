@@ -173,12 +173,14 @@ def get_disk_size(dev_path):
     @param dev_path: path to device
     Return: disk size in GB
     """
+    #TODO: test error 
     try:
         parted_print = subprocess.check_output(['parted', '-m', dev_path, 'unit', 'GB', 'print'])
         fields = parted_print.split(':')
         sz = fields[1]
         disk_size = int(sz[:-2])
     except:
+        print ("FIXME: (with fresh disk only) add ''mklabel', 'msdos'' in case of 'Error: /dev/sda: unrecognised disk label'")
         disk_size = 0
     return disk_size
 
@@ -242,12 +244,12 @@ if __name__ == "__main__":
     "with their totals sizes and possible system partition sizes separated by colon")
     parser.add_argument('-e', '--errno', nargs = 1, type = int, help = "convert error number returned by the script to error message")
     parser.add_argument('-d', '--dry_run', action = 'store_true', help = "execute the script but do not actually create partitions")
-    parser.add_argument('-f', '--force', action = 'store_true', help = "force 'mkfs' to create a file system")
+    parser.add_argument('-f', '--force', action = 'store_true', help = "force 'mkfs' to create a file system and re-format existing partitions")
     parser.add_argument('-p', '--partitions', action = 'store_true', help = "list partitions and their sizes separated by colon")
     args = parser.parse_args()
 
     if args.list:
-        disks = find_disks()
+        disks = find_disks(args.force)
         for disk in disks:
             total_size = get_disk_size(disk)
             if total_size > 0:
