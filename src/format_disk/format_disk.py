@@ -181,6 +181,11 @@ def get_disk_size(dev_path):
         disk_size = int(sz[:-2])
     except:
         print ("FIXME: (with fresh disk only) add ''mklabel', 'msdos'' in case of 'Error: /dev/sda: unrecognised disk label'")
+        '''
+        needs a separate command (before print):
+        parted -s /dev/sda mklabel msdos
+        '''
+
         disk_size = 0
     return disk_size
 
