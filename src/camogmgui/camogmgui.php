@@ -350,6 +350,10 @@
 				
 		if ($xml_format == "'none'") // use quicktime mov as default if no container format has been selected
 			fprintf($fcmd, "format=mov;");
+		
+		// for some reason sometimes camogm was starting with all ports disabled. Temporarily enable them all (add control)
+		fprintf($fcmd, "port_enable=0;port_enable=1;port_enable=2;port_enable=3;");
+			
 	}
 	
 	// GUI
