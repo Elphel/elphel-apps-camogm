@@ -38,9 +38,21 @@ function init_actions() {
 				force = '&force';
 			else
 				force = '';
+			noraw = '';
+			if ($("#chk_noraw").is(':checked'))
+				noraw = '&noraw';
+			else
+				noraw = '';
+			reformat = '';
+			if ($("#chk_reformat").is(':checked'))
+				reformat = '&reformat';
+			else
+				reformat = '';
+				
+				
 			$("#status_cell_" + index).text("Formatting");
 			$.ajax({
-				url:"format_disk.php?cmd=format&disk_path=" + disk_path + force,
+				url:"format_disk.php?cmd=format&disk_path=" + disk_path + force + noraw + reformat,
 				success: function(result) {
 					if (result == "OK") {
 						$("#status_cell_" + index).text("Done");

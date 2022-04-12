@@ -43,6 +43,7 @@ import sys
 import stat
 import argparse
 import subprocess
+
 import time
 
 # use this % of total disk space for system partition
@@ -56,6 +57,7 @@ class ErrCodes(object):
     NO_TOOLS = 4
     NO_PERMISSIONS = 5
     PART_FAILURE = 6
+    PART_MOUINTED = 7
     def __init__(self, code = OK):
         """
         Prepare strings with error code description.
@@ -67,7 +69,8 @@ class ErrCodes(object):
                         "The path provided is a partition, not a disk",
                         "One of the command-line utilities required for this script is not found",
                         "This scrip requires root permissions",
-                        "Partitioning finished unsuccessfully"]
+                        "Partitioning finished unsuccessfully",
+                        "Partition mounted, umount failed",]
         self._err_code = code
     
     def err2str(self):
@@ -173,20 +176,36 @@ def get_disk_size(dev_path):
     @param dev_path: path to device
     Return: disk size in GB
     """
-    #TODO: test error 
+    #TODO: test error
+    label="" 
     try:
-        parted_print = subprocess.check_output(['parted', '-m', dev_path, 'unit', 'GB', 'print'])
+        parted_print = subprocess.check_output(['parted', '-m', dev_path, 'unit', 'GB', 'print']) #, 'mklabel', 'msdos'])
         fields = parted_print.split(':')
         sz = fields[1]
         disk_size = int(sz[:-2])
+        label = fields[5] #unknown label - not an error just a message
     except:
         print ("FIXME: (with fresh disk only) add ''mklabel', 'msdos'' in case of 'Error: /dev/sda: unrecognised disk label'")
         '''
         needs a separate command (before print):
         parted -s /dev/sda mklabel msdos
         '''
-
-        disk_size = 0
+        return 0
+    if (label == 'unknown'):
+        #print("unknown label, running parted -s /dev/sda mklabel msdos!")
+        try:
+            parted_print = subprocess.check_output(['parted', '-s', dev_path, 'mklabel', 'msdos'])
+        except:
+            print ("Failed 'parted -s ", dev_path, " mklabel msdos")
+            return 0
+        try:
+            parted_print = subprocess.check_output(['parted', '-m', dev_path, 'unit', 'GB', 'print'])
+            fields = parted_print.split(':')
+            sz = fields[1]
+            disk_size = int(sz[:-2])
+        except:
+            print ("Failed 'parted -m ", dev_path, " unit GB print'")
+            return 0
     return disk_size
 
 def partition_disk(dev_path, sys_size, disk_size, dry_run = True, force = False):
@@ -206,10 +225,11 @@ def partition_disk(dev_path, sys_size, disk_size, dry_run = True, force = False)
                                      'mklabel', 'msdos',
                                      'mkpart', 'primary', str(start), str(end)], stderr = subprocess.STDOUT)
             # create raw partition
-            start = sys_size
-            end = disk_size
-            subprocess.check_output(['parted', '-s', dev_path, 'unit', 'GB',
-                                     'mkpart', 'primary', str(start), str(end)], stderr = subprocess.STDOUT)
+            if (sys_size < disk_size):
+                start = sys_size
+                end = disk_size
+                subprocess.check_output(['parted', '-s', dev_path, 'unit', 'GB',
+                                         'mkpart', 'primary', str(start), str(end)], stderr = subprocess.STDOUT)
             # make file system on first partition; delay to let the changes propagate to the system
             time.sleep(2)
             partition = dev_path + '1'
@@ -245,14 +265,63 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description = "Prepare and partition new disk for fast recording from camogm")
     parser.add_argument('disk_path', nargs = '?', help = "path to a disk which should be partitioned, e.g /dev/sda")
-    parser.add_argument('-l', '--list', action = 'store_true', help = "list attached disk(s) suitable for partitioning along " + 
+    parser.add_argument('-l', '--list',       action = 'store_true', help = "list attached disk(s) suitable for partitioning along " + 
     "with their totals sizes and possible system partition sizes separated by colon")
     parser.add_argument('-e', '--errno', nargs = 1, type = int, help = "convert error number returned by the script to error message")
-    parser.add_argument('-d', '--dry_run', action = 'store_true', help = "execute the script but do not actually create partitions")
-    parser.add_argument('-f', '--force', action = 'store_true', help = "force 'mkfs' to create a file system and re-format existing partitions")
+    parser.add_argument('-d', '--dry_run',    action = 'store_true', help = "execute the script but do not actually create partitions")
+    parser.add_argument('-f', '--force',      action = 'store_true', help = "force 'mkfs' to create a file system and re-format existing partitions")
     parser.add_argument('-p', '--partitions', action = 'store_true', help = "list partitions and their sizes separated by colon")
+    parser.add_argument('-a', '--all',        action = 'store_true', help = "Format single partition (no raw)")
+    parser.add_argument('-r', '--reformat',   action = 'store_true', help = "Delete existing partitions, reformat (has to be unmounted)")
     args = parser.parse_args()
-
+    if args.all:
+        SYS_PARTITION_RATIO = 100
+#    print ("SYS_PARTITION_RATIO=",SYS_PARTITION_RATIO)
+    
+    if args.reformat:
+        args.force = True # 
+        """
+        Unmount if needed and delete MBR (delete partitions before trying to re-format)
+        """
+        disk_path = ""
+        if args.disk_path:
+            ret_code = ErrCodes()
+            if os.path.exists(args.disk_path):
+                mode = os.stat(args.disk_path).st_mode
+                if stat.S_ISBLK(mode):
+                    disk_path = args.disk_path
+        else:    
+            # find existing disks, take first
+            disks = find_disks(True)
+            if disks:
+                disk_path = disks[0]
+        """        
+        if (disk_path != ""):
+            print (disk_path)        
+        else:
+            print ("disk_path empty")
+        """            
+        if (disk_path != ""):
+            with open("/proc/mounts", "r") as file:
+                content = file.read()
+            if (content.find(disk_path) > 0): # <0 - not founed
+#                print (disk_path+" is mounted")
+                mount_point = content[content.find(disk_path):].split()[1]
+                # try to unmount
+                try:
+                    subprocess.check_output(['umount', mount_point])
+                except:
+                    ret_code = ErrCodes()
+                    ret_code.err_code = ErrCodes.PART_MOUINTED
+                    print(ret_code.err2str())
+                    sys.exit(ret_code.err_code)
+            disk_name = disk_path[:8]# /dev/sdx
+            #delete MBR on this device : dd if=/dev/zero of=/dev/sda bs=512 count=1
+            try:
+                subprocess.check_output(['dd', 'if=/dev/zero', 'of='+disk_name,'bs=512', 'count=1'])
+            except:
+                ret_code = ErrCodes()
+                
     if args.list:
         disks = find_disks(args.force)
         for disk in disks:

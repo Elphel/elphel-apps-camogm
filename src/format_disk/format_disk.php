@@ -25,8 +25,16 @@ $parted_script = "format_disk.py";
 function get_disks_list()
 {
 	global $parted_script;
-	
-	exec($parted_script . " --list", $output, $ret_val);
+	if (isset($_GET["noraw"]) || isset($_GET["all"]))
+	    $noraw = ' -a ';
+	else
+	    $noraw = ' ';
+    if (isset($_GET["reformat"]))
+        $reformat = ' -r ';
+    else
+        $reformat = ' ';
+	            
+        exec($parted_script . " --list". $noraw . $reformat, $output, $ret_val);
 	return array("ret_val" => $ret_val, "disks" => $output);
 }
 
@@ -87,6 +95,27 @@ function btn_class($inactive)
 	else
 		echo $class;
 }
+function isForce()
+{
+    if (isset($_GET["force"]))
+        echo ' checked ';
+    else
+        echo ' ';
+}
+function isNoRaw()
+{
+    if (isset($_GET["noraw"]) || isset($_GET["all"]))
+        echo ' checked ';
+    else
+        echo ' ';
+}
+function isReformat()
+{
+    if (isset($_GET["reformat"]))
+        echo ' checked ';
+        else
+            echo ' ';
+}
 
 /* process commands */
 if (isset($_GET["cmd"]))
@@ -99,8 +128,16 @@ if ($cmd == "format") {
 			$force = ' -f ';
 		else
 			$force = ' ';
-		$disk_path = $_GET["disk_path"];
-		exec($parted_script . $force . $disk_path, $output, $ret_val);
+		if (isset($_GET["noraw"]) || isset($_GET["all"]))
+		    $noraw = ' -a ';
+	    else
+	        $noraw = ' ';
+        if (isset($_GET["reformat"]))
+            $reformat = ' -r ';
+        else
+            $reformat = ' ';
+        $disk_path = $_GET["disk_path"];
+        exec($parted_script . $force . $noraw . $reformat .$disk_path, $output, $ret_val);
 		if ($ret_val == 0) {
 			print("OK");
 		} else {
@@ -147,8 +184,11 @@ if ($cmd == "format") {
 		</table>
 	</div>
 	<div style="padding-left:10px;">
-		<span class="checkbox"><label><input id="chk_force" type="checkbox">Forse 'mkfs' to create a file system</label></span>
-		<button id="btn_format" type="button" class="<?php btn_class($no_disk); ?>"><b>Format</b></button>
+		<span class="checkbox"><label><input id="chk_force"    type="checkbox" <?php isForce(); ?>>Force 'mkfs' to create a file system</label></span>
+		<span class="checkbox"><label><input id="chk_noraw"    type="checkbox" <?php isNoRaw(); ?>>Create a system partition only, no raw</label></span>
+		<span class="checkbox"><label><input id="chk_reformat" type="checkbox" <?php isReformat(); ?>>Reformat disk (delete existing partitions)</label></span>
+        <button id="btn_format" type="button" class="<?php btn_class($no_disk); ?>"><b>Format</b></button>		
+<!-- 	<button id="btn_format" type="button" class="<?php btn_class(0); ?>"><b>Format</b></button>  -->
 	</div>
 </body>
 
