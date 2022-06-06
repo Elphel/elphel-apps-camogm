@@ -344,15 +344,17 @@
 					fprintf($fcmd, "prefix=%s;\n", $xml_directory);
 				}
 				else
-					fprintf($fcmd, "prefix=%s;\n", "/var/hdd/");
+					fprintf($fcmd, "prefix=%s;\n", "/www/pages/hdd/");
 			}
 		}
 				
-		if ($xml_format == "'none'") // use quicktime mov as default if no container format has been selected
+		if ($xml_format == "'none'") {// use quicktime mov as default if no container format has been selected
 			fprintf($fcmd, "format=mov;");
-		
+		}
 		// for some reason sometimes camogm was starting with all ports disabled. Temporarily enable them all (add control)
-		fprintf($fcmd, "port_enable=0;port_enable=1;port_enable=2;port_enable=3;");
+		// pipe fcmd is closed here!
+//		fprintf($fcmd, "port_enable=0;port_enable=1;port_enable=2;port_enable=3;");
+		//Warning: fprintf(): 4 is not a valid stream resource in /www/pages/camogmgui.php on line 355
 			
 	}
 	
@@ -664,7 +666,7 @@
 		<p style="color:red;">not operational yet!</p>
                 Detected Audio Hardware: <span id="ajax_detected_audio_hardware">loading...</span> <a href="#" onClick="check_audio_hardware();"><img src="images/reload.png" style="bottom:-2px; position:relative;"></a><br />
                 <br />
-                Test Audio Playback: <a href="#" onClick="test_audio_playback('/var/hdd/Congas.wav');"><img src="images/play_audio.png" style="position:relative; top:3px;"></a><br />
+                Test Audio Playback: <a href="#" onClick="test_audio_playback('/www/pages/hdd/Congas.wav');"><img src="images/play_audio.png" style="position:relative; top:3px;"></a><br />
                 <br />
                 <form method="POST" id="audioform">
                 <table cellspacing="5px">

@@ -67,6 +67,7 @@
 *!  start and stop commands for ajax execution
 *!
 */
+define('SSD_ROOT',          '/mnt/sda1/');
 $cmd = $_GET['cmd'];
 $debug = $_GET['debug'];
 $debuglev = $_GET['debuglev'];
@@ -140,11 +141,10 @@ if ($cmd == "run_camogm")
           echo "camogm is running\n";
 	}
 }
-else if ($cmd == "status")
+else if (($cmd == "status") || ($cmd == "state"))
 {
 	if (check_camogm_running()) $camogm_running = "on";
 	else                        $camogm_running = "off";
-
 	if ($camogm_running=="on"){
 		$pipe="/var/state/camogm.state";
 		$mode=0777;
@@ -155,8 +155,14 @@ else if ($cmd == "status")
 		$fcmd=fopen($cmd_pipe,"w");
 		fprintf($fcmd, "xstatus=%s\n",$pipe);
 		fclose($fcmd);
-
 		$status=file_get_contents($pipe);
+
+		if ($cmd == "state") {
+		    $start = strpos($status, "<state>") + 7;
+		    $len =   strpos($status, "</state>", $start) - $start ; // including ""
+		    $state = substr($status, $start, $len);
+		    $status = "<?xml version='1.0'?><camogm_state>\n<state>".$state."</state>\n</camogm_state>";
+		}
 	}else{
 		$status = "<?xml version='1.0'?><camogm_state>\n<state>".$camogm_running."</state>\n</camogm_state>";
 	}
@@ -167,6 +173,7 @@ else if ($cmd == "status")
 	// allow CORS: needed for multi cams unified control
 	header('Access-Control-Allow-Origin: *');
 	printf("%s", $status);
+	
 }
 else if ($cmd == "run_status")
 {
@@ -188,9 +195,12 @@ else if ($cmd=="get_hdd_space"){
 		$mountpoint = $_GET['mountpoint'];
 	else
 		$mountpoint = '/mnt/sda1';
+	// make sure something is mounted on mountpoint
+	exec('mount', $arr);
+	$mounted = implode("", $arr);
 
-        if (is_dir($mountpoint)) $res = disk_free_space($mountpoint);
-        else                     $res = 0;
+    if ((strstr($mounted, $mountpoint)) && (is_dir($mountpoint))) $res = disk_free_space($mountpoint);
+    else                     $res = 0;
 
 	xml_header();
 	echo "<command>".$cmd."</command>";
@@ -313,20 +323,20 @@ else if ($cmd=="set_skip") {
 	xml_footer();
 }
 else if ($cmd=="list") {
+    unset ($message);
 	if (isset($_GET['path'])) $path = $_GET['path'];
 	else {
 	    $message = "the path is not set";
-	    break;
 	}
-
-	if (is_dir($path)) {
-	    $files = scandir($path);
-	    foreach ($files as $file){
-		if (is_file("$path/$file")) $message .= "<f>$path/$file</f>\n";
-	    }
-	}else{
-	    $message = "directory not found";
-	    break;
+	if (!isset($message)) {
+    	if (is_dir($path)) {
+    	    $files = scandir($path);
+    	    foreach ($files as $file){
+    		    if (is_file("$path/$file")) $message .= "<f>$path/$file</f>\n";
+    	    }
+    	}else{
+    	    $message = "directory not found";
+    	}
 	}
 	xml_header();
 	echo "<command>".$cmd."</command>";
@@ -337,7 +347,6 @@ else if ($cmd=="list") {
 }
 else if ($cmd=="list_raw_devices"){
 	$devices = get_raw_dev();
-
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
@@ -351,25 +360,34 @@ else if ($cmd=="list_raw_devices"){
 	xml_footer();
 }
 else if ($cmd=="list_partitions"){
-        $partitions = get_partitions();
-        foreach ($partitions as $device=>$size) {
-                echo "<item>";
-                echo "  <device>" . $device . "</device>";
-                echo "  <size>" . round($size / 1048576, 2) . "</size>";
-                echo "</item>";
-        }
+    xml_header();
+    $partitions = get_partitions();
+    foreach ($partitions as $device=>$size) {
+            echo "<item>";
+            echo "  <device>" . $device . "</device>";
+            echo "  <size>" . round($size / 1048576, 2) . "</size>";
+            echo "</item>";
+    }
+    xml_footer();
 }
 else
 {
 	$fcmd = fopen($cmd_pipe, "w");
+	switch ($cmd) { // cookies have to be set before any output
+	    case "set_prefix":
+	        $prefix = $_GET['prefix'];
+	        setcookie("directory", $prefix);
+	        break;
+	}
 
 	xml_header();
 	echo "<command>".$cmd."</command>";
 	echo "<".$cmd.">";
-
 	switch ($cmd)
 	{
 		case "start":
+		    // Camogm starts with all ports disabled 
+		    fprintf($fcmd, "port_enable=0;port_enable=1;port_enable=2;port_enable=3;");
 			fprintf($fcmd,"start;\n");
 			break;
 		case "stop":
@@ -484,12 +502,23 @@ else
 			$dir_name = $_GET['name'];
 			if (isset($dir_name) && (($dir_name != "") || ($dir_name != " ")))
 			{
-				exec('mkdir /mnt/sda1/'.$dir_name);
+		        exec('mkdir '.SSD_ROOT.$dir_name);
 				echo "done";
 				break;
 			}
 			else
 				break;
+		case "dir_prefix": // combines mkdir with set_prefix define('SSD_ROOT',          '/mnt/sda1/');
+		    $dir_name = $_GET['name'];
+		    if (isset($dir_name) && (($dir_name != "") || ($dir_name != " ")))
+		    {
+		        exec('mkdir '.SSD_ROOT.$dir_name);
+		        fprintf($fcmd, "prefix=%s;\n", SSD_ROOT.$prefix.$dir_name.'/');
+		        echo "done";
+		        break;
+		    }
+		    else
+		        break;
 		case "is_hdd_mounted":
 			if (isset($_GET['partition']))
 				$partition = $_GET['partition'];
@@ -591,7 +620,7 @@ else
 		case "set_prefix":
 			$prefix = $_GET['prefix'];
 			fprintf($fcmd, "prefix=%s;\n", $prefix);
-			setcookie("directory", $prefix);
+//			setcookie("directory", $prefix);
 			break;
 
 		case "set_debuglev":
